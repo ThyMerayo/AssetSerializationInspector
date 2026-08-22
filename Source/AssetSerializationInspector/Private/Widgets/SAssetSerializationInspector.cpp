@@ -290,7 +290,16 @@ bool SAssetSerializationInspector::LoadDocument(const FString& Filename)
 
 	BuildPackageTree();
 
-	StatusText = FText::Format(LOCTEXT("LoadedFileStatus", "Loaded {0} ({1} bytes)."), FText::FromString(FPaths::GetCleanFilename(Document->Filename)), FText::AsNumber(Document->GetFileSize()));
+	if (Document->bHasDecodedNameMap)
+	{
+		StatusText = FText::Format(LOCTEXT("LoadedFileWithNamesStatus", "Loaded {0} ({1} bytes, {2} names)."), FText::FromString(FPaths::GetCleanFilename(Document->Filename)),
+			FText::AsNumber(Document->GetFileSize()), FText::AsNumber(Document->NameMap.Num()));
+	}
+	else
+	{
+		StatusText = FText::Format(
+			LOCTEXT("LoadedFileNameWarningStatus", "Loaded {0}, but the Name Map could not be decoded: {1}"), FText::FromString(FPaths::GetCleanFilename(Document->Filename)), Document->NameMapError);
+	}
 
 	return true;
 }
@@ -550,18 +559,12 @@ void SAssetSerializationInspector::BuildPackageTree()
 	// Logical fields. We know their interpreted values, but we are not yet
 	// claiming exact byte ranges for every individual field.
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("TagField", "Tag"), LOCTEXT("Int32Type", "int32"), FText::FromString(FString::Printf(TEXT("0x%08X"), static_cast<uint32>(Summary.Tag)))));
-
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("PackageNameField", "Package name"), LOCTEXT("FStringType", "FString"), FText::FromString(Summary.PackageName)));
-
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("TotalHeaderSizeField", "Total header size"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.TotalHeaderSize)));
-
 	SummaryNode->Children.Add(
 		MakeFieldNode(LOCTEXT("PackageFlagsField", "Package flags"), LOCTEXT("Uint32Type", "uint32"), FText::FromString(FString::Printf(TEXT("0x%08X"), Summary.GetPackageFlags()))));
-
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("NameCountField", "Name count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.NameCount)));
-
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("ImportCountField", "Import count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.ImportCount)));
-
 	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("ExportCountField", "Export count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.ExportCount)));
 
 	TArray<FPackageRegionDescriptor> Regions;
@@ -597,6 +600,7 @@ void SAssetSerializationInspector::BuildPackageTree()
 	Regions.Sort([](const FPackageRegionDescriptor& Left, const FPackageRegionDescriptor& Right) { return Left.Offset < Right.Offset; });
 
 	const int64 HeaderBoundary = Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize <= Document->GetFileSize() ? Summary.TotalHeaderSize : Document->GetFileSize();
+	TSharedPtr<FAssetPackageTreeNode> NameMapNode;
 
 	for (int32 Index = 0; Index < Regions.Num(); ++Index)
 	{
@@ -624,12 +628,49 @@ void SAssetSerializationInspector::BuildPackageTree()
 
 		TSharedRef<FAssetPackageTreeNode> RegionNode = MakeRegionNode(Region.Name, Region.Type, Region.Offset, RegionSize);
 
+		if (Region.Offset == Summary.NameOffset)
+		{
+			NameMapNode = RegionNode;
+		}
+
 		if (Region.EntryCount != INDEX_NONE)
 		{
 			RegionNode->Children.Add(MakeFieldNode(LOCTEXT("EntryCountField", "Entry count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Region.EntryCount)));
 		}
 
 		FileNode->Children.Add(RegionNode);
+	}
+
+	if (NameMapNode.IsValid())
+	{
+		if (Document->bHasDecodedNameMap)
+		{
+			for (const FAssetPackageNameEntry& Entry : Document->NameMap)
+			{
+				TSharedRef<FAssetPackageTreeNode> EntryNode = MakeRegionNode(FText::Format(LOCTEXT("NameEntryLabel", "[{0}] {1}"), FText::AsNumber(Entry.Index), FText::FromString(Entry.Name)),
+					LOCTEXT("NameEntryType", "Serialized package name"), Entry.Offset, Entry.Size);
+
+				EntryNode->ValueText = FText::FromString(Entry.Name);
+
+				EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameIndexField", "Index"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Entry.Index)));
+
+				EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameStringField", "String"), LOCTEXT("FStringType", "FString"), FText::FromString(Entry.Name)));
+
+				EntryNode->Children.Add(MakeFieldNode(
+					LOCTEXT("NonCaseHashField", "Non-case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.NonCasePreservingHash))));
+
+				EntryNode->Children.Add(
+					MakeFieldNode(LOCTEXT("CaseHashField", "Case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.CasePreservingHash))));
+
+				NameMapNode->Children.Add(EntryNode);
+			}
+		}
+		else
+		{
+			TSharedRef<FAssetPackageTreeNode> ErrorNode = MakeFieldNode(LOCTEXT("NameMapDecodeErrorNode", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->NameMapError);
+
+			NameMapNode->Children.Add(ErrorNode);
+		}
 	}
 
 	if (Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize < Document->GetFileSize())
@@ -644,6 +685,13 @@ void SAssetSerializationInspector::BuildPackageTree()
 		PackageTreeView->SetItemExpansion(FileNode, true);
 		PackageTreeView->SetItemExpansion(SummaryNode, true);
 		PackageTreeView->SetSelection(SummaryNode);
+	}
+
+	const int64 NameRegionEnd = FAssetPackageReader::FindNameMapEnd(*Document);
+	if (NameMapNode.IsValid() && Document->bHasDecodedNameMap && Document->DecodedNameMapEnd < NameRegionEnd)
+	{
+		NameMapNode->Children.Add(MakeRegionNode(LOCTEXT("NameMapTrailingBytes", "Trailing / Undecoded Bytes"), LOCTEXT("UnknownNameMapData", "Unknown or aligned data"), Document->DecodedNameMapEnd,
+			NameRegionEnd - Document->DecodedNameMapEnd));
 	}
 }
 

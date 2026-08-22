@@ -1,42 +1,49 @@
+// Copyright Diego Merayo Merayo. All Rights Reserved
 #pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/PackageFileSummary.h"
+
+struct FAssetPackageNameEntry
+{
+	int32 Index = INDEX_NONE;
+
+	/** Exact serialized range, including the FString and serialized hashes. */
+	int64 Offset = 0;
+	int64 Size = 0;
+
+	FString Name;
+
+	/**
+	 * Serialized name hashes.
+	 *
+	 * These are stored as raw values for analysis. We should not assume they
+	 * are stable identifiers outside the package serialization format.
+	 */
+	uint16 NonCasePreservingHash = 0;
+	uint16 CasePreservingHash = 0;
+};
 
 struct FAssetPackageDocument
 {
 	FString Filename;
 	TArray64<uint8> FileData;
 
-	/** Parsed package summary, when available. */
 	FPackageFileSummary PackageSummary;
-
-	/**
-	 * Number of physical bytes consumed while deserializing PackageSummary.
-	 *
-	 * This is not sizeof(FPackageFileSummary). The serialized representation
-	 * is version-dependent.
-	 */
 	int64 SerializedSummarySize = 0;
-
 	bool bHasValidPackageSummary = false;
+
+	TArray<FAssetPackageNameEntry> NameMap;
+
+	int64 DecodedNameMapEnd = 0;
+	FText NameMapError;
+	bool bHasDecodedNameMap = false;
 
 	int64 GetFileSize() const { return FileData.Num(); }
 
-	bool IsValidRange(const int64 Offset, const int64 Size) const
-	{
-		if (Offset < 0 || Size < 0)
-		{
-			return false;
-		}
+	bool IsValidRange(const int64 Offset, const int64 Size) const;
 
-		const int64 FileSize = FileData.Num();
+	const FAssetPackageNameEntry* FindNameEntry(const int32 NameIndex) const;
 
-		if (Offset > FileSize)
-		{
-			return false;
-		}
-
-		return Size <= FileSize - Offset;
-	}
+	FString ResolveNameIndex(const int32 NameIndex) const;
 };
