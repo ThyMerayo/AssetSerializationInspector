@@ -1,4 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
+
 #include "Readers/AssetPackageMemoryReader.h"
 
 FAssetPackageMemoryReader::FAssetPackageMemoryReader(const TArray64<uint8>& InFileData, const int64 InStartOffset, const int64 InSize)

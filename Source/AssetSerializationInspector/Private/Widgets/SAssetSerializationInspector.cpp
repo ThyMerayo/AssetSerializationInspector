@@ -1,4 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
+
 #include "Widgets/SAssetSerializationInspector.h"
 
 #include "DesktopPlatformModule.h"

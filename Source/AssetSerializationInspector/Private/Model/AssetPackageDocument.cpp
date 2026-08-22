@@ -1,4 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
+
 #include "Model/AssetPackageDocument.h"
 
 int64 FAssetPackageDocument::GetFileSize() const

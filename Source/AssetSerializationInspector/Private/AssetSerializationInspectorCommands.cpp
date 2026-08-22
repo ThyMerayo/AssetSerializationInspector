@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "AssetSerializationInspectorCommands.h"
 
