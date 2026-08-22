@@ -76,3 +76,68 @@ FString FAssetPackageDocument::DescribePackageIndex(const FAssetPackageIndexRefe
 			return TEXT("<invalid package index>");
 	}
 }
+
+FString FAssetPackageDocument::ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const
+{
+	if (!ImportMap.IsValidIndex(ImportIndex))
+	{
+		return FString::Printf(TEXT("<invalid import %d>"), ImportIndex);
+	}
+
+	if (VisitedImports.Contains(ImportIndex))
+	{
+		return FString::Printf(TEXT("<cyclic import %d>"), ImportIndex);
+	}
+
+	VisitedImports.Add(ImportIndex);
+
+	const FAssetPackageImportEntry& Import = ImportMap[ImportIndex];
+
+	const FString ObjectName = ResolveNameReference(Import.ObjectName);
+
+	FString Result;
+
+	switch (Import.OuterIndex.GetKind())
+	{
+		case EAssetPackageIndexKind::Null:
+			Result = ObjectName;
+			break;
+
+		case EAssetPackageIndexKind::Import:
+		{
+			const int32 OuterImportIndex = Import.OuterIndex.GetArrayIndex();
+
+			const FString OuterPath = ResolveImportPathInternal(OuterImportIndex, VisitedImports);
+
+			if (OuterPath.IsEmpty())
+			{
+				Result = ObjectName;
+			}
+			else
+			{
+				Result = OuterPath + TEXT(".") + ObjectName;
+			}
+
+			break;
+		}
+
+		case EAssetPackageIndexKind::Export:
+			Result = FString::Printf(TEXT("Export[%d].%s"), Import.OuterIndex.GetArrayIndex(), *ObjectName);
+			break;
+
+		default:
+			Result = ObjectName;
+			break;
+	}
+
+	VisitedImports.Remove(ImportIndex);
+
+	return Result;
+}
+
+FString FAssetPackageDocument::ResolveImportPath(const int32 ImportIndex) const
+{
+	TSet<int32> VisitedImports;
+
+	return ResolveImportPathInternal(ImportIndex, VisitedImports);
+}

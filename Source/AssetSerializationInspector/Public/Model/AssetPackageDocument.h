@@ -128,4 +128,9 @@ struct FAssetPackageDocument
 	FString ResolveNameReference(const FAssetPackageNameReference& Reference) const;
 
 	FString DescribePackageIndex(const FAssetPackageIndexReference& Reference) const;
+
+	FString ResolveImportPath(int32 ImportIndex) const;
+
+private:
+	FString ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
 };

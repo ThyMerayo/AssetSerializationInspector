@@ -12,10 +12,16 @@ template <typename ItemType> class STreeView;
 enum class EAssetPackageNodeKind : uint8
 {
 	File,
-	Region,
-	Group,
-	Field
+	Summary,
+	Table,
+	NameEntry,
+	Import,
+	Export,
+	Field,
+	ByteRange,
+	Unknown
 };
+
 /**
  * A node displayed in the package structure tree.
  *
@@ -28,7 +34,7 @@ struct FAssetPackageTreeNode
 	FText TypeName;
 	FText ValueText;
 
-	EAssetPackageNodeKind Kind = EAssetPackageNodeKind::Region;
+	EAssetPackageNodeKind Kind = EAssetPackageNodeKind::ByteRange;
 
 	int64 Offset = 0;
 	int64 Size = 0;
@@ -36,7 +42,7 @@ struct FAssetPackageTreeNode
 	TArray<TSharedPtr<FAssetPackageTreeNode>> Children;
 
 	static TSharedRef<FAssetPackageTreeNode> Make(
-		const FText& InDisplayName, const FText& InTypeName, const int64 InOffset = 0, const int64 InSize = 0, const EAssetPackageNodeKind InKind = EAssetPackageNodeKind::Region)
+		const FText& InDisplayName, const FText& InTypeName, const int64 InOffset = 0, const int64 InSize = 0, const EAssetPackageNodeKind InKind = EAssetPackageNodeKind::Unknown)
 	{
 		TSharedRef<FAssetPackageTreeNode> Node = MakeShared<FAssetPackageTreeNode>();
 
@@ -48,6 +54,8 @@ struct FAssetPackageTreeNode
 
 		return Node;
 	}
+
+	bool HasPhysicalRange() const { return Offset >= 0 && Size > 0; }
 };
 
 class SAssetSerializationInspector : public SCompoundWidget
@@ -87,9 +95,12 @@ private:
 
 	void BuildPackageTree();
 
-	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size) const;
+	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size, EAssetPackageNodeKind Kind = EAssetPackageNodeKind::ByteRange) const;
 	TSharedRef<FAssetPackageTreeNode> MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const;
 	TSharedRef<FAssetPackageTreeNode> MakeValueRegionNode(const FText& Name, const FText& Type, const FText& Value, int64 Offset, int64 Size) const;
+
+	// Navigation
+	void HandleTreeItemDoubleClicked(FTreeNodePtr Item);
 
 private:
 	TSharedPtr<SEditableTextBox> AssetPathTextBox;
