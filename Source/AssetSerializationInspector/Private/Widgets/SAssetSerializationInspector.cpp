@@ -14,6 +14,7 @@
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Views/SExpanderArrow.h"
 #include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/Views/STreeView.h"
@@ -56,7 +57,11 @@ namespace
 
 			if (ColumnName == TEXT("Name"))
 			{
-				return SNew(STextBlock).Text(Item->DisplayName);
+				return SNew(SHorizontalBox)
+
+					+ SHorizontalBox::Slot().AutoWidth()[SNew(SExpanderArrow, SharedThis(this)).IndentAmount(16)]
+
+					+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(STextBlock).Text(Item->DisplayName)];
 			}
 
 			if (ColumnName == TEXT("Offset"))
