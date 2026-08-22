@@ -1,6 +1,10 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 #include "Widgets/SAssetSerializationInspector.h"
 
+#include "DesktopPlatformModule.h"
+#include "Framework/Application/SlateApplication.h"
+#include "IDesktopPlatform.h"
+#include "Misc/Paths.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
@@ -13,6 +17,9 @@
 #include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/Views/STreeView.h"
+
+#include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackageReader.h"
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationInspector"
 
@@ -27,6 +34,11 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 
 			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(
 				0.0f, 0.0f, 8.0f, 0.0f)[SAssignNew(AssetPathTextBox, SEditableTextBox).HintText(LOCTEXT("AssetPathHint", "Enter a package path or .uasset filename"))]
+
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("BrowseButton", "Browse..."))
+					.ToolTipText(LOCTEXT("BrowseButtonTooltip", "Select a .uasset file from disk"))
+					.OnClicked(this, &SAssetSerializationInspector::HandleBrowseClicked)]
 
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)[SNew(SButton)
 					.Text(LOCTEXT("InspectButton", "Inspect"))
@@ -73,8 +85,12 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 							+ SVerticalBox::Slot().AutoHeight().Padding(
 								0.0f, 0.0f, 0.0f, 8.0f)[SNew(STextBlock).Text(LOCTEXT("SelectionHeading", "Selection Details")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
 
+							+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock)
+									.Text_Lambda([this]() { return FText::Format(LOCTEXT("FilenameFormat", "File: {0}"), GetLoadedFilenameText()); })
+									.ToolTipText(this, &SAssetSerializationInspector::GetLoadedFilenameText)]
+
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("NameFormat", "Name: {0}"), GetSelectedNodeName()); })]
+								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("FileSizeFormat", "Size: {0}"), GetFileSizeText()); })]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
 								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("TypeFormat", "Type: {0}"), GetSelectedNodeType()); })]
@@ -102,21 +118,69 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 			8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationInspector::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 }
 
-FReply SAssetSerializationInspector::HandleInspectClicked()
+FReply SAssetSerializationInspector::HandleBrowseClicked()
 {
-	const FString RequestedPath = AssetPathTextBox.IsValid() ? AssetPathTextBox->GetText().ToString() : FString();
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 
-	if (RequestedPath.IsEmpty())
+	if (DesktopPlatform == nullptr)
 	{
-		StatusText = LOCTEXT("MissingAssetPathStatus", "Enter an asset path before inspecting.");
+		StatusText = LOCTEXT("DesktopPlatformUnavailable", "The desktop file-dialog service is unavailable.");
 
 		return FReply::Handled();
 	}
 
-	// Temporary until the package reader exists.
-	BuildPlaceholderTree();
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
-	StatusText = FText::Format(LOCTEXT("PlaceholderLoadedStatus", "Displaying placeholder structure for {0}"), FText::FromString(RequestedPath));
+	FString DefaultPath = FPaths::ProjectContentDir();
+
+	if (Document.IsValid())
+	{
+		DefaultPath = FPaths::GetPath(Document->Filename);
+	}
+	else if (AssetPathTextBox.IsValid())
+	{
+		const FString ExistingPath = AssetPathTextBox->GetText().ToString();
+
+		if (!ExistingPath.IsEmpty())
+		{
+			DefaultPath = FPaths::GetPath(FPaths::ConvertRelativePathToFull(ExistingPath));
+		}
+	}
+
+	TArray<FString> SelectedFiles;
+
+	const bool bSelectedFile = DesktopPlatform->OpenFileDialog(
+		ParentWindowHandle, LOCTEXT("OpenAssetDialogTitle", "Select Unreal Asset").ToString(), DefaultPath, TEXT(""), TEXT("Unreal Asset (*.uasset)|*.uasset"), EFileDialogFlags::None, SelectedFiles);
+
+	if (!bSelectedFile || SelectedFiles.IsEmpty())
+	{
+		return FReply::Handled();
+	}
+
+	const FString& SelectedFilename = SelectedFiles[0];
+
+	if (AssetPathTextBox.IsValid())
+	{
+		AssetPathTextBox->SetText(FText::FromString(SelectedFilename));
+	}
+
+	LoadDocument(SelectedFilename);
+
+	return FReply::Handled();
+}
+
+FReply SAssetSerializationInspector::HandleInspectClicked()
+{
+	if (!AssetPathTextBox.IsValid())
+	{
+		StatusText = LOCTEXT("PathControlUnavailable", "The asset-path control is unavailable.");
+
+		return FReply::Handled();
+	}
+
+	const FString RequestedPath = AssetPathTextBox->GetText().ToString().TrimStartAndEnd();
+
+	LoadDocument(RequestedPath);
 
 	return FReply::Handled();
 }
@@ -125,6 +189,85 @@ FReply SAssetSerializationInspector::HandleClearClicked()
 {
 	ClearInspector();
 	return FReply::Handled();
+}
+
+bool SAssetSerializationInspector::LoadDocument(const FString& Filename)
+{
+	FText LoadError;
+
+	TSharedPtr<FAssetPackageDocument> LoadedDocument = FAssetPackageReader::LoadFromFile(Filename, LoadError);
+
+	if (!LoadedDocument.IsValid())
+	{
+		Document.Reset();
+		RootNodes.Reset();
+		SelectedNode.Reset();
+
+		if (PackageTreeView.IsValid())
+		{
+			PackageTreeView->ClearSelection();
+			PackageTreeView->RequestTreeRefresh();
+		}
+
+		StatusText = LoadError;
+
+		return false;
+	}
+
+	Document = MoveTemp(LoadedDocument);
+
+	if (AssetPathTextBox.IsValid())
+	{
+		AssetPathTextBox->SetText(FText::FromString(Document->Filename));
+	}
+
+	BuildRawDocumentTree();
+
+	StatusText = FText::Format(LOCTEXT("LoadedFileStatus", "Loaded {0} ({1} bytes)."), FText::FromString(FPaths::GetCleanFilename(Document->Filename)), FText::AsNumber(Document->GetFileSize()));
+
+	return true;
+}
+
+void SAssetSerializationInspector::ClearInspector()
+{
+	Document.Reset();
+	RootNodes.Reset();
+	SelectedNode.Reset();
+
+	if (AssetPathTextBox.IsValid())
+	{
+		AssetPathTextBox->SetText(FText::GetEmpty());
+	}
+
+	if (PackageTreeView.IsValid())
+	{
+		PackageTreeView->ClearSelection();
+		PackageTreeView->RequestTreeRefresh();
+	}
+
+	StatusText = LOCTEXT("ClearedStatus", "Inspector cleared.");
+}
+
+void SAssetSerializationInspector::BuildRawDocumentTree()
+{
+	RootNodes.Reset();
+	SelectedNode.Reset();
+
+	if (!Document.IsValid())
+	{
+		return;
+	}
+
+	TSharedRef<FAssetPackageTreeNode> FileNode =
+		FAssetPackageTreeNode::Make(FText::FromString(FPaths::GetCleanFilename(Document->Filename)), LOCTEXT("RawPackageFileType", "Raw package file"), 0, Document->GetFileSize());
+
+	RootNodes.Add(FileNode);
+
+	if (PackageTreeView.IsValid())
+	{
+		PackageTreeView->RequestTreeRefresh();
+		PackageTreeView->SetSelection(FileNode);
+	}
 }
 
 TSharedRef<ITableRow> SAssetSerializationInspector::GenerateTreeRow(FTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable)
@@ -167,7 +310,7 @@ FText SAssetSerializationInspector::GetSelectedNodeOffset() const
 {
 	if (!SelectedNode.IsValid())
 	{
-		return LOCTEXT("NoSelectionOffset", "—");
+		return LOCTEXT("NoSelectionOffset", "-");
 	}
 
 	return FText::FromString(FString::Printf(TEXT("0x%llX"), SelectedNode->Offset));
@@ -177,7 +320,7 @@ FText SAssetSerializationInspector::GetSelectedNodeSize() const
 {
 	if (!SelectedNode.IsValid())
 	{
-		return LOCTEXT("NoSelectionSize", "—");
+		return LOCTEXT("NoSelectionSize", "-");
 	}
 
 	return FText::Format(LOCTEXT("ByteCountFormat", "{0} bytes"), FText::AsNumber(SelectedNode->Size));
@@ -185,114 +328,124 @@ FText SAssetSerializationInspector::GetSelectedNodeSize() const
 
 FText SAssetSerializationInspector::GetHexPreviewText() const
 {
+	if (!Document.IsValid())
+	{
+		return LOCTEXT("NoDocumentForHex", "Load a .uasset file to display its bytes.");
+	}
+
 	if (!SelectedNode.IsValid())
 	{
 		return LOCTEXT("NoHexSelection", "Select a package node to display its bytes.");
 	}
 
-	if (SelectedNode->PreviewBytes.IsEmpty())
+	if (!Document->IsValidRange(SelectedNode->Offset, SelectedNode->Size))
 	{
-		return LOCTEXT("NoPreviewBytes", "No byte preview is available for this node.");
+		return LOCTEXT("InvalidByteRange", "The selected node refers to an invalid byte range.");
 	}
 
-	FString Result;
+	if (SelectedNode->Size == 0)
+	{
+		return LOCTEXT("EmptyByteRange", "The selected byte range is empty.");
+	}
+
+	// Avoid constructing an enormous text object when the root node represents
+	// a multi-megabyte asset. A virtualized hex widget will replace this later.
+	constexpr int64 MaximumPreviewBytes = 4096;
+
+	const int64 PreviewSize = FMath::Min(SelectedNode->Size, MaximumPreviewBytes);
 
 	constexpr int32 BytesPerRow = 16;
 
-	for (int32 Index = 0; Index < SelectedNode->PreviewBytes.Num(); Index += BytesPerRow)
+	FString Result;
+
+	// Approximate reservation:
+	// 16 offset characters + hex + ASCII + spacing per line.
+	const int64 EstimatedLineCount = (PreviewSize + BytesPerRow - 1) / BytesPerRow;
+
+	Result.Reserve(static_cast<int32>(FMath::Min<int64>(EstimatedLineCount * 80, MAX_int32)));
+
+	for (int64 RelativeOffset = 0; RelativeOffset < PreviewSize; RelativeOffset += BytesPerRow)
 	{
-		Result += FString::Printf(TEXT("%08llX  "), SelectedNode->Offset + Index);
+		const int64 AbsoluteOffset = SelectedNode->Offset + RelativeOffset;
+
+		Result += FString::Printf(TEXT("%016llX  "), AbsoluteOffset);
 
 		for (int32 Column = 0; Column < BytesPerRow; ++Column)
 		{
-			const int32 ByteIndex = Index + Column;
+			const int64 ByteOffset = RelativeOffset + Column;
 
-			if (ByteIndex < SelectedNode->PreviewBytes.Num())
+			if (ByteOffset < PreviewSize)
 			{
-				Result += FString::Printf(TEXT("%02X "), SelectedNode->PreviewBytes[ByteIndex]);
+				const uint8 Byte = Document->FileData[SelectedNode->Offset + ByteOffset];
+
+				Result += FString::Printf(TEXT("%02X "), Byte);
 			}
 			else
 			{
 				Result += TEXT("   ");
 			}
+
+			if (Column == 7)
+			{
+				Result += TEXT(" ");
+			}
 		}
 
-		Result += TEXT(" ");
+		Result += TEXT(" |");
 
 		for (int32 Column = 0; Column < BytesPerRow; ++Column)
 		{
-			const int32 ByteIndex = Index + Column;
+			const int64 ByteOffset = RelativeOffset + Column;
 
-			if (ByteIndex >= SelectedNode->PreviewBytes.Num())
+			if (ByteOffset >= PreviewSize)
 			{
 				break;
 			}
 
-			const uint8 Byte = SelectedNode->PreviewBytes[ByteIndex];
+			const uint8 Byte = Document->FileData[SelectedNode->Offset + ByteOffset];
 
-			Result.AppendChar(Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.'));
+			const TCHAR Character = Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.');
+
+			Result.AppendChar(Character);
 		}
 
+		Result += TEXT("|");
 		Result += LINE_TERMINATOR;
 	}
 
-	return FText::FromString(Result);
+	if (SelectedNode->Size > PreviewSize)
+	{
+		Result += LINE_TERMINATOR;
+
+		Result += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, SelectedNode->Size);
+	}
+
+	return FText::FromString(MoveTemp(Result));
+}
+
+FText SAssetSerializationInspector::GetLoadedFilenameText() const
+{
+	if (!Document.IsValid())
+	{
+		return LOCTEXT("NoLoadedFilename", "No file loaded");
+	}
+
+	return FText::FromString(Document->Filename);
+}
+
+FText SAssetSerializationInspector::GetFileSizeText() const
+{
+	if (!Document.IsValid())
+	{
+		return LOCTEXT("NoLoadedFileSize", "-");
+	}
+
+	return FText::Format(LOCTEXT("LoadedFileSizeFormat", "{0} bytes"), FText::AsNumber(Document->GetFileSize()));
 }
 
 FText SAssetSerializationInspector::GetStatusText() const
 {
 	return StatusText;
-}
-
-void SAssetSerializationInspector::BuildPlaceholderTree()
-{
-	RootNodes.Reset();
-	SelectedNode.Reset();
-
-	TSharedRef<FAssetPackageTreeNode> PackageNode = FAssetPackageTreeNode::Make(LOCTEXT("PackageNode", "Package"), LOCTEXT("PackageType", "Package"));
-
-	TSharedRef<FAssetPackageTreeNode> SummaryNode = FAssetPackageTreeNode::Make(LOCTEXT("SummaryNode", "Summary"), LOCTEXT("SummaryType", "FPackageFileSummary"), 0, 256);
-
-	TSharedRef<FAssetPackageTreeNode> NamesNode = FAssetPackageTreeNode::Make(LOCTEXT("NamesNode", "Name Map"), LOCTEXT("NamesType", "Name Table"), 256, 512);
-
-	TSharedRef<FAssetPackageTreeNode> ImportsNode = FAssetPackageTreeNode::Make(LOCTEXT("ImportsNode", "Imports"), LOCTEXT("ImportsType", "Import Table"), 768, 192);
-
-	TSharedRef<FAssetPackageTreeNode> ExportsNode = FAssetPackageTreeNode::Make(LOCTEXT("ExportsNode", "Exports"), LOCTEXT("ExportsType", "Export Table"), 960, 384);
-
-	SummaryNode->PreviewBytes = { 0xC1, 0x83, 0x2A, 0x9E, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00 };
-
-	PackageNode->Children.Add(SummaryNode);
-	PackageNode->Children.Add(NamesNode);
-	PackageNode->Children.Add(ImportsNode);
-	PackageNode->Children.Add(ExportsNode);
-
-	RootNodes.Add(PackageNode);
-
-	if (PackageTreeView.IsValid())
-	{
-		PackageTreeView->RequestTreeRefresh();
-		PackageTreeView->SetItemExpansion(PackageNode, true);
-		PackageTreeView->SetSelection(SummaryNode);
-	}
-}
-
-void SAssetSerializationInspector::ClearInspector()
-{
-	RootNodes.Reset();
-	SelectedNode.Reset();
-
-	if (AssetPathTextBox.IsValid())
-	{
-		AssetPathTextBox->SetText(FText::GetEmpty());
-	}
-
-	if (PackageTreeView.IsValid())
-	{
-		PackageTreeView->ClearSelection();
-		PackageTreeView->RequestTreeRefresh();
-	}
-
-	StatusText = LOCTEXT("ClearedStatus", "Inspector cleared.");
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
 
+struct FAssetPackageDocument;
 class SEditableTextBox;
 class STextBlock;
 template <typename ItemType> class STreeView;
@@ -22,7 +23,6 @@ struct FAssetPackageTreeNode
 	int64 Offset = 0;
 	int64 Size = 0;
 
-	TArray<uint8> PreviewBytes;
 	TArray<TSharedPtr<FAssetPackageTreeNode>> Children;
 
 	static TSharedRef<FAssetPackageTreeNode> Make(const FText& InDisplayName, const FText& InTypeName, const int64 InOffset = 0, const int64 InSize = 0)
@@ -49,11 +49,14 @@ public:
 private:
 	using FTreeNodePtr = TSharedPtr<FAssetPackageTreeNode>;
 
-	// Commands
+	FReply HandleBrowseClicked();
 	FReply HandleInspectClicked();
 	FReply HandleClearClicked();
 
-	// Tree delegates
+	bool LoadDocument(const FString& Filename);
+	void BuildRawDocumentTree();
+	void ClearInspector();
+
 	TSharedRef<ITableRow> GenerateTreeRow(FTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable);
 
 	void GetTreeChildren(FTreeNodePtr Item, TArray<FTreeNodePtr>& OutChildren) const;
@@ -66,15 +69,15 @@ private:
 	FText GetSelectedNodeOffset() const;
 	FText GetSelectedNodeSize() const;
 	FText GetHexPreviewText() const;
+	FText GetLoadedFilenameText() const;
+	FText GetFileSizeText() const;
 	FText GetStatusText() const;
-
-	// Temporary data setup
-	void BuildPlaceholderTree();
-	void ClearInspector();
 
 private:
 	TSharedPtr<SEditableTextBox> AssetPathTextBox;
 	TSharedPtr<STreeView<FTreeNodePtr>> PackageTreeView;
+
+	TSharedPtr<FAssetPackageDocument> Document;
 
 	TArray<FTreeNodePtr> RootNodes;
 	FTreeNodePtr SelectedNode;

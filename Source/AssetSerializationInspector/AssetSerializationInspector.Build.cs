@@ -35,6 +35,7 @@ public class AssetSerializationInspector : ModuleRules
             new string[]
             {
                 "CoreUObject",
+                "DesktopPlatform",
                 "Engine",
                 "InputCore",
                 "Projects",
