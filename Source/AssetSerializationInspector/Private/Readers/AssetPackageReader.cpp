@@ -267,6 +267,31 @@ namespace
 		return Result;
 	}
 
+	int64 FindExportMapEnd(const FAssetPackageDocument& Document)
+	{
+		const FPackageFileSummary& Summary = Document.PackageSummary;
+
+		const int64 ExportOffset = Summary.ExportOffset;
+
+		int64 Result = Summary.TotalHeaderSize > ExportOffset && Summary.TotalHeaderSize <= Document.GetFileSize() ? Summary.TotalHeaderSize : Document.GetFileSize();
+
+		auto ConsiderOffset = [ExportOffset, &Result, &Document](const int64 Candidate) {
+			if (Candidate > ExportOffset && Candidate <= Document.GetFileSize())
+			{
+				Result = FMath::Min(Result, Candidate);
+			}
+		};
+
+		ConsiderOffset(Summary.DependsOffset);
+		ConsiderOffset(Summary.SoftPackageReferencesOffset);
+		ConsiderOffset(Summary.SearchableNamesOffset);
+		ConsiderOffset(Summary.AssetRegistryDataOffset);
+		ConsiderOffset(Summary.WorldTileInfoDataOffset);
+		ConsiderOffset(Summary.ThumbnailTableOffset);
+
+		return Result;
+	}
+
 	bool DecodeNameMap(FAssetPackageDocument& Document, FText& OutError)
 	{
 		Document.NameMap.Reset();
@@ -569,6 +594,225 @@ namespace
 
 		return true;
 	}
+
+	bool DecodeExportMap(FAssetPackageDocument& Document, FText& OutError)
+	{
+		Document.ExportMap.Reset();
+
+		Document.ExportMapRegionStart = 0;
+		Document.ExportMapRegionEnd = 0;
+		Document.DecodedExportMapEnd = 0;
+		Document.ExportEntryStride = 0;
+
+		Document.ExportMapError = FText::GetEmpty();
+		Document.bHasDecodedExportMap = false;
+
+		if (!Document.bHasValidPackageSummary)
+		{
+			OutError = LOCTEXT("ExportMapRequiresSummary", "The package summary must be decoded before the Export Map.");
+			return false;
+		}
+
+		if (!Document.bHasDecodedNameMap)
+		{
+			OutError = LOCTEXT("ExportMapRequiresNames", "The Name Map must be decoded before the Export Map.");
+			return false;
+		}
+
+		const FPackageFileSummary& Summary = Document.PackageSummary;
+
+		if (Summary.ExportCount < 0)
+		{
+			OutError = FText::Format(LOCTEXT("NegativeExportCount", "The package declares a negative export count: {0}."), FText::AsNumber(Summary.ExportCount));
+			return false;
+		}
+
+		if (Summary.ExportCount == 0)
+		{
+			Document.bHasDecodedExportMap = true;
+			return true;
+		}
+
+		const int64 ExportMapStart = Summary.ExportOffset;
+		const int64 ExportMapEnd = FindExportMapEnd(Document);
+
+		Document.ExportMapRegionStart = ExportMapStart;
+		Document.ExportMapRegionEnd = ExportMapEnd;
+
+		if (ExportMapStart <= 0 || ExportMapEnd <= ExportMapStart || !Document.IsValidRange(ExportMapStart, ExportMapEnd - ExportMapStart))
+		{
+			OutError = FText::Format(LOCTEXT("InvalidExportMapRange", "The Export Map has an invalid range: 0x{0}–0x{1}."), FText::FromString(FString::Printf(TEXT("%llX"), ExportMapStart)),
+				FText::FromString(FString::Printf(TEXT("%llX"), ExportMapEnd)));
+			return false;
+		}
+
+		const int64 ExportMapSize = ExportMapEnd - ExportMapStart;
+
+		/*
+		 * Stable prefix:
+		 *
+		 * ClassIndex     : FPackageIndex = 4 bytes
+		 * SuperIndex     : FPackageIndex = 4 bytes
+		 * TemplateIndex  : FPackageIndex = 4 bytes
+		 * OuterIndex     : FPackageIndex = 4 bytes
+		 * ObjectName     : package FName = 8 bytes
+		 * ObjectFlags    : unint32 = 4 bytes
+		 * SerialSize     : int64 = 8 bytes
+		 * SerialOffset   : int64 = 8 bytes
+		 */
+		constexpr int64 StableExportPrefixSize = 44;
+
+		if (ExportMapSize < static_cast<int64>(Summary.ExportCount) * StableExportPrefixSize)
+		{
+			OutError = FText::Format(LOCTEXT("ExportMapTooSmall", "The Export Map contains only {0} bytes for {1} exports."), FText::AsNumber(ExportMapSize), FText::AsNumber(Summary.ExportCount));
+			return false;
+		}
+
+		if (ExportMapSize % Summary.ExportCount != 0)
+		{
+			OutError = FText::Format(
+				LOCTEXT("ImportMapStrideNotIntegral",
+					"The Export Map size ({0}) is not evenly divisible by its entry count ({1}). The section boundary may be incorrect or this package uses an unsupported Export Map layout."),
+				FText::AsNumber(ExportMapSize), FText::AsNumber(Summary.ExportCount));
+			return false;
+		}
+
+		const int64 EntryStride = ExportMapSize / Summary.ExportCount;
+
+		if (EntryStride < StableExportPrefixSize)
+		{
+			OutError = FText::Format(LOCTEXT("ExportEntryStrideTooSmall", "The inferred Export Map entry size is only {0} bytes."), FText::AsNumber(EntryStride));
+			return false;
+		}
+
+		Document.ExportEntryStride = EntryStride;
+		Document.ExportMap.Reserve(Summary.ExportCount);
+
+		for (int32 ExportIndex = 0; ExportIndex < Summary.ExportCount; ++ExportIndex)
+		{
+			const int64 EntryStart = ExportMapStart + static_cast<int64>(ExportIndex) * EntryStride;
+
+			FAssetPackageMemoryReader EntryReader(Document.FileData, EntryStart, EntryStride);
+
+			if (EntryReader.IsError())
+			{
+				OutError = FText::Format(LOCTEXT("CouldNotCreateExportEntryReader", "Could not create a bounded reader for Export Map entry {0}."), FText::AsNumber(ExportIndex));
+				return false;
+			}
+
+			FAssetPackageExportEntry Entry;
+			Entry.Index = ExportIndex;
+			Entry.Offset = EntryStart;
+			Entry.Size = EntryStride;
+
+			FText FieldError;
+
+			if (!ReadPackageIndexReference(EntryReader, Entry.ClassIndex, FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ExportClassIndexFailed", "Could not decode ClassIndex for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+				return false;
+			}
+
+			if (!ReadPackageIndexReference(EntryReader, Entry.SuperIndex, FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ExportSuperIndexFailed", "Could not decode SuperIndex for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+				return false;
+			}
+
+			if (EntryReader.UEVer() >= VER_UE4_TemplateIndex_IN_COOKED_EXPORTS)
+			{
+				if (!ReadPackageIndexReference(EntryReader, Entry.TemplateIndex, FieldError))
+				{
+					OutError = FText::Format(LOCTEXT("ExportTemplateIndexFailed", "Could not decode TemplateIndex for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+			}
+
+			if (!ReadPackageIndexReference(EntryReader, Entry.OuterIndex, FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ExportOuterIndexFailed", "Could not decode OuterIndex for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+				return false;
+			}
+
+			if (!ReadPackageNameReference(EntryReader, Entry.ObjectName, Document.NameMap.Num(), FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ExportObjectNameFailed", "Could not decode ObjectName for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+				return false;
+			}
+
+			if (!ReadInt<uint32>(EntryReader, Entry.ObjectFlags))
+			{
+				OutError = FText::Format(LOCTEXT("ExportObjectFlagsFailed", "Could not decode ObjectFlags for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+				return false;
+			}
+
+			if (EntryReader.UEVer() >= VER_UE4_64BIT_EXPORTMAP_SERIALSIZES)
+			{
+				if (!ReadInt<int64>(EntryReader, Entry.SerialSize))
+				{
+					OutError = FText::Format(LOCTEXT("ExportSerialSizeFailed", "Could not decode SerialSize for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+				if (!ReadInt<int64>(EntryReader, Entry.SerialOffset))
+				{
+					OutError = FText::Format(LOCTEXT("ExportSerialOffsetFailed", "Could not decode SerialOffset for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+			}
+			else
+			{
+				int32 SerialSize;
+				if (!ReadInt<int32>(EntryReader, SerialSize))
+				{
+					OutError = FText::Format(LOCTEXT("ExportSerialSizeFailed", "Could not decode SerialSize for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+				Entry.SerialSize = SerialSize;
+
+				int32 SerialOffset;
+				if (!ReadInt<int32>(EntryReader, SerialOffset))
+				{
+					OutError = FText::Format(LOCTEXT("ExportSerialOffsetFailed", "Could not decode SerialOffset for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+				Entry.SerialOffset = SerialOffset;
+			}
+			Entry.UndecodedTailOffset = EntryReader.Tell();
+			Entry.UndecodedTailSize = EntryStart + EntryStride - EntryReader.Tell();
+
+			switch (Entry.OuterIndex.GetKind())
+			{
+				case EAssetPackageIndexKind::Null:
+					break;
+
+				case EAssetPackageIndexKind::Import:
+					if (Entry.OuterIndex.GetArrayIndex() >= Summary.ImportCount)
+					{
+						OutError = FText::Format(
+							LOCTEXT("ExportOuterExportOutOfRange", "Export {0} references invalid outer import {1}."), FText::AsNumber(ExportIndex), FText::AsNumber(Entry.OuterIndex.GetArrayIndex()));
+						return false;
+					}
+					break;
+
+				case EAssetPackageIndexKind::Export:
+					if (Entry.OuterIndex.GetArrayIndex() >= Summary.ExportCount)
+					{
+						OutError = FText::Format(
+							LOCTEXT("ExportOuterExportOutOfRange", "Export {0} references invalid outer export {1}."), FText::AsNumber(ExportIndex), FText::AsNumber(Entry.OuterIndex.GetArrayIndex()));
+						return false;
+					}
+					break;
+			}
+
+			Document.ExportMap.Add(MoveTemp(Entry));
+		}
+
+		Document.DecodedExportMapEnd = ExportMapEnd;
+		Document.bHasDecodedExportMap = true;
+
+		return true;
+	}
+
 } // namespace
 
 TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FString& Filename, FText& OutError)
@@ -649,6 +893,12 @@ TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FStrin
 		if (!DecodeImportMap(*Document, ImportMapError))
 		{
 			Document->ImportMapError = ImportMapError;
+		}
+
+		FText ExportMapError;
+		if (!DecodeExportMap(*Document, ExportMapError))
+		{
+			Document->ExportMapError = ExportMapError;
 		}
 	}
 
