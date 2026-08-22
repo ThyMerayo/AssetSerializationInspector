@@ -109,6 +109,54 @@ namespace
 		return true;
 	}
 
+	template <typename T> bool ReadInt(FAssetPackageMemoryReader& Reader, T& OutValue)
+	{
+		if (!Reader.CanRead(sizeof(T)))
+		{
+			Reader.SetError();
+			return false;
+		}
+
+		Reader << OutValue;
+		return !Reader.IsError();
+	}
+
+	bool ReadPackageNameReference(FAssetPackageMemoryReader& Reader, FAssetPackageNameReference& OutReference, const int32 NameCount, FText& OutError)
+	{
+		if (!ReadInt<int32>(Reader, OutReference.NameIndex) || !ReadInt<int32>(Reader, OutReference.Number))
+		{
+			OutError = NSLOCTEXT("AssetPackageReader", "PackageNameReferenceReadFailed", "Could not read a package-local name reference.");
+
+			return false;
+		}
+
+		if (!OutReference.IsValid(NameCount))
+		{
+			OutError = FText::Format(NSLOCTEXT("AssetPackageReader", "InvalidPackageNameIndex", "The package-local name index {0} is outside the Name Map."), FText::AsNumber(OutReference.NameIndex));
+			return false;
+		}
+
+		if (OutReference.Number < 0)
+		{
+			OutError = FText::Format(NSLOCTEXT("AssetPackageReader", "InvalidPackageNameNumber", "The package-local name number {0} is negative."), FText::AsNumber(OutReference.Number));
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ReadPackageIndexReference(FAssetPackageMemoryReader& Reader, FAssetPackageIndexReference& OutReference, FText& OutError)
+	{
+		if (!ReadInt<int32>(Reader, OutReference.RawIndex))
+		{
+			OutError = NSLOCTEXT("AssetPackageReader", "PackageIndexReadFailed", "Could not read a package index.");
+
+			return false;
+		}
+
+		return true;
+	}
+
 	bool ParsePackageSummary(FAssetPackageDocument& Document, FText& OutError)
 	{
 		Document.PackageSummary = FPackageFileSummary();
@@ -182,6 +230,32 @@ namespace
 		ConsiderOffset(Summary.SoftObjectPathsOffset);
 		ConsiderOffset(Summary.GatherableTextDataOffset);
 		ConsiderOffset(Summary.ImportOffset);
+		ConsiderOffset(Summary.ExportOffset);
+		ConsiderOffset(Summary.DependsOffset);
+		ConsiderOffset(Summary.SoftPackageReferencesOffset);
+		ConsiderOffset(Summary.SearchableNamesOffset);
+		ConsiderOffset(Summary.AssetRegistryDataOffset);
+		ConsiderOffset(Summary.WorldTileInfoDataOffset);
+		ConsiderOffset(Summary.ThumbnailTableOffset);
+
+		return Result;
+	}
+
+	int64 FindImportMapEnd(const FAssetPackageDocument& Document)
+	{
+		const FPackageFileSummary& Summary = Document.PackageSummary;
+
+		const int64 ImportOffset = Summary.ImportOffset;
+
+		int64 Result = Summary.TotalHeaderSize > ImportOffset && Summary.TotalHeaderSize <= Document.GetFileSize() ? Summary.TotalHeaderSize : Document.GetFileSize();
+
+		auto ConsiderOffset = [ImportOffset, &Result, &Document](const int64 Candidate) {
+			if (Candidate > ImportOffset && Candidate <= Document.GetFileSize())
+			{
+				Result = FMath::Min(Result, Candidate);
+			}
+		};
+
 		ConsiderOffset(Summary.ExportOffset);
 		ConsiderOffset(Summary.DependsOffset);
 		ConsiderOffset(Summary.SoftPackageReferencesOffset);
@@ -323,6 +397,178 @@ namespace
 
 		return true;
 	}
+
+	bool DecodeImportMap(FAssetPackageDocument& Document, FText& OutError)
+	{
+		Document.ImportMap.Reset();
+
+		Document.ImportMapRegionStart = 0;
+		Document.ImportMapRegionEnd = 0;
+		Document.DecodedImportMapEnd = 0;
+		Document.ImportEntryStride = 0;
+
+		Document.ImportMapError = FText::GetEmpty();
+		Document.bHasDecodedImportMap = false;
+
+		if (!Document.bHasValidPackageSummary)
+		{
+			OutError = LOCTEXT("ImportMapRequiresSummary", "The package summary must be decoded before the Import Map.");
+			return false;
+		}
+
+		if (!Document.bHasDecodedNameMap)
+		{
+			OutError = LOCTEXT("ImportMapRequiresNames", "The Name Map must be decoded before the Import Map.");
+			return false;
+		}
+
+		const FPackageFileSummary& Summary = Document.PackageSummary;
+
+		if (Summary.ImportCount < 0)
+		{
+			OutError = FText::Format(LOCTEXT("NegativeImportCount", "The package declares a negative import count: {0}."), FText::AsNumber(Summary.ImportCount));
+			return false;
+		}
+
+		if (Summary.ImportCount == 0)
+		{
+			Document.bHasDecodedImportMap = true;
+			return true;
+		}
+
+		const int64 ImportMapStart = Summary.ImportOffset;
+		const int64 ImportMapEnd = FindImportMapEnd(Document);
+
+		Document.ImportMapRegionStart = ImportMapStart;
+		Document.ImportMapRegionEnd = ImportMapEnd;
+
+		if (ImportMapStart <= 0 || ImportMapEnd <= ImportMapStart || !Document.IsValidRange(ImportMapStart, ImportMapEnd - ImportMapStart))
+		{
+			OutError = FText::Format(LOCTEXT("InvalidImportMapRange", "The Import Map has an invalid range: 0x{0}–0x{1}."), FText::FromString(FString::Printf(TEXT("%llX"), ImportMapStart)),
+				FText::FromString(FString::Printf(TEXT("%llX"), ImportMapEnd)));
+			return false;
+		}
+
+		const int64 ImportMapSize = ImportMapEnd - ImportMapStart;
+
+		/*
+		 * Stable prefix:
+		 *
+		 * ClassPackage : package FName = 8 bytes
+		 * ClassName    : package FName = 8 bytes
+		 * OuterIndex   : FPackageIndex = 4 bytes
+		 * ObjectName   : package FName = 8 bytes
+		 */
+		constexpr int64 StableImportPrefixSize = sizeof(int32) * 7;
+
+		static_assert(StableImportPrefixSize == 28, "Unexpected stable import prefix size.");
+
+		if (ImportMapSize < static_cast<int64>(Summary.ImportCount) * StableImportPrefixSize)
+		{
+			OutError = FText::Format(
+				LOCTEXT("ImportMapTooSmall", "The Import Map contains {0} bytes, which is too small for {1} import entries."), FText::AsNumber(ImportMapSize), FText::AsNumber(Summary.ImportCount));
+			return false;
+		}
+
+		if (ImportMapSize % Summary.ImportCount != 0)
+		{
+			OutError = FText::Format(
+				LOCTEXT("ImportMapStrideNotIntegral",
+					"The Import Map size ({0}) is not evenly divisible by its entry count ({1}). The section boundary may be incorrect or this package uses an unsupported Import Map layout."),
+				FText::AsNumber(ImportMapSize), FText::AsNumber(Summary.ImportCount));
+			return false;
+		}
+
+		const int64 EntryStride = ImportMapSize / Summary.ImportCount;
+
+		if (EntryStride < StableImportPrefixSize)
+		{
+			OutError = FText::Format(LOCTEXT("ImportEntryStrideTooSmall", "The inferred Import Map entry size is only {0} bytes."), FText::AsNumber(EntryStride));
+			return false;
+		}
+
+		Document.ImportEntryStride = EntryStride;
+		Document.ImportMap.Reserve(Summary.ImportCount);
+
+		for (int32 ImportIndex = 0; ImportIndex < Summary.ImportCount; ++ImportIndex)
+		{
+			const int64 EntryStart = ImportMapStart + static_cast<int64>(ImportIndex) * EntryStride;
+
+			FAssetPackageMemoryReader EntryReader(Document.FileData, EntryStart, EntryStride);
+
+			if (EntryReader.IsError())
+			{
+				OutError = FText::Format(LOCTEXT("CouldNotCreateImportEntryReader", "Could not create a bounded reader for Import Map entry {0}."), FText::AsNumber(ImportIndex));
+				return false;
+			}
+
+			FAssetPackageImportEntry Entry;
+			Entry.Index = ImportIndex;
+			Entry.Offset = EntryStart;
+			Entry.Size = EntryStride;
+
+			FText FieldError;
+
+			if (!ReadPackageNameReference(EntryReader, Entry.ClassPackage, Document.NameMap.Num(), FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ImportClassPackageFailed", "Could not decode ClassPackage for import {0} at offset 0x{1}:\n{2}"), FText::AsNumber(ImportIndex),
+					FText::FromString(FString::Printf(TEXT("%llX"), EntryStart)), FieldError);
+				return false;
+			}
+
+			if (!ReadPackageNameReference(EntryReader, Entry.ClassName, Document.NameMap.Num(), FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ImportClassNameFailed", "Could not decode ClassName for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
+				return false;
+			}
+
+			if (!ReadPackageIndexReference(EntryReader, Entry.OuterIndex, FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ImportOuterIndexFailed", "Could not decode OuterIndex for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
+				return false;
+			}
+
+			if (!ReadPackageNameReference(EntryReader, Entry.ObjectName, Document.NameMap.Num(), FieldError))
+			{
+				OutError = FText::Format(LOCTEXT("ImportObjectNameFailed", "Could not decode ObjectName for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
+				return false;
+			}
+
+			Entry.UndecodedTailOffset = EntryReader.Tell();
+			Entry.UndecodedTailSize = EntryStart + EntryStride - EntryReader.Tell();
+
+			switch (Entry.OuterIndex.GetKind())
+			{
+				case EAssetPackageIndexKind::Null:
+					break;
+
+				case EAssetPackageIndexKind::Import:
+					if (Entry.OuterIndex.GetArrayIndex() >= Summary.ImportCount)
+					{
+						OutError = FText::Format(
+							LOCTEXT("ImportOuterImportOutOfRange", "Import {0} references invalid outer import {1}."), FText::AsNumber(ImportIndex), FText::AsNumber(Entry.OuterIndex.GetArrayIndex()));
+						return false;
+					}
+					break;
+
+				case EAssetPackageIndexKind::Export:
+					if (Entry.OuterIndex.GetArrayIndex() >= Summary.ExportCount)
+					{
+						OutError = FText::Format(
+							LOCTEXT("ImportOuterExportOutOfRange", "Import {0} references invalid outer export {1}."), FText::AsNumber(ImportIndex), FText::AsNumber(Entry.OuterIndex.GetArrayIndex()));
+						return false;
+					}
+					break;
+			}
+
+			Document.ImportMap.Add(MoveTemp(Entry));
+		}
+
+		Document.DecodedImportMapEnd = ImportMapEnd;
+		Document.bHasDecodedImportMap = true;
+
+		return true;
+	}
 } // namespace
 
 TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FString& Filename, FText& OutError)
@@ -396,6 +642,14 @@ TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FStrin
 		// Keep the document usable. A table decoding failure should not prevent
 		// inspection of the raw package and summary.
 		Document->NameMapError = NameMapError;
+	}
+	else
+	{
+		FText ImportMapError;
+		if (!DecodeImportMap(*Document, ImportMapError))
+		{
+			Document->ImportMapError = ImportMapError;
+		}
 	}
 
 	return Document;

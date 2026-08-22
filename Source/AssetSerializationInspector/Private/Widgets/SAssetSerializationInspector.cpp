@@ -600,7 +600,10 @@ void SAssetSerializationInspector::BuildPackageTree()
 	Regions.Sort([](const FPackageRegionDescriptor& Left, const FPackageRegionDescriptor& Right) { return Left.Offset < Right.Offset; });
 
 	const int64 HeaderBoundary = Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize <= Document->GetFileSize() ? Summary.TotalHeaderSize : Document->GetFileSize();
+
 	TSharedPtr<FAssetPackageTreeNode> NameMapNode;
+	TSharedPtr<FAssetPackageTreeNode> ImportMapNode;
+	TSharedPtr<FAssetPackageTreeNode> ExportMapNode;
 
 	for (int32 Index = 0; Index < Regions.Num(); ++Index)
 	{
@@ -631,6 +634,10 @@ void SAssetSerializationInspector::BuildPackageTree()
 		if (Region.Offset == Summary.NameOffset)
 		{
 			NameMapNode = RegionNode;
+		}
+		else if (Region.Offset == Summary.ImportOffset)
+		{
+			ImportMapNode = RegionNode;
 		}
 
 		if (Region.EntryCount != INDEX_NONE)
@@ -673,6 +680,56 @@ void SAssetSerializationInspector::BuildPackageTree()
 		}
 	}
 
+	if (ImportMapNode.IsValid())
+	{
+		if (Document->bHasDecodedImportMap)
+		{
+			for (const FAssetPackageImportEntry& Import : Document->ImportMap)
+			{
+				const FString ObjectName = Document->ResolveNameReference(Import.ObjectName);
+				const FString ClassPackage = Document->ResolveNameReference(Import.ClassPackage);
+				const FString ClassName = Document->ResolveNameReference(Import.ClassName);
+
+				TSharedRef<FAssetPackageTreeNode> ImportNode = MakeRegionNode(FText::Format(LOCTEXT("ImportEntryLabel", "[{0}] {1}"), FText::AsNumber(Import.Index), FText::FromString(ObjectName)),
+					LOCTEXT("ImportEntryType", "FObjectImport"), Import.Offset, Import.Size);
+
+				ImportNode->ValueText = FText::FromString(ObjectName);
+
+				int64 FieldOffset = Import.Offset;
+
+				ImportNode->Children.Add(
+					MakeValueRegionNode(LOCTEXT("ImportClassPackageField", "Class package"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassPackage), FieldOffset, 8));
+
+				FieldOffset += 8;
+
+				ImportNode->Children.Add(
+					MakeValueRegionNode(LOCTEXT("ImportClassNameField", "Class name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassName), FieldOffset, 8));
+
+				FieldOffset += 8;
+
+				ImportNode->Children.Add(MakeValueRegionNode(LOCTEXT("ImportOuterIndexField", "Outer index"), LOCTEXT("PackageIndexType", "FPackageIndex"),
+					FText::FromString(Document->DescribePackageIndex(Import.OuterIndex)), FieldOffset, 4));
+
+				FieldOffset += 4;
+
+				ImportNode->Children.Add(
+					MakeValueRegionNode(LOCTEXT("ImportObjectNameField", "Object name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ObjectName), FieldOffset, 8));
+
+				if (Import.UndecodedTailSize > 0)
+				{
+					ImportNode->Children.Add(MakeRegionNode(
+						LOCTEXT("ImportEntryTail", "Version-dependent tail"), LOCTEXT("ImportEntryTailType", "Undecoded FObjectImport data"), Import.UndecodedTailOffset, Import.UndecodedTailSize));
+				}
+
+				ImportMapNode->Children.Add(ImportNode);
+			}
+		}
+		else
+		{
+			ImportMapNode->Children.Add(MakeFieldNode(LOCTEXT("ImportMapDecodeError", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->ImportMapError));
+		}
+	}
+
 	if (Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize < Document->GetFileSize())
 	{
 		FileNode->Children.Add(MakeRegionNode(LOCTEXT("PackagePayloadRegion", "Package Payload"), LOCTEXT("PackagePayloadRegionType", "Export and bulk payload data"), Summary.TotalHeaderSize,
@@ -709,6 +766,15 @@ TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakeRegionNode(c
 TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const
 {
 	TSharedRef<FAssetPackageTreeNode> Node = FAssetPackageTreeNode::Make(Name, Type, 0, 0, EAssetPackageNodeKind::Field);
+	Node->ValueText = Value;
+
+	return Node;
+}
+
+TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakeValueRegionNode(const FText& Name, const FText& Type, const FText& Value, const int64 Offset, const int64 Size) const
+{
+	TSharedRef<FAssetPackageTreeNode> Node = MakeRegionNode(Name, Type, Offset, Size);
+
 	Node->ValueText = Value;
 
 	return Node;

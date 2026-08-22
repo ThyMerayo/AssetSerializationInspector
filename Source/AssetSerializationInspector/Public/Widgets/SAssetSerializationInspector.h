@@ -89,6 +89,7 @@ private:
 
 	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size) const;
 	TSharedRef<FAssetPackageTreeNode> MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const;
+	TSharedRef<FAssetPackageTreeNode> MakeValueRegionNode(const FText& Name, const FText& Type, const FText& Value, int64 Offset, int64 Size) const;
 
 private:
 	TSharedPtr<SEditableTextBox> AssetPathTextBox;
