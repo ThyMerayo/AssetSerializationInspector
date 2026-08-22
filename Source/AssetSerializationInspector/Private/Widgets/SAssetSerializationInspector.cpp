@@ -256,7 +256,6 @@ FReply SAssetSerializationInspector::HandleBrowseClicked()
 	if (DesktopPlatform == nullptr)
 	{
 		StatusText = LOCTEXT("DesktopPlatformUnavailable", "The desktop file-dialog service is unavailable.");
-
 		return FReply::Handled();
 	}
 
@@ -305,7 +304,6 @@ FReply SAssetSerializationInspector::HandleInspectClicked()
 	if (!AssetPathTextBox.IsValid())
 	{
 		StatusText = LOCTEXT("PathControlUnavailable", "The asset-path control is unavailable.");
-
 		return FReply::Handled();
 	}
 
@@ -594,7 +592,7 @@ FText SAssetSerializationInspector::GetSelectedNodeRange() const
 		return LOCTEXT("InvalidSelectedRange", "Invalid");
 	}
 
-	return FText::FromString(FString::Printf(TEXT("0x%llX – 0x%llX"), SelectedNode->Offset, SelectedNode->Offset + SelectedNode->Size));
+	return FText::FromString(FString::Printf(TEXT("0x%llX - 0x%llX"), SelectedNode->Offset, SelectedNode->Offset + SelectedNode->Size));
 }
 
 void SAssetSerializationInspector::BuildPackageTree()

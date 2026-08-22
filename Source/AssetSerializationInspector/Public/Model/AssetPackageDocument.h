@@ -94,6 +94,35 @@ struct FAssetPackageImportEntry
 	int64 UndecodedTailSize = 0;
 };
 
+struct FAssetPackageExportEntry
+{
+	int32 Index = INDEX_NONE;
+
+	int64 Offset = 0;
+	int64 Size = 0;
+
+	FAssetPackageIndexReference ClassIndex;
+	FAssetPackageIndexReference SuperIndex;
+	FAssetPackageIndexReference TemplateIndex;
+	FAssetPackageIndexReference OuterIndex;
+
+	FAssetPackageNameReference ObjectName;
+
+	uint32 ObjectFlags = 0;
+
+	int64 SerialSize = 0;
+	int64 SerialOffset = 0;
+
+	/**
+	 * Bytes remaining after decoding the stable FObjectImport prefix.
+	 *
+	 * These may contain PackageName, optional-import state, or other
+	 * version-dependent fields.
+	 */
+	int64 UndecodedTailOffset = 0;
+	int64 UndecodedTailSize = 0;
+};
+
 struct FAssetPackageDocument
 {
 	FString Filename;
@@ -118,20 +147,26 @@ struct FAssetPackageDocument
 	FText ImportMapError;
 	bool bHasDecodedImportMap = false;
 
+	TArray<FAssetPackageExportEntry> ExportMap;
+	int64 ExportMapRegionStart = 0;
+	int64 ExportMapRegionEnd = 0;
+	int64 DecodedExportMapEnd = 0;
+	int64 ExportEntryStride = 0;
+	FText ExportMapError;
+	bool bHasDecodedExportMap = false;
+
 	int64 GetFileSize() const;
-
 	bool IsValidRange(const int64 Offset, const int64 Size) const;
-
 	const FAssetPackageNameEntry* FindNameEntry(const int32 NameIndex) const;
-
 	FString ResolveNameIndex(const int32 NameIndex) const;
-
 	FString ResolveNameReference(const FAssetPackageNameReference& Reference) const;
-
 	FString DescribePackageIndex(const FAssetPackageIndexReference& Reference) const;
-
 	FString ResolveImportPath(int32 ImportIndex) const;
+	FString DescribePackageIndexDetailed(const FAssetPackageIndexReference& Reference) const;
+	FString ResolveExportPath(int32 ExportIndex) const;
+	bool IsValidExportPayload(const FAssetPackageExportEntry& Export) const;
 
 private:
 	FString ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
+	FString ResolveExportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
 };
