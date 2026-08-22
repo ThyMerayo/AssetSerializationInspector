@@ -687,11 +687,17 @@ void SAssetSerializationInspector::BuildPackageTree()
 		PackageTreeView->SetSelection(SummaryNode);
 	}
 
-	const int64 NameRegionEnd = FAssetPackageReader::FindNameMapEnd(*Document);
-	if (NameMapNode.IsValid() && Document->bHasDecodedNameMap && Document->DecodedNameMapEnd < NameRegionEnd)
+	if (NameMapNode.IsValid() && Document->bHasDecodedNameMap && Document->DecodedNameMapEnd < Document->NameMapRegionEnd)
 	{
-		NameMapNode->Children.Add(MakeRegionNode(LOCTEXT("NameMapTrailingBytes", "Trailing / Undecoded Bytes"), LOCTEXT("UnknownNameMapData", "Unknown or aligned data"), Document->DecodedNameMapEnd,
-			NameRegionEnd - Document->DecodedNameMapEnd));
+		const int64 TrailingOffset = Document->DecodedNameMapEnd;
+
+		const int64 TrailingSize = Document->NameMapRegionEnd - Document->DecodedNameMapEnd;
+
+		if (Document->IsValidRange(TrailingOffset, TrailingSize))
+		{
+			NameMapNode->Children.Add(
+				MakeRegionNode(LOCTEXT("NameMapTrailingBytes", "Trailing / Undecoded Bytes"), LOCTEXT("UnknownNameMapData", "Unknown or aligned data"), TrailingOffset, TrailingSize));
+		}
 	}
 }
 

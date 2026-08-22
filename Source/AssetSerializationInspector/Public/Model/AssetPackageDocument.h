@@ -34,7 +34,8 @@ struct FAssetPackageDocument
 	bool bHasValidPackageSummary = false;
 
 	TArray<FAssetPackageNameEntry> NameMap;
-
+	int64 NameMapRegionStart = 0;
+	int64 NameMapRegionEnd = 0;
 	int64 DecodedNameMapEnd = 0;
 	FText NameMapError;
 	bool bHasDecodedNameMap = false;

@@ -164,11 +164,44 @@ namespace
 		return true;
 	}
 
+	int64 FindNameMapEnd(const FAssetPackageDocument& Document)
+	{
+		const FPackageFileSummary& Summary = Document.PackageSummary;
+
+		const int64 NameOffset = Summary.NameOffset;
+
+		int64 Result = Summary.TotalHeaderSize > NameOffset && Summary.TotalHeaderSize <= Document.GetFileSize() ? Summary.TotalHeaderSize : Document.GetFileSize();
+
+		auto ConsiderOffset = [NameOffset, &Result, &Document](const int64 Candidate) {
+			if (Candidate > NameOffset && Candidate <= Document.GetFileSize())
+			{
+				Result = FMath::Min(Result, Candidate);
+			}
+		};
+
+		ConsiderOffset(Summary.SoftObjectPathsOffset);
+		ConsiderOffset(Summary.GatherableTextDataOffset);
+		ConsiderOffset(Summary.ImportOffset);
+		ConsiderOffset(Summary.ExportOffset);
+		ConsiderOffset(Summary.DependsOffset);
+		ConsiderOffset(Summary.SoftPackageReferencesOffset);
+		ConsiderOffset(Summary.SearchableNamesOffset);
+		ConsiderOffset(Summary.AssetRegistryDataOffset);
+		ConsiderOffset(Summary.WorldTileInfoDataOffset);
+		ConsiderOffset(Summary.ThumbnailTableOffset);
+
+		return Result;
+	}
+
 	bool DecodeNameMap(FAssetPackageDocument& Document, FText& OutError)
 	{
 		Document.NameMap.Reset();
 		Document.NameMapError = FText::GetEmpty();
 		Document.bHasDecodedNameMap = false;
+
+		Document.NameMapRegionStart = 0;
+		Document.NameMapRegionEnd = 0;
+		Document.DecodedNameMapEnd = 0;
 
 		const FPackageFileSummary& Summary = Document.PackageSummary;
 
@@ -191,7 +224,10 @@ namespace
 		}
 
 		const int64 NameMapStart = Summary.NameOffset;
-		const int64 NameMapEnd = FAssetPackageReader::FindNameMapEnd(Document);
+		const int64 NameMapEnd = FindNameMapEnd(Document);
+
+		Document.NameMapRegionStart = NameMapStart;
+		Document.NameMapRegionEnd = NameMapEnd;
 
 		if (NameMapStart <= 0 || NameMapEnd <= NameMapStart || !Document.IsValidRange(NameMapStart, NameMapEnd - NameMapStart))
 		{
@@ -288,35 +324,6 @@ namespace
 		return true;
 	}
 } // namespace
-
-int64 FAssetPackageReader::FindNameMapEnd(const FAssetPackageDocument& Document)
-{
-	const FPackageFileSummary& Summary = Document.PackageSummary;
-
-	const int64 NameOffset = Summary.NameOffset;
-
-	int64 Result = Summary.TotalHeaderSize > NameOffset && Summary.TotalHeaderSize <= Document.GetFileSize() ? Summary.TotalHeaderSize : Document.GetFileSize();
-
-	auto ConsiderOffset = [NameOffset, &Result, &Document](const int64 Candidate) {
-		if (Candidate > NameOffset && Candidate <= Document.GetFileSize())
-		{
-			Result = FMath::Min(Result, Candidate);
-		}
-	};
-
-	ConsiderOffset(Summary.SoftObjectPathsOffset);
-	ConsiderOffset(Summary.GatherableTextDataOffset);
-	ConsiderOffset(Summary.ImportOffset);
-	ConsiderOffset(Summary.ExportOffset);
-	ConsiderOffset(Summary.DependsOffset);
-	ConsiderOffset(Summary.SoftPackageReferencesOffset);
-	ConsiderOffset(Summary.SearchableNamesOffset);
-	ConsiderOffset(Summary.AssetRegistryDataOffset);
-	ConsiderOffset(Summary.WorldTileInfoDataOffset);
-	ConsiderOffset(Summary.ThumbnailTableOffset);
-
-	return Result;
-}
 
 TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FString& Filename, FText& OutError)
 {
