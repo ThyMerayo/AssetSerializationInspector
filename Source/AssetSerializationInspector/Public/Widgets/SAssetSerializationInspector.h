@@ -6,6 +6,7 @@
 #include "Widgets/SCompoundWidget.h"
 
 struct FAssetPackageDocument;
+struct FAssetPackageIndexReference;
 class SEditableTextBox;
 class STextBlock;
 template <typename ItemType> class STreeView;
@@ -21,6 +22,22 @@ enum class EAssetPackageNodeKind : uint8
 	Field,
 	ByteRange,
 	Unknown
+};
+
+enum class EAssetPackageNavigationTargetKind : uint8
+{
+	None,
+	Import,
+	Export
+};
+
+struct FAssetPackageNavigationTarget
+{
+	EAssetPackageNavigationTargetKind Kind = EAssetPackageNavigationTargetKind::None;
+
+	int32 Index = INDEX_NONE;
+
+	bool IsValid() const { return Kind != EAssetPackageNavigationTargetKind::None && Index != INDEX_NONE; }
 };
 
 /**
@@ -40,6 +57,8 @@ struct FAssetPackageTreeNode
 	int64 Offset = 0;
 	int64 Size = 0;
 
+	FAssetPackageNavigationTarget NavigationTarget;
+	TWeakPtr<FAssetPackageTreeNode> Parent;
 	TArray<TSharedPtr<FAssetPackageTreeNode>> Children;
 
 	static TSharedRef<FAssetPackageTreeNode> Make(
@@ -94,6 +113,7 @@ private:
 	FText GetSelectedNodeValue() const;
 	FText GetSelectedNodeRange() const;
 
+	TSharedRef<FAssetPackageTreeNode> MakePackageIndexNode(const FText& Name, const FAssetPackageIndexReference& Reference, const int64 Offset, const int64 Size) const;
 	void BuildPackageTree();
 
 	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size, EAssetPackageNodeKind Kind = EAssetPackageNodeKind::ByteRange) const;
@@ -101,6 +121,12 @@ private:
 	TSharedRef<FAssetPackageTreeNode> MakeValueRegionNode(const FText& Name, const FText& Type, const FText& Value, int64 Offset, int64 Size) const;
 
 	// Navigation
+	bool NavigateToTarget(const FAssetPackageNavigationTarget& Target);
+	void NavigateToNode(const TSharedPtr<FAssetPackageTreeNode>& Node);
+	void ExpandAncestors(const TSharedPtr<FAssetPackageTreeNode>& Node);
+	FReply HandleNavigateToReferenceClicked();
+	EVisibility GetNavigateToReferenceVisibility() const;
+	FText GetNavigateToReferenceText() const;
 	void HandleTreeItemDoubleClicked(FTreeNodePtr Item);
 
 private:
@@ -111,6 +137,13 @@ private:
 
 	TArray<FTreeNodePtr> RootNodes;
 	FTreeNodePtr SelectedNode;
+
+	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ImportNodesByIndex;
+	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ExportNodesByIndex;
+
+	TArray<TWeakPtr<FAssetPackageTreeNode>> NavigationHistory;
+	int32 NavigationHistoryIndex = INDEX_NONE;
+	bool bIsApplyingNavigationHistory = false;
 
 	FText StatusText;
 };
