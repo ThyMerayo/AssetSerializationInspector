@@ -1,19 +1,25 @@
-// Copyright Diego Merayo Merayo. All Rights Reserved
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/PackageFileSummary.h"
 
-/**
- * Owns the exact bytes loaded from a package file.
- *
- * The file is loaded without the package being opened by Unreal's asset
- * loading system. This is important because inspection should not mutate,
- * upgrade, or resave the package.
- */
 struct FAssetPackageDocument
 {
 	FString Filename;
 	TArray64<uint8> FileData;
+
+	/** Parsed package summary, when available. */
+	FPackageFileSummary PackageSummary;
+
+	/**
+	 * Number of physical bytes consumed while deserializing PackageSummary.
+	 *
+	 * This is not sizeof(FPackageFileSummary). The serialized representation
+	 * is version-dependent.
+	 */
+	int64 SerializedSummarySize = 0;
+
+	bool bHasValidPackageSummary = false;
 
 	int64 GetFileSize() const { return FileData.Num(); }
 
@@ -31,7 +37,6 @@ struct FAssetPackageDocument
 			return false;
 		}
 
-		// Written this way to avoid Offset + Size overflowing.
 		return Size <= FileSize - Offset;
 	}
 };

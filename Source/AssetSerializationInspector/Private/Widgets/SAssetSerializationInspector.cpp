@@ -23,6 +23,70 @@
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationInspector"
 
+namespace
+{
+	struct FPackageRegionDescriptor
+	{
+		FText Name;
+		FText Type;
+		int64 Offset = 0;
+		int32 EntryCount = INDEX_NONE;
+	};
+
+	class SAssetPackageTreeRow : public SMultiColumnTableRow<TSharedPtr<FAssetPackageTreeNode>>
+	{
+	public:
+		SLATE_BEGIN_ARGS(SAssetPackageTreeRow) {}
+		SLATE_ARGUMENT(TSharedPtr<FAssetPackageTreeNode>, Item)
+		SLATE_END_ARGS()
+
+		void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& OwnerTable)
+		{
+			Item = InArgs._Item;
+
+			SMultiColumnTableRow<TSharedPtr<FAssetPackageTreeNode>>::Construct(FSuperRowType::FArguments(), OwnerTable);
+		}
+
+		virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& ColumnName) override
+		{
+			if (!Item.IsValid())
+			{
+				return SNullWidget::NullWidget;
+			}
+
+			if (ColumnName == TEXT("Name"))
+			{
+				return SNew(STextBlock).Text(Item->DisplayName);
+			}
+
+			if (ColumnName == TEXT("Offset"))
+			{
+				if (Item->Kind == EAssetPackageNodeKind::Field)
+				{
+					return SNew(STextBlock).Text(FText::FromString(TEXT("—")));
+				}
+
+				return SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("0x%llX"), Item->Offset)));
+			}
+
+			if (ColumnName == TEXT("Size"))
+			{
+				if (Item->Kind == EAssetPackageNodeKind::Field)
+				{
+					return SNew(STextBlock).Text(Item->ValueText);
+				}
+
+				return SNew(STextBlock).Text(FText::AsNumber(Item->Size));
+			}
+
+			return SNullWidget::NullWidget;
+		}
+
+	private:
+		TSharedPtr<FAssetPackageTreeNode> Item;
+	};
+} // namespace
+
 void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 {
 	StatusText = LOCTEXT("ReadyStatus", "Ready");
@@ -72,7 +136,7 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 
 									+ SHeaderRow::Column("Offset").DefaultLabel(LOCTEXT("OffsetColumn", "Offset")).FillWidth(0.25f)
 
-									+ SHeaderRow::Column("Size").DefaultLabel(LOCTEXT("SizeColumn", "Size")).FillWidth(0.20f))]]]
+									+ SHeaderRow::Column("Size").DefaultLabel(LOCTEXT("SizeOrValueColumn", "Size / Value")).FillWidth(0.25f))]]]
 
 			// Right side
 			+ SSplitter::Slot().Value(0.70f)[SNew(SSplitter).Orientation(Orient_Vertical)
@@ -99,7 +163,10 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("OffsetFormat", "Offset: {0}"), GetSelectedNodeOffset()); })]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("SizeFormat", "Size: {0}"), GetSelectedNodeSize()); })]]]
+								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("ValueFormat", "Value: {0}"), GetSelectedNodeValue()); })]
+
+							+ SVerticalBox::Slot().AutoHeight().Padding(
+								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("RangeFormat", "Range: {0}"), GetSelectedNodeRange()); })]]]
 
 				// Hex preview
 				+ SSplitter::Slot().Value(0.65f)[SNew(SBorder)
@@ -221,7 +288,7 @@ bool SAssetSerializationInspector::LoadDocument(const FString& Filename)
 		AssetPathTextBox->SetText(FText::FromString(Document->Filename));
 	}
 
-	BuildRawDocumentTree();
+	BuildPackageTree();
 
 	StatusText = FText::Format(LOCTEXT("LoadedFileStatus", "Loaded {0} ({1} bytes)."), FText::FromString(FPaths::GetCleanFilename(Document->Filename)), FText::AsNumber(Document->GetFileSize()));
 
@@ -248,39 +315,9 @@ void SAssetSerializationInspector::ClearInspector()
 	StatusText = LOCTEXT("ClearedStatus", "Inspector cleared.");
 }
 
-void SAssetSerializationInspector::BuildRawDocumentTree()
-{
-	RootNodes.Reset();
-	SelectedNode.Reset();
-
-	if (!Document.IsValid())
-	{
-		return;
-	}
-
-	TSharedRef<FAssetPackageTreeNode> FileNode =
-		FAssetPackageTreeNode::Make(FText::FromString(FPaths::GetCleanFilename(Document->Filename)), LOCTEXT("RawPackageFileType", "Raw package file"), 0, Document->GetFileSize());
-
-	RootNodes.Add(FileNode);
-
-	if (PackageTreeView.IsValid())
-	{
-		PackageTreeView->RequestTreeRefresh();
-		PackageTreeView->SetSelection(FileNode);
-	}
-}
-
 TSharedRef<ITableRow> SAssetSerializationInspector::GenerateTreeRow(FTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable)
 {
-	check(Item.IsValid());
-
-	return SNew(STableRow<FTreeNodePtr>, OwnerTable)[SNew(SHorizontalBox)
-
-		+ SHorizontalBox::Slot().FillWidth(0.55f).VAlign(VAlign_Center).Padding(4.0f, 2.0f)[SNew(STextBlock).Text(Item->DisplayName)]
-
-		+ SHorizontalBox::Slot().FillWidth(0.25f).VAlign(VAlign_Center).Padding(4.0f, 2.0f)[SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("0x%llX"), Item->Offset)))]
-
-		+ SHorizontalBox::Slot().FillWidth(0.20f).VAlign(VAlign_Center).Padding(4.0f, 2.0f)[SNew(STextBlock).Text(FText::AsNumber(Item->Size))]];
+	return SNew(SAssetPackageTreeRow, OwnerTable).Item(Item);
 }
 
 void SAssetSerializationInspector::GetTreeChildren(FTreeNodePtr Item, TArray<FTreeNodePtr>& OutChildren) const
@@ -346,6 +383,15 @@ FText SAssetSerializationInspector::GetHexPreviewText() const
 	if (SelectedNode->Size == 0)
 	{
 		return LOCTEXT("EmptyByteRange", "The selected byte range is empty.");
+	}
+
+	if (SelectedNode->Kind == EAssetPackageNodeKind::Field)
+	{
+		return FText::Format(LOCTEXT("LogicalFieldHexMessage",
+								 "{0}\n\n"
+								 "This is currently a logical summary field. "
+								 "Its exact serialized byte range has not yet been captured."),
+			GetSelectedNodeValue());
 	}
 
 	// Avoid constructing an enormous text object when the root node represents
@@ -446,6 +492,172 @@ FText SAssetSerializationInspector::GetFileSizeText() const
 FText SAssetSerializationInspector::GetStatusText() const
 {
 	return StatusText;
+}
+
+FText SAssetSerializationInspector::GetSelectedNodeValue() const
+{
+	if (!SelectedNode.IsValid() || SelectedNode->ValueText.IsEmpty())
+	{
+		return LOCTEXT("NoSelectedValue", "-");
+	}
+
+	return SelectedNode->ValueText;
+}
+
+FText SAssetSerializationInspector::GetSelectedNodeRange() const
+{
+	if (!SelectedNode.IsValid())
+	{
+		return LOCTEXT("NoSelectedRange", "-");
+	}
+
+	if (SelectedNode->Kind == EAssetPackageNodeKind::Field)
+	{
+		return LOCTEXT("LogicalFieldRange", "Logical field; exact byte range not captured yet");
+	}
+
+	if (!Document.IsValid() || !Document->IsValidRange(SelectedNode->Offset, SelectedNode->Size))
+	{
+		return LOCTEXT("InvalidSelectedRange", "Invalid");
+	}
+
+	return FText::FromString(FString::Printf(TEXT("0x%llX – 0x%llX"), SelectedNode->Offset, SelectedNode->Offset + SelectedNode->Size));
+}
+
+void SAssetSerializationInspector::BuildPackageTree()
+{
+	RootNodes.Reset();
+	SelectedNode.Reset();
+
+	if (!Document.IsValid() || !Document->bHasValidPackageSummary)
+	{
+		return;
+	}
+
+	const FPackageFileSummary& Summary = Document->PackageSummary;
+
+	TSharedRef<FAssetPackageTreeNode> FileNode = FAssetPackageTreeNode::Make(
+		FText::FromString(FPaths::GetCleanFilename(Document->Filename)), LOCTEXT("PackageFileType", "Unreal package file"), 0, Document->GetFileSize(), EAssetPackageNodeKind::File);
+
+	RootNodes.Add(FileNode);
+
+	// The exact serialized size comes from Archive::Tell(), not sizeof().
+	TSharedRef<FAssetPackageTreeNode> SummaryNode =
+		MakeRegionNode(LOCTEXT("PackageSummaryNode", "Package Summary"), LOCTEXT("PackageSummaryType", "FPackageFileSummary"), 0, Document->SerializedSummarySize);
+
+	FileNode->Children.Add(SummaryNode);
+
+	// Logical fields. We know their interpreted values, but we are not yet
+	// claiming exact byte ranges for every individual field.
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("TagField", "Tag"), LOCTEXT("Int32Type", "int32"), FText::FromString(FString::Printf(TEXT("0x%08X"), static_cast<uint32>(Summary.Tag)))));
+
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("PackageNameField", "Package name"), LOCTEXT("FStringType", "FString"), FText::FromString(Summary.PackageName)));
+
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("TotalHeaderSizeField", "Total header size"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.TotalHeaderSize)));
+
+	SummaryNode->Children.Add(
+		MakeFieldNode(LOCTEXT("PackageFlagsField", "Package flags"), LOCTEXT("Uint32Type", "uint32"), FText::FromString(FString::Printf(TEXT("0x%08X"), Summary.GetPackageFlags()))));
+
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("NameCountField", "Name count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.NameCount)));
+
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("ImportCountField", "Import count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.ImportCount)));
+
+	SummaryNode->Children.Add(MakeFieldNode(LOCTEXT("ExportCountField", "Export count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Summary.ExportCount)));
+
+	TArray<FPackageRegionDescriptor> Regions;
+
+	auto AddRegion = [&Regions](const FText& Name, const FText& Type, const int64 Offset, const int32 Count = INDEX_NONE) {
+		if (Offset <= 0)
+		{
+			return;
+		}
+
+		FPackageRegionDescriptor& Region = Regions.AddDefaulted_GetRef();
+
+		Region.Name = Name;
+		Region.Type = Type;
+		Region.Offset = Offset;
+		Region.EntryCount = Count;
+	};
+
+	AddRegion(LOCTEXT("NameMapRegion", "Name Map"), LOCTEXT("NameMapRegionType", "Name entries"), Summary.NameOffset, Summary.NameCount);
+	AddRegion(LOCTEXT("SoftObjectPathsRegion", "Soft Object Paths"), LOCTEXT("SoftObjectPathsRegionType", "Soft object path entries"), Summary.SoftObjectPathsOffset, Summary.SoftObjectPathsCount);
+	AddRegion(
+		LOCTEXT("GatherableTextRegion", "Gatherable Text Data"), LOCTEXT("GatherableTextRegionType", "Gatherable text entries"), Summary.GatherableTextDataOffset, Summary.GatherableTextDataCount);
+	AddRegion(LOCTEXT("ImportMapRegion", "Import Map"), LOCTEXT("ImportMapRegionType", "FObjectImport entries"), Summary.ImportOffset, Summary.ImportCount);
+	AddRegion(LOCTEXT("ExportMapRegion", "Export Map"), LOCTEXT("ExportMapRegionType", "FObjectExport entries"), Summary.ExportOffset, Summary.ExportCount);
+	AddRegion(LOCTEXT("DependsMapRegion", "Depends Map"), LOCTEXT("DependsMapRegionType", "Export dependencies"), Summary.DependsOffset);
+	AddRegion(LOCTEXT("SoftPackageReferencesRegion", "Soft Package References"), LOCTEXT("SoftPackageReferencesRegionType", "Soft package reference entries"), Summary.SoftPackageReferencesOffset,
+		Summary.SoftPackageReferencesCount);
+	AddRegion(LOCTEXT("SearchableNamesRegion", "Searchable Names"), LOCTEXT("SearchableNamesRegionType", "Searchable name entries"), Summary.SearchableNamesOffset);
+	AddRegion(LOCTEXT("AssetRegistryDataRegion", "Asset Registry Data"), LOCTEXT("AssetRegistryDataRegionType", "Asset registry payload"), Summary.AssetRegistryDataOffset);
+	AddRegion(LOCTEXT("WorldTileInfoRegion", "World Tile Info"), LOCTEXT("WorldTileInfoRegionType", "World tile information"), Summary.WorldTileInfoDataOffset);
+	AddRegion(LOCTEXT("ThumbnailTableRegion", "Thumbnail Table"), LOCTEXT("ThumbnailTableRegionType", "Thumbnail metadata"), Summary.ThumbnailTableOffset);
+
+	Regions.Sort([](const FPackageRegionDescriptor& Left, const FPackageRegionDescriptor& Right) { return Left.Offset < Right.Offset; });
+
+	const int64 HeaderBoundary = Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize <= Document->GetFileSize() ? Summary.TotalHeaderSize : Document->GetFileSize();
+
+	for (int32 Index = 0; Index < Regions.Num(); ++Index)
+	{
+		const FPackageRegionDescriptor& Region = Regions[Index];
+
+		if (Region.Offset < 0 || Region.Offset >= Document->GetFileSize())
+		{
+			continue;
+		}
+
+		int64 RegionEnd = HeaderBoundary;
+
+		for (int32 NextIndex = Index + 1; NextIndex < Regions.Num(); ++NextIndex)
+		{
+			if (Regions[NextIndex].Offset > Region.Offset)
+			{
+				RegionEnd = Regions[NextIndex].Offset;
+				break;
+			}
+		}
+
+		RegionEnd = FMath::Clamp<int64>(RegionEnd, Region.Offset, Document->GetFileSize());
+
+		const int64 RegionSize = RegionEnd - Region.Offset;
+
+		TSharedRef<FAssetPackageTreeNode> RegionNode = MakeRegionNode(Region.Name, Region.Type, Region.Offset, RegionSize);
+
+		if (Region.EntryCount != INDEX_NONE)
+		{
+			RegionNode->Children.Add(MakeFieldNode(LOCTEXT("EntryCountField", "Entry count"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Region.EntryCount)));
+		}
+
+		FileNode->Children.Add(RegionNode);
+	}
+
+	if (Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize < Document->GetFileSize())
+	{
+		FileNode->Children.Add(MakeRegionNode(LOCTEXT("PackagePayloadRegion", "Package Payload"), LOCTEXT("PackagePayloadRegionType", "Export and bulk payload data"), Summary.TotalHeaderSize,
+			Document->GetFileSize() - Summary.TotalHeaderSize));
+	}
+
+	if (PackageTreeView.IsValid())
+	{
+		PackageTreeView->RequestTreeRefresh();
+		PackageTreeView->SetItemExpansion(FileNode, true);
+		PackageTreeView->SetItemExpansion(SummaryNode, true);
+		PackageTreeView->SetSelection(SummaryNode);
+	}
+}
+
+TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakeRegionNode(const FText& Name, const FText& Type, const int64 Offset, const int64 Size) const
+{
+	return FAssetPackageTreeNode::Make(Name, Type, Offset, Size, EAssetPackageNodeKind::Region);
+}
+
+TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const
+{
+	TSharedRef<FAssetPackageTreeNode> Node = FAssetPackageTreeNode::Make(Name, Type, 0, 0, EAssetPackageNodeKind::Field);
+	Node->ValueText = Value;
+
+	return Node;
 }
 
 #undef LOCTEXT_NAMESPACE

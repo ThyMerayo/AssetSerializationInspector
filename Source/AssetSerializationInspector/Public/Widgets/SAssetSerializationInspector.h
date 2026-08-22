@@ -9,6 +9,13 @@ class SEditableTextBox;
 class STextBlock;
 template <typename ItemType> class STreeView;
 
+enum class EAssetPackageNodeKind : uint8
+{
+	File,
+	Region,
+	Group,
+	Field
+};
 /**
  * A node displayed in the package structure tree.
  *
@@ -19,13 +26,17 @@ struct FAssetPackageTreeNode
 {
 	FText DisplayName;
 	FText TypeName;
+	FText ValueText;
+
+	EAssetPackageNodeKind Kind = EAssetPackageNodeKind::Region;
 
 	int64 Offset = 0;
 	int64 Size = 0;
 
 	TArray<TSharedPtr<FAssetPackageTreeNode>> Children;
 
-	static TSharedRef<FAssetPackageTreeNode> Make(const FText& InDisplayName, const FText& InTypeName, const int64 InOffset = 0, const int64 InSize = 0)
+	static TSharedRef<FAssetPackageTreeNode> Make(
+		const FText& InDisplayName, const FText& InTypeName, const int64 InOffset = 0, const int64 InSize = 0, const EAssetPackageNodeKind InKind = EAssetPackageNodeKind::Region)
 	{
 		TSharedRef<FAssetPackageTreeNode> Node = MakeShared<FAssetPackageTreeNode>();
 
@@ -33,6 +44,7 @@ struct FAssetPackageTreeNode
 		Node->TypeName = InTypeName;
 		Node->Offset = InOffset;
 		Node->Size = InSize;
+		Node->Kind = InKind;
 
 		return Node;
 	}
@@ -54,7 +66,6 @@ private:
 	FReply HandleClearClicked();
 
 	bool LoadDocument(const FString& Filename);
-	void BuildRawDocumentTree();
 	void ClearInspector();
 
 	TSharedRef<ITableRow> GenerateTreeRow(FTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable);
@@ -63,7 +74,6 @@ private:
 
 	void HandleTreeSelectionChanged(FTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 
-	// Dynamic text
 	FText GetSelectedNodeName() const;
 	FText GetSelectedNodeType() const;
 	FText GetSelectedNodeOffset() const;
@@ -72,6 +82,13 @@ private:
 	FText GetLoadedFilenameText() const;
 	FText GetFileSizeText() const;
 	FText GetStatusText() const;
+	FText GetSelectedNodeValue() const;
+	FText GetSelectedNodeRange() const;
+
+	void BuildPackageTree();
+
+	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size) const;
+	TSharedRef<FAssetPackageTreeNode> MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const;
 
 private:
 	TSharedPtr<SEditableTextBox> AssetPathTextBox;
