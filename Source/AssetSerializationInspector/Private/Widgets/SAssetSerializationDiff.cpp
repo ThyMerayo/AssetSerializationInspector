@@ -7,6 +7,7 @@
 #include "IDesktopPlatform.h"
 #include "Misc/Paths.h"
 #include "Styling/AppStyle.h"
+#include "Styling/StyleColors.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
@@ -15,6 +16,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
+#include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/SExpanderArrow.h"
 #include "Widgets/Views/SHeaderRow.h"
@@ -178,6 +180,14 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 {
 	StatusText = LOCTEXT("ReadyStatus", "Select two .uasset files to compare.");
 
+	HexDiffStyle = MakeShared<FSlateStyleSet>(TEXT("AssetSerializationHexDiffStyle"));
+	FTextBlockStyle NormalStyle = FAppStyle::GetWidgetStyle<FTextBlockStyle>(TEXT("NormalText"));
+	NormalStyle.SetFont(FAppStyle::GetFontStyle(TEXT("MonoFont")));
+	HexDiffStyle->Set(TEXT("Normal"), NormalStyle);
+	FTextBlockStyle ChangedStyle = NormalStyle;
+	ChangedStyle.SetColorAndOpacity(FSlateColor(FStyleColors::AccentRed));
+	HexDiffStyle->Set(TEXT("Changed"), ChangedStyle);
+
 	ChildSlot[SNew(SVerticalBox)
 
 		// OLD
@@ -269,9 +279,10 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 
 		+ SVerticalBox::Slot().FillHeight(1.0f)[SNew(SScrollBox)
 
-			+ SScrollBox::Slot()[SNew(STextBlock)
+			+ SScrollBox::Slot()[SNew(SRichTextBlock)
 					.Text_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexText() : GetSelectedNewHexText(); })
-					.Font(FAppStyle::GetFontStyle("MonoFont"))
+					.TextStyle(&HexDiffStyle->GetWidgetStyle<FTextBlockStyle>(TEXT("Normal")))
+					.DecoratorStyleSet(HexDiffStyle.Get())
 					.AutoWrapText(false)]];
 }
 
@@ -484,19 +495,29 @@ TSharedRef<ITableRow> SAssetSerializationDiff::GenerateDiffTreeRow(FDiffTreeNode
 void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo)
 {
 	SelectedDiffNode = Item;
+	SelectedByteDiffSpans.Reset();
+
+	if (!SelectedDiffNode.IsValid() || !OldDocument.IsValid() || !NewDocument.IsValid())
+	{
+		return;
+	}
+
+	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
+
+	SelectedByteDiffSpans = BuildByteDiffSpans(OldDocument.Get(), Diff.OldOffset, Diff.OldSize, NewDocument.Get(), Diff.NewOffset, Diff.NewSize);
 }
 
 // Details
 FText SAssetSerializationDiff::GetSelectedDisplayName() const
 {
-	return SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.DisplayName : FText::FromString(TEXT("—"));
+	return SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.DisplayName : FText::FromString(TEXT("-"));
 }
 
 FText SAssetSerializationDiff::GetSelectedOldValue() const
 {
 	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.OldValue.IsEmpty())
 	{
-		return FText::FromString(TEXT("—"));
+		return FText::FromString(TEXT("-"));
 	}
 
 	return FText::FromString(SelectedDiffNode->Diff.OldValue);
@@ -506,7 +527,7 @@ FText SAssetSerializationDiff::GetSelectedNewValue() const
 {
 	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.NewValue.IsEmpty())
 	{
-		return FText::FromString(TEXT("—"));
+		return FText::FromString(TEXT("-"));
 	}
 
 	return FText::FromString(SelectedDiffNode->Diff.NewValue);
@@ -517,7 +538,7 @@ static FText FormatDiffOffset(const int64 Offset)
 {
 	if (Offset == INDEX_NONE)
 	{
-		return FText::FromString(TEXT("—"));
+		return FText::FromString(TEXT("-"));
 	}
 
 	return FText::FromString(FString::Printf(TEXT("0x%llX"), Offset));
@@ -525,12 +546,12 @@ static FText FormatDiffOffset(const int64 Offset)
 
 FText SAssetSerializationDiff::GetSelectedOldOffset() const
 {
-	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.OldOffset) : FText::FromString(TEXT("—"));
+	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.OldOffset) : FText::FromString(TEXT("-"));
 }
 
 FText SAssetSerializationDiff::GetSelectedNewOffset() const
 {
-	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.NewOffset) : FText::FromString(TEXT("—"));
+	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.NewOffset) : FText::FromString(TEXT("-"));
 }
 
 // Sizes
@@ -538,7 +559,7 @@ FText SAssetSerializationDiff::GetSelectedOldSize() const
 {
 	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.OldOffset == INDEX_NONE)
 	{
-		return FText::FromString(TEXT("—"));
+		return FText::FromString(TEXT("-"));
 	}
 
 	return FText::Format(LOCTEXT("DiffSizeBytes", "{0} bytes"), FText::AsNumber(SelectedDiffNode->Diff.OldSize));
@@ -548,7 +569,7 @@ FText SAssetSerializationDiff::GetSelectedNewSize() const
 {
 	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.NewOffset == INDEX_NONE)
 	{
-		return FText::FromString(TEXT("—"));
+		return FText::FromString(TEXT("-"));
 	}
 
 	return FText::Format(LOCTEXT("DiffSizeBytes", "{0} bytes"), FText::AsNumber(SelectedDiffNode->Diff.NewSize));
@@ -623,6 +644,18 @@ FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
 	}
 
 	return LOCTEXT("BytesDifferent", "Byte contents differ.");
+}
+
+int64 SAssetSerializationDiff::GetSelectedChangedByteCount() const
+{
+	int64 Result = 0;
+
+	for (const FAssetByteDiffSpan& Span : SelectedByteDiffSpans)
+	{
+		Result += Span.Size;
+	}
+
+	return Result;
 }
 
 FText SAssetSerializationDiff::BuildHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, bool bRelativeOffsets) const
@@ -718,7 +751,7 @@ FText SAssetSerializationDiff::GetSelectedOldHexText() const
 		return LOCTEXT("NoOldHexSelection", "Select a diff node.");
 	}
 
-	return BuildHexPreview(OldDocument.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, true);
+	return BuildHighlightedHexPreview(OldDocument.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, SelectedByteDiffSpans);
 }
 
 FText SAssetSerializationDiff::GetSelectedNewHexText() const
@@ -728,7 +761,220 @@ FText SAssetSerializationDiff::GetSelectedNewHexText() const
 		return LOCTEXT("NoNewHexSelection", "Select a diff node.");
 	}
 
-	return BuildHexPreview(NewDocument.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, true);
+	return BuildHighlightedHexPreview(NewDocument.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, SelectedByteDiffSpans);
+}
+
+TArray<FAssetByteDiffSpan> SAssetSerializationDiff::BuildByteDiffSpans(
+	const FAssetPackageDocument* OldDoc, const int64 OldOffset, const int64 OldSize, const FAssetPackageDocument* NewDoc, const int64 NewOffset, const int64 NewSize) const
+{
+	TArray<FAssetByteDiffSpan> Result;
+
+	if (OldDoc == nullptr || NewDoc == nullptr || OldOffset == INDEX_NONE || NewOffset == INDEX_NONE || OldSize < 0 || NewSize < 0 || !OldDoc->IsValidRange(OldOffset, OldSize)
+		|| !NewDoc->IsValidRange(NewOffset, NewSize))
+	{
+		return Result;
+	}
+
+	const int64 CommonSize = FMath::Min(OldSize, NewSize);
+
+	int64 SpanStart = INDEX_NONE;
+
+	for (int64 Index = 0; Index < CommonSize; ++Index)
+	{
+		const uint8 OldByte = OldDoc->FileData[OldOffset + Index];
+
+		const uint8 NewByte = NewDoc->FileData[NewOffset + Index];
+
+		const bool bDifferent = OldByte != NewByte;
+
+		if (bDifferent && SpanStart == INDEX_NONE)
+		{
+			SpanStart = Index;
+		}
+		else if (!bDifferent && SpanStart != INDEX_NONE)
+		{
+			Result.Add({ SpanStart, Index - SpanStart });
+
+			SpanStart = INDEX_NONE;
+		}
+	}
+
+	if (SpanStart != INDEX_NONE)
+	{
+		Result.Add({ SpanStart, CommonSize - SpanStart });
+	}
+
+	// Anything beyond the common length only exists on one side,
+	// so treat that region as changed too.
+	if (OldSize != NewSize)
+	{
+		Result.Add({ CommonSize, FMath::Max(OldSize, NewSize) - CommonSize });
+	}
+
+	return Result;
+}
+
+bool SAssetSerializationDiff::IsByteDifferent(const int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const
+{
+	for (const FAssetByteDiffSpan& Span : Spans)
+	{
+		if (RelativeOffset >= Span.Offset && RelativeOffset < Span.End())
+		{
+			return true;
+		}
+
+		if (Span.Offset > RelativeOffset)
+		{
+			break;
+		}
+	}
+
+	return false;
+}
+
+FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const
+{
+	if (Document == nullptr || Offset == INDEX_NONE)
+	{
+		return FText::FromString(TEXT("No byte range."));
+	}
+
+	if (Size < 0 || !Document->IsValidRange(Offset, Size))
+	{
+		return FText::FromString(TEXT("Invalid byte range."));
+	}
+
+	constexpr int64 MaximumPreviewBytes = 4096;
+	constexpr int32 BytesPerRow = 16;
+
+	const int64 PreviewSize = FMath::Min<int64>(Size, MaximumPreviewBytes);
+
+	FString Result;
+
+	for (int64 RowOffset = 0; RowOffset < PreviewSize; RowOffset += BytesPerRow)
+	{
+		// Relative offsets are much better for side-by-side diffing.
+		Result += FString::Printf(TEXT("%08llX  "), RowOffset);
+
+		// HEX
+		bool bMarkupOpen = false;
+
+		for (int32 Column = 0; Column < BytesPerRow; ++Column)
+		{
+			const int64 RelativeOffset = RowOffset + Column;
+
+			if (RelativeOffset >= PreviewSize)
+			{
+				break;
+			}
+
+			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
+
+			if (bChanged && !bMarkupOpen)
+			{
+				Result += TEXT("<Changed>");
+				bMarkupOpen = true;
+			}
+			else if (!bChanged && bMarkupOpen)
+			{
+				Result += TEXT("</>");
+				bMarkupOpen = false;
+			}
+
+			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
+
+			Result += FString::Printf(TEXT("%02X "), Byte);
+
+			if (Column == 7)
+			{
+				Result += TEXT(" ");
+			}
+		}
+
+		if (bMarkupOpen)
+		{
+			Result += TEXT("</>");
+		}
+
+		// ASCII
+		Result += TEXT(" |");
+
+		bMarkupOpen = false;
+
+		for (int32 Column = 0; Column < BytesPerRow; ++Column)
+		{
+			const int64 RelativeOffset = RowOffset + Column;
+
+			if (RelativeOffset >= PreviewSize)
+			{
+				break;
+			}
+
+			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
+
+			if (bChanged && !bMarkupOpen)
+			{
+				Result += TEXT("<Changed>");
+				bMarkupOpen = true;
+			}
+			else if (!bChanged && bMarkupOpen)
+			{
+				Result += TEXT("</>");
+				bMarkupOpen = false;
+			}
+
+			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
+
+			const TCHAR Character = Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.');
+
+			/*
+			 * Escape markup-sensitive ASCII.
+			 */
+			switch (Character)
+			{
+				case TEXT('<'):
+					Result += TEXT("&lt;");
+					break;
+
+				case TEXT('>'):
+					Result += TEXT("&gt;");
+					break;
+
+				case TEXT('&'):
+					Result += TEXT("&amp;");
+					break;
+
+				default:
+					Result.AppendChar(Character);
+					break;
+			}
+		}
+
+		if (bMarkupOpen)
+		{
+			Result += TEXT("</>");
+		}
+
+		Result += TEXT("|");
+
+		Result += LINE_TERMINATOR;
+	}
+
+	Result += LINE_TERMINATOR;
+
+	Result += FString::Printf(TEXT("Payload size: %llX"), Size);
+	Result += LINE_TERMINATOR;
+	Result += FString::Printf(TEXT("Changed bytes: %llX"), GetSelectedChangedByteCount());
+	Result += LINE_TERMINATOR;
+
+	if (Size > PreviewSize)
+	{
+		Result += LINE_TERMINATOR;
+
+		Result += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, Size);
+	}
+
+	return FText::FromString(MoveTemp(Result));
 }
 
 #undef LOCTEXT_NAMESPACE

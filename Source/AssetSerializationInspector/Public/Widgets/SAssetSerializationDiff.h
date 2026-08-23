@@ -14,6 +14,22 @@ template <typename ItemType> class STreeView;
 
 struct FAssetPackageDocument;
 
+enum class EAssetByteDiffState : uint8
+{
+	Unchanged,
+	Modified,
+	Added,
+	Removed
+};
+
+struct FAssetByteDiffSpan
+{
+	int64 Offset = 0; // relative to selected range
+	int64 Size = 0;
+
+	int64 End() const { return Offset + Size; }
+};
+
 /**
  * Slate-friendly representation of a diff entry.
  *
@@ -73,8 +89,13 @@ private:
 	FText GetSelectedOldHexText() const;
 	FText GetSelectedNewHexText() const;
 	FText GetSelectedByteComparisonText() const;
+	int64 GetSelectedChangedByteCount() const;
 
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
+
+	TArray<FAssetByteDiffSpan> BuildByteDiffSpans(const FAssetPackageDocument* OldDoc, int64 OldOffset, int64 OldSize, const FAssetPackageDocument* NewDoc, int64 NewOffset, int64 NewSize) const;
+	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
+	FText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
 
 private:
 	TSharedPtr<SEditableTextBox> OldFilenameTextBox;
@@ -90,7 +111,12 @@ private:
 	TArray<FDiffTreeNodePtr> RootDiffNodes;
 	FDiffTreeNodePtr SelectedDiffNode;
 
+	TArray<FAssetByteDiffSpan> SelectedByteDiffSpans;
+	TSharedPtr<FSlateStyleSet> HexDiffStyle;
+
 	bool bShowUnchanged = false;
+
+	bool bUseRelativeOffsets = true;
 
 	FText StatusText;
 };
