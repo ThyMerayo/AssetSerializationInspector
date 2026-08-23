@@ -337,8 +337,28 @@ bool SAssetSerializationDiff::LoadDocument(const FString& Filename, TSharedPtr<F
 	return OutDocument.IsValid();
 }
 
+// Test for Tracing the serialization of UTexture2D
+// #include "Serialization/BufferArchive.h"
+// #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
+
 FReply SAssetSerializationDiff::HandleCompareClicked()
 {
+	// 	{
+	// 		if (auto Object = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/AICON-Red.AICON-Red")))
+	// 		{
+	// 			FBufferArchive Buffer;
+	// 			FObjectAndNameAsStringProxyArchive UObjectArchive(Buffer, false);
+	// 			FAssetSerializationTraceArchive TraceArchive(UObjectArchive, 0);
+	// 			Object->Serialize(TraceArchive);
+	// 			FAssetSerializationTrace Trace = AssetSerializationTrace::BuildSerializationTrace(Object, Buffer.Num(), TraceArchive.GetEvents());
+	//
+	// 			for (const FAssetSerializationTraceEvent& Event : TraceArchive.GetEvents())
+	// 			{
+	// 				UE_LOG(LogTemp, Log, TEXT("%08llX  %8lld  %-50s  %s"), Event.Offset, Event.Size, *Event.PropertyPath, *Event.PropertyType);
+	// 			}
+	// 		}
+	// 	}
+
 	const FString OldFilename = OldFilenameTextBox.IsValid() ? OldFilenameTextBox->GetText().ToString().TrimStartAndEnd() : FString();
 	const FString NewFilename = NewFilenameTextBox.IsValid() ? NewFilenameTextBox->GetText().ToString().TrimStartAndEnd() : FString();
 

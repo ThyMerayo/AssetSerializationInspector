@@ -5,13 +5,25 @@
 #include "Serialization/ArchiveSerializedPropertyChain.h"
 #include "UObject/UnrealType.h"
 
-FAssetSerializationTraceArchive::FAssetSerializationTraceArchive(FArchive& InInnerArchive, const int64 InBaseOffset) : FArchiveProxy(InInnerArchive), BaseOffset(InBaseOffset) {}
+FAssetSerializationTraceArchive::FAssetSerializationTraceArchive(FArchive& InInnerArchive, const int64 InBaseOffset /* = 0 */) : InnerArchive(InInnerArchive), BaseOffset(InBaseOffset)
+{
+	SetIsLoading(InnerArchive.IsLoading());
+	SetIsSaving(InnerArchive.IsSaving());
+	SetIsPersistent(InnerArchive.IsPersistent());
+
+	SetUEVer(InnerArchive.UEVer());
+	SetLicenseeUEVer(InnerArchive.LicenseeUEVer());
+
+	SetEngineVer(InnerArchive.EngineVer());
+
+	SetCustomVersions(InnerArchive.GetCustomVersions());
+}
 
 void FAssetSerializationTraceArchive::Serialize(void* Data, const int64 Num)
 {
 	if (Num <= 0)
 	{
-		FArchiveProxy::Serialize(Data, Num);
+		InnerArchive.Serialize(Data, Num);
 		return;
 	}
 
@@ -19,9 +31,6 @@ void FAssetSerializationTraceArchive::Serialize(void* Data, const int64 Num)
 
 	FAssetSerializationTraceEvent Event;
 	Event.Offset = StartOffset - BaseOffset;
-
-	Event.Size = Num;
-
 	if (FProperty* Property = GetSerializedProperty())
 	{
 		Event.bHasPropertyContext = true;
@@ -31,18 +40,26 @@ void FAssetSerializationTraceArchive::Serialize(void* Data, const int64 Num)
 	}
 	else
 	{
+		Event.bHasPropertyContext = false;
 		Event.PropertyPath = TEXT("<native/unclassified>");
 	}
 
-	FArchiveProxy::Serialize(Data, Num);
+	// Forward the actual byte operation.
+	InnerArchive.Serialize(Data, Num);
 
+	const int64 EndOffset = InnerArchive.Tell();
+	Event.Size = FMath::Max<int64>(0, EndOffset - StartOffset);
+	if (Event.Size == 0)
+	{
+		return;
+	}
+
+	// Merge consecutive writes that belong to the same property.
 	if (!Events.IsEmpty())
 	{
 		FAssetSerializationTraceEvent& Previous = Events.Last();
-
 		const bool bAdjacent = Previous.Offset + Previous.Size == Event.Offset;
-
-		const bool bSameContext = Previous.PropertyPath == Event.PropertyPath && Previous.PropertyType == Event.PropertyType && Previous.bHasPropertyContext == Event.bHasPropertyContext;
+		const bool bSameContext = Previous.bHasPropertyContext == Event.bHasPropertyContext && Previous.PropertyPath == Event.PropertyPath && Previous.PropertyType == Event.PropertyType;
 
 		if (bAdjacent && bSameContext)
 		{
@@ -85,4 +102,10 @@ FString FAssetSerializationTraceArchive::BuildCurrentPropertyPath() const
 	}
 
 	return Parts.IsEmpty() ? TEXT("<native/unclassified>") : FString::Join(Parts, TEXT("."));
+}
+
+FArchive& FAssetSerializationTraceArchive::operator<<(FObjectPtr& Value)
+{
+	InnerArchive << Value;
+	return *this;
 }
