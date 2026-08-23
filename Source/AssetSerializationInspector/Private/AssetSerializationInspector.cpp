@@ -10,9 +10,11 @@
 
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
+#include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
 
-static const FName AssetSerializationInspectorTabName("AssetSerializationInspector");
+static const FName AssetSerializationInspectorTabName("Asset Serialization Inspector");
+static const FName DiffTabName(TEXT("Asset Serialization Diff"));
 
 #define LOCTEXT_NAMESPACE "FAssetSerializationInspectorModule"
 
@@ -36,6 +38,11 @@ void FAssetSerializationInspectorModule::StartupModule()
 		->RegisterNomadTabSpawner(AssetSerializationInspectorTabName, FOnSpawnTab::CreateRaw(this, &FAssetSerializationInspectorModule::OnSpawnPluginTab))
 		.SetDisplayName(LOCTEXT("FAssetSerializationInspectorTabTitle", "Asset Serialization Inspector"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()
+		->RegisterNomadTabSpawner(DiffTabName, FOnSpawnTab::CreateRaw(this, &FAssetSerializationInspectorModule::OnSpawnDiffTab))
+		.SetDisplayName(LOCTEXT("DiffTabTitle", "Asset Serialization Diff"))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
 }
 
 void FAssetSerializationInspectorModule::ShutdownModule()
@@ -52,6 +59,7 @@ void FAssetSerializationInspectorModule::ShutdownModule()
 	FAssetSerializationInspectorCommands::Unregister();
 
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(AssetSerializationInspectorTabName);
+	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(DiffTabName);
 }
 
 TSharedRef<SDockTab> FAssetSerializationInspectorModule::OnSpawnPluginTab(const FSpawnTabArgs& SpawnTabArgs)
@@ -59,9 +67,15 @@ TSharedRef<SDockTab> FAssetSerializationInspectorModule::OnSpawnPluginTab(const 
 	return SNew(SDockTab).TabRole(ETabRole::NomadTab)[SNew(SAssetSerializationInspector)];
 }
 
+TSharedRef<SDockTab> FAssetSerializationInspectorModule::OnSpawnDiffTab(const FSpawnTabArgs& SpawnTabArgs)
+{
+	return SNew(SDockTab).TabRole(ETabRole::NomadTab)[SNew(SAssetSerializationDiff)];
+}
+
 void FAssetSerializationInspectorModule::PluginButtonClicked()
 {
 	FGlobalTabmanager::Get()->TryInvokeTab(AssetSerializationInspectorTabName);
+	FGlobalTabmanager::Get()->TryInvokeTab(DiffTabName);
 }
 
 void FAssetSerializationInspectorModule::RegisterMenus()
