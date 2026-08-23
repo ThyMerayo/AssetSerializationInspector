@@ -21,4 +21,33 @@ namespace AssetSerializationTrace
 
 		return Root.Get();
 	}
+
+	FAssetSerializationTrace BuildSerializationTrace(const UObject* Object, const int64 PayloadSize, const TArray<FAssetSerializationTraceEvent>& Events)
+	{
+		FAssetSerializationTrace Result;
+
+		Result.ObjectPath = Object ? Object->GetPathName() : TEXT("<unknown>");
+		Result.PayloadOffset = 0;
+		Result.PayloadSize = PayloadSize;
+		Result.Root = MakeShared<FAssetSerializationTraceNode>();
+		Result.Root->Kind = EAssetSerializationTraceKind::Object;
+		Result.Root->Name = Result.ObjectPath;
+		Result.Root->TypeName = Object ? Object->GetClass()->GetName() : TEXT("UObject");
+		Result.Root->Offset = 0;
+		Result.Root->Size = PayloadSize;
+
+		for (const FAssetSerializationTraceEvent& Event : Events)
+		{
+			TSharedPtr<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
+			Node->Kind = Event.bHasPropertyContext ? EAssetSerializationTraceKind::Property : EAssetSerializationTraceKind::Native;
+			Node->Name = Event.PropertyPath;
+			Node->TypeName = Event.PropertyType;
+			Node->Offset = Event.Offset;
+			Node->Size = Event.Size;
+			Node->Parent = Result.Root;
+			Result.Root->Children.Add(Node);
+		}
+
+		return Result;
+	}
 } // namespace AssetSerializationTrace

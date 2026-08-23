@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 
+#include "AssetSerializationTraceArchive.h"
+
 enum class EAssetSerializationTraceKind : uint8
 {
 	Object,
@@ -61,5 +63,5 @@ struct FAssetSerializationTrace
 namespace AssetSerializationTrace
 {
 	const FAssetSerializationTraceNode* FindDeepestTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, int64 Offset, int64 Size);
-
+	FAssetSerializationTrace BuildSerializationTrace(const UObject* Object, int64 PayloadSize, const TArray<FAssetSerializationTraceEvent>& Events);
 } // namespace AssetSerializationTrace
