@@ -12,6 +12,7 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Text/STextBlock.h"
@@ -211,6 +212,8 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 					.IsChecked_Lambda([this]() { return bShowUnchanged ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
 
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
+
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 
 			// Tree
@@ -258,7 +261,18 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 		  })]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(
-			0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this, bOldSide]() { return FText::Format(LOCTEXT("SelectedSizeFormat", "Size: {0}"), bOldSide ? GetSelectedOldSize() : GetSelectedNewSize()); })];
+			0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this, bOldSide]() { return FText::Format(LOCTEXT("SelectedSizeFormat", "Size: {0}"), bOldSide ? GetSelectedOldSize() : GetSelectedNewSize()); })]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f)[SNew(SSeparator)]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
+
+		+ SVerticalBox::Slot().FillHeight(1.0f)[SNew(SScrollBox)
+
+			+ SScrollBox::Slot()[SNew(STextBlock)
+					.Text_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexText() : GetSelectedNewHexText(); })
+					.Font(FAppStyle::GetFontStyle("MonoFont"))
+					.AutoWrapText(false)]];
 }
 
 bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& OutFilename)
@@ -570,6 +584,151 @@ FText SAssetSerializationDiff::GetSummaryText() const
 							 "{0} modified · {1} moved · "
 							 "{2} added · {3} removed"),
 		FText::AsNumber(Counts.Modified), FText::AsNumber(Counts.Moved), FText::AsNumber(Counts.Added), FText::AsNumber(Counts.Removed));
+}
+
+FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
+{
+	if (!SelectedDiffNode.IsValid())
+	{
+		return FText::GetEmpty();
+	}
+
+	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
+
+	if (!OldDocument.IsValid() || !NewDocument.IsValid() || Diff.OldOffset == INDEX_NONE || Diff.NewOffset == INDEX_NONE)
+	{
+		return FText::GetEmpty();
+	}
+
+	if (Diff.OldSize != Diff.NewSize)
+	{
+		return FText::Format(LOCTEXT("ByteSizesDiffer", "Byte ranges differ in size: {0} vs {1} bytes"), FText::AsNumber(Diff.OldSize), FText::AsNumber(Diff.NewSize));
+	}
+
+	if (!OldDocument->IsValidRange(Diff.OldOffset, Diff.OldSize) || !NewDocument->IsValidRange(Diff.NewOffset, Diff.NewSize))
+	{
+		return FText::GetEmpty();
+	}
+
+	const bool bEqual = Diff.OldSize == 0 || FMemory::Memcmp(OldDocument->FileData.GetData() + Diff.OldOffset, NewDocument->FileData.GetData() + Diff.NewOffset, Diff.OldSize) == 0;
+
+	if (bEqual)
+	{
+		if (Diff.OldOffset != Diff.NewOffset)
+		{
+			return LOCTEXT("BytesIdenticalMoved", "Bytes are identical; only their file location changed.");
+		}
+
+		return LOCTEXT("BytesIdentical", "Bytes are identical.");
+	}
+
+	return LOCTEXT("BytesDifferent", "Byte contents differ.");
+}
+
+FText SAssetSerializationDiff::BuildHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, bool bRelativeOffsets) const
+{
+	if (Document == nullptr)
+	{
+		return LOCTEXT("NoHexDocument", "No document loaded.");
+	}
+
+	if (Offset == INDEX_NONE)
+	{
+		return LOCTEXT("NoHexRange", "No byte range is available.");
+	}
+
+	if (Size < 0 || !Document->IsValidRange(Offset, Size))
+	{
+		return LOCTEXT("InvalidHexRange", "The selected byte range is invalid.");
+	}
+
+	if (Size == 0)
+	{
+		return LOCTEXT("EmptyHexRange", "The selected byte range is empty.");
+	}
+
+	constexpr int64 MaximumPreviewBytes = 4096;
+	constexpr int32 BytesPerRow = 16;
+
+	const int64 PreviewSize = FMath::Min<int64>(Size, MaximumPreviewBytes);
+
+	FString Result;
+
+	for (int64 RelativeOffset = 0; RelativeOffset < PreviewSize; RelativeOffset += BytesPerRow)
+	{
+		const int64 AbsoluteOffset = Offset + RelativeOffset;
+		const int64 DisplayOffset = bRelativeOffsets ? RelativeOffset : AbsoluteOffset;
+
+		Result += FString::Printf(TEXT("%08llX  "), DisplayOffset);
+
+		for (int32 Column = 0; Column < BytesPerRow; ++Column)
+		{
+			const int64 ByteIndex = RelativeOffset + Column;
+
+			if (ByteIndex < PreviewSize)
+			{
+				const uint8 Byte = Document->FileData[Offset + ByteIndex];
+
+				Result += FString::Printf(TEXT("%02X "), Byte);
+			}
+			else
+			{
+				Result += TEXT("   ");
+			}
+
+			if (Column == 7)
+			{
+				Result += TEXT(" ");
+			}
+		}
+
+		Result += TEXT(" |");
+
+		for (int32 Column = 0; Column < BytesPerRow; ++Column)
+		{
+			const int64 ByteIndex = RelativeOffset + Column;
+
+			if (ByteIndex >= PreviewSize)
+			{
+				break;
+			}
+
+			const uint8 Byte = Document->FileData[Offset + ByteIndex];
+
+			Result.AppendChar(Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.'));
+		}
+
+		Result += TEXT("|");
+		Result += LINE_TERMINATOR;
+	}
+
+	if (Size > PreviewSize)
+	{
+		Result += LINE_TERMINATOR;
+		Result += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, Size);
+	}
+
+	return FText::FromString(MoveTemp(Result));
+}
+
+FText SAssetSerializationDiff::GetSelectedOldHexText() const
+{
+	if (!SelectedDiffNode.IsValid())
+	{
+		return LOCTEXT("NoOldHexSelection", "Select a diff node.");
+	}
+
+	return BuildHexPreview(OldDocument.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, true);
+}
+
+FText SAssetSerializationDiff::GetSelectedNewHexText() const
+{
+	if (!SelectedDiffNode.IsValid())
+	{
+		return LOCTEXT("NoNewHexSelection", "Select a diff node.");
+	}
+
+	return BuildHexPreview(NewDocument.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, true);
 }
 
 #undef LOCTEXT_NAMESPACE

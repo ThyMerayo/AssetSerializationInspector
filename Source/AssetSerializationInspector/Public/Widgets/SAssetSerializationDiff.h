@@ -70,6 +70,11 @@ private:
 	FText GetSelectedNewOffset() const;
 	FText GetSelectedOldSize() const;
 	FText GetSelectedNewSize() const;
+	FText GetSelectedOldHexText() const;
+	FText GetSelectedNewHexText() const;
+	FText GetSelectedByteComparisonText() const;
+
+	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
 private:
 	TSharedPtr<SEditableTextBox> OldFilenameTextBox;
