@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/Archive.h"
 #include "UObject/ObjectVersion.h"
+#include "UObject/PackageFileSummary.h"
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageMemoryReader.h"
@@ -76,7 +77,9 @@ namespace
 				return false;
 			}
 
-			OutString = FString(StringCast<TCHAR>(Characters.GetData(), static_cast<int32>(CharacterCount - 1)).Get());
+			const int32 SourceLength = static_cast<int32>(CharacterCount - 1);
+			const auto Converted = StringCast<TCHAR>(Characters.GetData(), SourceLength);
+			OutString = FString(Converted.Length(), Converted.Get());
 		}
 		else
 		{
@@ -103,7 +106,9 @@ namespace
 				return false;
 			}
 
-			OutString = FString(StringCast<TCHAR>(Characters.GetData(), static_cast<int32>(CharacterCount - 1)).Get());
+			const int32 SourceLength = static_cast<int32>(CharacterCount - 1);
+			const auto Converted = StringCast<TCHAR>(Characters.GetData(), SourceLength);
+			OutString = FString(Converted.Length(), Converted.Get());
 		}
 
 		return true;
