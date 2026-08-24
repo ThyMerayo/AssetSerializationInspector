@@ -262,12 +262,13 @@ namespace
 				const FAssetPackageExportEntry& A = **OldFound;
 				const FAssetPackageExportEntry& B = **NewFound;
 
+				Entry.OldExportIndex = A.Index;
+				Entry.NewExportIndex = B.Index;
+
 				const FString OldPayloadHash = HashRange(OldDocument, A.SerialOffset, A.SerialSize);
 				const FString NewPayloadHash = HashRange(NewDocument, B.SerialOffset, B.SerialSize);
-
 				const bool bPayloadIdentical = A.SerialSize == B.SerialSize && OldPayloadHash == NewPayloadHash;
 				const bool bPayloadMoved = A.SerialOffset != B.SerialOffset;
-
 				if (!bPayloadIdentical)
 				{
 					Entry.State = EAssetPackageDiffState::Modified;
@@ -290,6 +291,8 @@ namespace
 				Payload.NewSize = B.SerialSize;
 				Payload.OldValue = OldPayloadHash;
 				Payload.NewValue = NewPayloadHash;
+				Payload.OldExportIndex = A.Index;
+				Payload.NewExportIndex = B.Index;
 
 				if (OldPayloadHash != NewPayloadHash || A.SerialSize != B.SerialSize)
 				{

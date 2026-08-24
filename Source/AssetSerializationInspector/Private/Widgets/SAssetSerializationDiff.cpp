@@ -66,6 +66,34 @@ namespace
 			AccumulateDiffCounts(Child, Counts);
 		}
 	}
+
+	FString BuildTracePath(const FAssetSerializationTraceNode* Node)
+	{
+		if (Node == nullptr)
+		{
+			return TEXT("<unknown>");
+		}
+
+		TArray<FString> Parts;
+
+		const FAssetSerializationTraceNode* Current = Node;
+
+		while (Current != nullptr)
+		{
+			if (!Current->Name.IsEmpty())
+			{
+				Parts.Add(Current->Name);
+			}
+
+			const TSharedPtr<FAssetSerializationTraceNode> Parent = Current->Parent.Pin();
+
+			Current = Parent.Get();
+		}
+
+		Algo::Reverse(Parts);
+
+		return FString::Join(Parts, TEXT("."));
+	}
 } // namespace
 
 class SAssetPackageDiffTreeRow : public SMultiColumnTableRow<TSharedPtr<FAssetPackageDiffTreeNode>>
@@ -525,6 +553,56 @@ void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, 
 	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
 
 	SelectedByteDiffSpans = BuildByteDiffSpans(OldDocument.Get(), Diff.OldOffset, Diff.OldSize, NewDocument.Get(), Diff.NewOffset, Diff.NewSize);
+
+	AnnotateSelectedDiffSpans();
+}
+
+void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
+{
+	if (!SelectedDiffNode.IsValid())
+	{
+		return;
+	}
+
+	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
+	const FAssetSerializationTrace* OldTrace = FindTraceForDiffEntry(Diff, true);
+	const FAssetSerializationTrace* NewTrace = FindTraceForDiffEntry(Diff, false);
+
+	for (FAssetByteDiffSpan& Span : SelectedByteDiffSpans)
+	{
+		if (OldTrace != nullptr && OldTrace->Root.IsValid())
+		{
+			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(OldTrace->Root, Span.Offset, Span.Size);
+
+			Span.OldFieldPath = BuildTracePath(Node);
+		}
+
+		if (NewTrace != nullptr && NewTrace->Root.IsValid())
+		{
+			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(NewTrace->Root, Span.Offset, Span.Size);
+
+			Span.NewFieldPath = BuildTracePath(Node);
+		}
+	}
+}
+
+const FAssetSerializationTrace* SAssetSerializationDiff::FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const
+{
+	const TSharedPtr<FAssetPackageTraceCollection>& Traces = bOldSide ? OldTraces : NewTraces;
+
+	if (!Traces.IsValid())
+	{
+		return nullptr;
+	}
+
+	const int32 ExportIndex = bOldSide ? Diff.OldExportIndex : Diff.NewExportIndex;
+
+	if (ExportIndex == INDEX_NONE)
+	{
+		return nullptr;
+	}
+
+	return Traces->ExportTraces.Find(ExportIndex);
 }
 
 // Details

@@ -43,6 +43,9 @@ struct FAssetPackageDiffEntry
 	int64 OldSize = 0;
 	int64 NewSize = 0;
 
+	int32 OldExportIndex = INDEX_NONE;
+	int32 NewExportIndex = INDEX_NONE;
+
 	TArray<FAssetPackageDiffEntry> Children;
 };
 

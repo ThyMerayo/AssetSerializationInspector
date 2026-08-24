@@ -6,6 +6,7 @@
 #include "Widgets/SCompoundWidget.h"
 
 #include "Diff/AssetPackageDiff.h"
+#include "Trace/AssetSerializationTrace.h"
 
 class SCheckBox;
 class SEditableTextBox;
@@ -27,7 +28,15 @@ struct FAssetByteDiffSpan
 	int64 Offset = 0; // relative to selected range
 	int64 Size = 0;
 
+	FString OldFieldPath;
+	FString NewFieldPath;
+
 	int64 End() const { return Offset + Size; }
+};
+
+struct FAssetPackageTraceCollection
+{
+	TMap<int32, FAssetSerializationTrace> ExportTraces;
 };
 
 /**
@@ -73,8 +82,10 @@ private:
 	bool HasVisibleChildren(const FAssetPackageDiffEntry& Entry) const;
 	void GetDiffTreeChildren(FDiffTreeNodePtr Item, TArray<FDiffTreeNodePtr>& OutChildren) const;
 	TSharedRef<ITableRow> GenerateDiffTreeRow(FDiffTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable);
-	void HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 	void HandleShowUnchangedChanged(ECheckBoxState NewState);
+	void HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo);
+	void AnnotateSelectedDiffSpans();
+	const FAssetSerializationTrace* FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const;
 
 	// Dynamic UI
 	FText GetStatusText() const;
@@ -107,6 +118,9 @@ private:
 	TSharedPtr<FAssetPackageDocument> NewDocument;
 
 	TOptional<FAssetPackageDiffResult> DiffResult;
+
+	TSharedPtr<FAssetPackageTraceCollection> OldTraces;
+	TSharedPtr<FAssetPackageTraceCollection> NewTraces;
 
 	TArray<FDiffTreeNodePtr> RootDiffNodes;
 	FDiffTreeNodePtr SelectedDiffNode;
