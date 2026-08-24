@@ -11,7 +11,7 @@
  * Tell() returns an absolute file offset, making parser errors and tree nodes
  * easier to relate to the hex display.
  */
-class FAssetPackageMemoryReader final : public FArchive
+class FAssetPackageMemoryReader : public FArchive
 {
 public:
 	FAssetPackageMemoryReader(const TArray64<uint8>& InFileData, int64 InStartOffset, int64 InSize);

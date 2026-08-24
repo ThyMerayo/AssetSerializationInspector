@@ -22,6 +22,22 @@ namespace AssetSerializationTrace
 		return Root.Get();
 	}
 
+	void FindOverlappingTraceNodes(const TSharedPtr<FAssetSerializationTraceNode>& Root, int64 Offset, int64 Size, TArray<const FAssetSerializationTraceNode*>& OutNodes)
+	{
+		if (!Root.IsValid() || !Root->Overlaps(Offset, Size))
+		{
+			return;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Child : Root->Children)
+		{
+			if (Child.IsValid() && Child->Overlaps(Offset, Size))
+			{
+				OutNodes.Add(Child.Get());
+			}
+		}
+	}
+
 	FAssetSerializationTrace BuildSerializationTrace(const UObject* Object, const int64 PayloadSize, const TArray<FAssetSerializationTraceEvent>& Events)
 	{
 		FAssetSerializationTrace Result;
