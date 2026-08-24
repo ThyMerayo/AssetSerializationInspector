@@ -37,6 +37,22 @@ struct FAssetByteDiffSpan
 struct FAssetPackageTraceCollection
 {
 	TMap<int32, FAssetSerializationTrace> ExportTraces;
+
+	const FAssetSerializationTrace* FindExportTrace(const int32 ExportIndex) const { return ExportTraces.Find(ExportIndex); }
+};
+
+struct FAssetSerializationDiffSide
+{
+	TSharedPtr<FAssetPackageDocument> Document;
+	TSharedPtr<FAssetPackageTraceCollection> Traces;
+};
+
+struct FAssetSerializationDiffSession
+{
+	FAssetSerializationDiffSide Old;
+	FAssetSerializationDiffSide New;
+
+	TOptional<FAssetPackageDiffResult> DiffResult;
 };
 
 /**
@@ -86,6 +102,7 @@ private:
 	void HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 	void AnnotateSelectedDiffSpans();
 	const FAssetSerializationTrace* FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const;
+	bool BuildTracesForSide(FAssetSerializationDiffSide& Side);
 
 	// Dynamic UI
 	FText GetStatusText() const;
@@ -114,13 +131,7 @@ private:
 
 	TSharedPtr<STreeView<FDiffTreeNodePtr>> DiffTreeView;
 
-	TSharedPtr<FAssetPackageDocument> OldDocument;
-	TSharedPtr<FAssetPackageDocument> NewDocument;
-
-	TOptional<FAssetPackageDiffResult> DiffResult;
-
-	TSharedPtr<FAssetPackageTraceCollection> OldTraces;
-	TSharedPtr<FAssetPackageTraceCollection> NewTraces;
+	TSharedPtr<FAssetSerializationDiffSession> DiffSession;
 
 	TArray<FDiffTreeNodePtr> RootDiffNodes;
 	FDiffTreeNodePtr SelectedDiffNode;

@@ -206,6 +206,8 @@ private:
 
 void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 {
+	DiffSession = MakeShared<FAssetSerializationDiffSession>();
+
 	StatusText = LOCTEXT("ReadyStatus", "Select two .uasset files to compare.");
 
 	HexDiffStyle = MakeShared<FSlateStyleSet>(TEXT("AssetSerializationHexDiffStyle"));
@@ -222,21 +224,16 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 8.0f, 8.0f, 2.0f)[SNew(SHorizontalBox)
 
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(STextBlock).Text(LOCTEXT("OldLabel", "Old"))]
-
 			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 4.0f, 0.0f)[SAssignNew(OldFilenameTextBox, SEditableTextBox).HintText(LOCTEXT("OldFilenameHint", "Before.uasset"))]
-
 			+ SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("BrowseOld", "Browse...")).OnClicked(this, &SAssetSerializationDiff::HandleBrowseOldClicked)]]
 
 		// NEW
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 2.0f, 8.0f, 8.0f)[SNew(SHorizontalBox)
 
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(STextBlock).Text(LOCTEXT("NewLabel", "New"))]
-
 			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 4.0f, 0.0f)[SAssignNew(NewFilenameTextBox, SEditableTextBox).HintText(LOCTEXT("NewFilenameHint", "After.uasset"))]
-
 			+ SHorizontalBox::Slot().AutoWidth().Padding(
 				0.0f, 0.0f, 4.0f, 0.0f)[SNew(SButton).Text(LOCTEXT("BrowseNew", "Browse...")).OnClicked(this, &SAssetSerializationDiff::HandleBrowseNewClicked)]
-
 			+ SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("CompareButton", "Compare")).OnClicked(this, &SAssetSerializationDiff::HandleCompareClicked)]]
 
 		+ SVerticalBox::Slot().AutoHeight()[SNew(SSeparator)]
@@ -273,9 +270,7 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 
 			// Details
 			+ SSplitter::Slot().Value(0.50f)[SNew(SSplitter).Orientation(Orient_Horizontal)
-
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(true)]]
-
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
@@ -398,23 +393,26 @@ FReply SAssetSerializationDiff::HandleCompareClicked()
 
 	FText Error;
 
-	if (!LoadDocument(OldFilename, OldDocument, Error))
+	if (!LoadDocument(OldFilename, DiffSession->Old.Document, Error))
 	{
 		StatusText = FText::Format(LOCTEXT("OldLoadFailed", "Could not load old asset: {0}"), Error);
 		return FReply::Handled();
 	}
 
-	if (!LoadDocument(NewFilename, NewDocument, Error))
+	if (!LoadDocument(NewFilename, DiffSession->New.Document, Error))
 	{
 		StatusText = FText::Format(LOCTEXT("NewLoadFailed", "Could not load new asset: {0}"), Error);
 		return FReply::Handled();
 	}
 
-	DiffResult = FAssetPackageDiff::Compare(*OldDocument, *NewDocument);
+	DiffSession->DiffResult = FAssetPackageDiff::Compare(*DiffSession->Old.Document, *DiffSession->New.Document);
+
+	BuildTracesForSide(DiffSession->Old);
+	BuildTracesForSide(DiffSession->New);
 
 	RebuildDiffTree();
 
-	if (DiffResult->bFilesIdentical)
+	if (DiffSession->DiffResult->bFilesIdentical)
 	{
 		StatusText = LOCTEXT("FilesIdentical", "The two files are byte-for-byte identical.");
 	}
@@ -431,7 +429,7 @@ void SAssetSerializationDiff::RebuildDiffTree()
 	RootDiffNodes.Reset();
 	SelectedDiffNode.Reset();
 
-	if (!DiffResult.IsSet())
+	if (!DiffSession->DiffResult.IsSet())
 	{
 		if (DiffTreeView.IsValid())
 		{
@@ -441,7 +439,7 @@ void SAssetSerializationDiff::RebuildDiffTree()
 		return;
 	}
 
-	for (const FAssetPackageDiffEntry& Entry : DiffResult->Entries)
+	for (const FAssetPackageDiffEntry& Entry : DiffSession->DiffResult->Entries)
 	{
 		if (!ShouldIncludeDiffEntry(Entry))
 		{
@@ -545,14 +543,14 @@ void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, 
 	SelectedDiffNode = Item;
 	SelectedByteDiffSpans.Reset();
 
-	if (!SelectedDiffNode.IsValid() || !OldDocument.IsValid() || !NewDocument.IsValid())
+	if (!SelectedDiffNode.IsValid() || !DiffSession->Old.Document.IsValid() || !DiffSession->New.Document.IsValid())
 	{
 		return;
 	}
 
 	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
 
-	SelectedByteDiffSpans = BuildByteDiffSpans(OldDocument.Get(), Diff.OldOffset, Diff.OldSize, NewDocument.Get(), Diff.NewOffset, Diff.NewSize);
+	SelectedByteDiffSpans = BuildByteDiffSpans(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize);
 
 	AnnotateSelectedDiffSpans();
 }
@@ -588,9 +586,14 @@ void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
 
 const FAssetSerializationTrace* SAssetSerializationDiff::FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const
 {
-	const TSharedPtr<FAssetPackageTraceCollection>& Traces = bOldSide ? OldTraces : NewTraces;
+	if (!DiffSession.IsValid())
+	{
+		return nullptr;
+	}
 
-	if (!Traces.IsValid())
+	const FAssetSerializationDiffSide& Side = bOldSide ? DiffSession->Old : DiffSession->New;
+
+	if (!Side.Traces.IsValid())
 	{
 		return nullptr;
 	}
@@ -602,7 +605,46 @@ const FAssetSerializationTrace* SAssetSerializationDiff::FindTraceForDiffEntry(c
 		return nullptr;
 	}
 
-	return Traces->ExportTraces.Find(ExportIndex);
+	return Side.Traces->FindExportTrace(ExportIndex);
+}
+
+bool SAssetSerializationDiff::BuildTracesForSide(FAssetSerializationDiffSide& Side)
+{
+	if (!Side.Document.IsValid())
+	{
+		return false;
+	}
+
+	Side.Traces = MakeShared<FAssetPackageTraceCollection>();
+	//
+	// 	for (const FAssetPackageExportEntry& Export : Side.Document->ExportMap)
+	// 	{
+	// 		const int32 ExportIndex = Export.Index;
+	//
+	// 		// For our current TEST tracing approach, we need to resolve
+	// 		// this export to an actual loaded UObject.
+	// 		UObject* Object = FindObjectForExport(*Side.Document, Export);
+	//
+	// 		if (Object == nullptr)
+	// 		{
+	// 			continue;
+	// 		}
+	//
+	// 		FBufferArchive Buffer;
+	//
+	// 		FObjectAndNameAsStringProxyArchive UObjectArchive(Buffer, false);
+	//
+	// 		FAssetSerializationTraceArchive TraceArchive(UObjectArchive, 0);
+	//
+	// 		Object->Serialize(TraceArchive);
+	//
+	// 		FAssetSerializationTrace Trace = BuildSerializationTrace(Object, Buffer.Num(), TraceArchive.GetEvents());
+	//
+	// 		// HERE:
+	// 		Side.Traces->ExportTraces.Add(ExportIndex, MoveTemp(Trace));
+	// 	}
+
+	return true;
 }
 
 // Details
@@ -682,19 +724,19 @@ FText SAssetSerializationDiff::GetStatusText() const
 // Summary
 FText SAssetSerializationDiff::GetSummaryText() const
 {
-	if (!DiffResult.IsSet())
+	if (!DiffSession->DiffResult.IsSet())
 	{
 		return LOCTEXT("NoDiffSummary", "No comparison loaded");
 	}
 
-	if (DiffResult->bFilesIdentical)
+	if (DiffSession->DiffResult->bFilesIdentical)
 	{
 		return LOCTEXT("IdenticalSummary", "Files are identical");
 	}
 
 	FDiffCounts Counts;
 
-	for (const FAssetPackageDiffEntry& Entry : DiffResult->Entries)
+	for (const FAssetPackageDiffEntry& Entry : DiffSession->DiffResult->Entries)
 	{
 		AccumulateDiffCounts(Entry, Counts);
 	}
@@ -714,7 +756,7 @@ FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
 
 	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
 
-	if (!OldDocument.IsValid() || !NewDocument.IsValid() || Diff.OldOffset == INDEX_NONE || Diff.NewOffset == INDEX_NONE)
+	if (!DiffSession->Old.Document.IsValid() || !DiffSession->New.Document.IsValid() || Diff.OldOffset == INDEX_NONE || Diff.NewOffset == INDEX_NONE)
 	{
 		return FText::GetEmpty();
 	}
@@ -724,12 +766,13 @@ FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
 		return FText::Format(LOCTEXT("ByteSizesDiffer", "Byte ranges differ in size: {0} vs {1} bytes"), FText::AsNumber(Diff.OldSize), FText::AsNumber(Diff.NewSize));
 	}
 
-	if (!OldDocument->IsValidRange(Diff.OldOffset, Diff.OldSize) || !NewDocument->IsValidRange(Diff.NewOffset, Diff.NewSize))
+	if (!DiffSession->Old.Document->IsValidRange(Diff.OldOffset, Diff.OldSize) || !DiffSession->New.Document->IsValidRange(Diff.NewOffset, Diff.NewSize))
 	{
 		return FText::GetEmpty();
 	}
 
-	const bool bEqual = Diff.OldSize == 0 || FMemory::Memcmp(OldDocument->FileData.GetData() + Diff.OldOffset, NewDocument->FileData.GetData() + Diff.NewOffset, Diff.OldSize) == 0;
+	const bool bEqual =
+		Diff.OldSize == 0 || FMemory::Memcmp(DiffSession->Old.Document->FileData.GetData() + Diff.OldOffset, DiffSession->New.Document->FileData.GetData() + Diff.NewOffset, Diff.OldSize) == 0;
 
 	if (bEqual)
 	{
@@ -849,7 +892,7 @@ FText SAssetSerializationDiff::GetSelectedOldHexText() const
 		return LOCTEXT("NoOldHexSelection", "Select a diff node.");
 	}
 
-	return BuildHighlightedHexPreview(OldDocument.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, SelectedByteDiffSpans);
+	return BuildHighlightedHexPreview(DiffSession->Old.Document.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, SelectedByteDiffSpans);
 }
 
 FText SAssetSerializationDiff::GetSelectedNewHexText() const
@@ -859,7 +902,7 @@ FText SAssetSerializationDiff::GetSelectedNewHexText() const
 		return LOCTEXT("NoNewHexSelection", "Select a diff node.");
 	}
 
-	return BuildHighlightedHexPreview(NewDocument.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, SelectedByteDiffSpans);
+	return BuildHighlightedHexPreview(DiffSession->New.Document.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, SelectedByteDiffSpans);
 }
 
 TArray<FAssetByteDiffSpan> SAssetSerializationDiff::BuildByteDiffSpans(
@@ -874,15 +917,12 @@ TArray<FAssetByteDiffSpan> SAssetSerializationDiff::BuildByteDiffSpans(
 	}
 
 	const int64 CommonSize = FMath::Min(OldSize, NewSize);
-
 	int64 SpanStart = INDEX_NONE;
 
 	for (int64 Index = 0; Index < CommonSize; ++Index)
 	{
 		const uint8 OldByte = OldDoc->FileData[OldOffset + Index];
-
 		const uint8 NewByte = NewDoc->FileData[NewOffset + Index];
-
 		const bool bDifferent = OldByte != NewByte;
 
 		if (bDifferent && SpanStart == INDEX_NONE)
