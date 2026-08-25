@@ -4,8 +4,9 @@
 
 #include "Modules/ModuleManager.h"
 
-class FToolBarBuilder;
-class FMenuBuilder;
+class SAssetSerializationDiff;
+struct FAssetSerializationDiffSession;
+struct FObservedAssetSave;
 
 class FAssetSerializationInspectorModule : public IModuleInterface
 {
@@ -23,6 +24,14 @@ private:
 	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
 	TSharedRef<SDockTab> OnSpawnDiffTab(const FSpawnTabArgs& SpawnTabArgs);
 
+	void HandleObservedAssetSave(TSharedPtr<FObservedAssetSave> Save);
+	void ShowSaveDiffNotification(TSharedPtr<FObservedAssetSave> Save);
+	void OpenObservedSaveDiff(TSharedPtr<FObservedAssetSave> Save);
+
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
+	FDelegateHandle ObservedSaveHandle;
+
+	TSharedPtr<FAssetSerializationDiffSession> PendingDiffSession;
+	TWeakPtr<SAssetSerializationDiff> ActiveDiffWidget;
 };

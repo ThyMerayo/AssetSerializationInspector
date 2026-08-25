@@ -79,6 +79,65 @@ void FAssetSaveObserver::HandlePreSavePackage(UPackage* Package, FObjectPreSaveC
 	PendingSaves.Add(PackageName, MoveTemp(Snapshot));
 }
 
+static EObservedSaveChangeKind ClassifySave(const FAssetPackageDiffResult& Diff)
+{
+	if (Diff.bFilesIdentical)
+	{
+		return EObservedSaveChangeKind::Identical;
+	}
+
+	bool bHasPayloadChange = false;
+	bool bHasTableChange = false;
+	bool bOnlyMoved = true;
+
+	TFunction<void(const FAssetPackageDiffEntry&)> Visit;
+
+	Visit = [&](const FAssetPackageDiffEntry& Entry) {
+		if (Entry.State == EAssetPackageDiffState::Modified)
+		{
+			bOnlyMoved = false;
+		}
+
+		if (Entry.Kind == EAssetPackageDiffKind::ExportPayload && Entry.State == EAssetPackageDiffState::Modified)
+		{
+			bHasPayloadChange = true;
+		}
+
+		if ((Entry.Kind == EAssetPackageDiffKind::Name || Entry.Kind == EAssetPackageDiffKind::Import || Entry.Kind == EAssetPackageDiffKind::Export)
+			&& Entry.State != EAssetPackageDiffState::Unchanged)
+		{
+			bHasTableChange = true;
+		}
+
+		for (const auto& Child : Entry.Children)
+		{
+			Visit(Child);
+		}
+	};
+
+	for (const auto& Entry : Diff.Entries)
+	{
+		Visit(Entry);
+	}
+
+	if (bHasPayloadChange)
+	{
+		return EObservedSaveChangeKind::PayloadChange;
+	}
+
+	if (bOnlyMoved)
+	{
+		return EObservedSaveChangeKind::LayoutOnly;
+	}
+
+	if (bHasTableChange)
+	{
+		return EObservedSaveChangeKind::TableChange;
+	}
+
+	return EObservedSaveChangeKind::MetadataOnly;
+}
+
 void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPackage* Package, FObjectPostSaveContext SaveContext)
 {
 	if (Package == nullptr)
@@ -114,7 +173,7 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 
 	if (Save->Before.IsValid() && Save->After.IsValid())
 	{
-		Save->StructuralDiff = FAssetPackageDiff::Compare(*Save->Before, *Save->After);
+		Save->Diff = FAssetPackageDiff::Compare(*Save->Before, *Save->After);
 	}
 
 	// We'll implement these below.
@@ -128,9 +187,17 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 		Save->AfterFields = FAssetPackageFieldDecoder::Decode(*Save->After);
 	}
 
+	Save->Timestamp = FDateTime::Now();
+	Save->ChangeKind = ClassifySave(Save->Diff);
 	ObservedSaves.Add(PackageName, Save);
+	RecentSaves.Insert(Save, 0);
 
-	PendingSaves.Remove(PackageName);
+	if (RecentSaves.Num() > MaxRecentSaves)
+	{
+		RecentSaves.SetNum(MaxRecentSaves);
+	}
+
+	ObservedAssetSaveEvent.Broadcast(Save);
 }
 
 FAssetMonitoringManager& FAssetMonitoringManager::Get()

@@ -94,6 +94,34 @@ namespace
 
 		return FString::Join(Parts, TEXT("."));
 	}
+
+	SAssetSerializationDiff::FDiffTreeNodePtr FindFirstChangedNode(const SAssetSerializationDiff::FDiffTreeNodePtr& Node)
+	{
+		if (!Node.IsValid())
+		{
+			return nullptr;
+		}
+
+		if (Node->Diff.State != EAssetPackageDiffState::Unchanged && Node->Children.IsEmpty())
+		{
+			return Node;
+		}
+
+		for (const auto& Child : Node->Children)
+		{
+			if (auto Found = FindFirstChangedNode(Child))
+			{
+				return Found;
+			}
+		}
+
+		if (Node->Diff.State != EAssetPackageDiffState::Unchanged)
+		{
+			return Node;
+		}
+
+		return nullptr;
+	}
 } // namespace
 
 class SAssetPackageDiffTreeRow : public SMultiColumnTableRow<TSharedPtr<FAssetPackageDiffTreeNode>>
@@ -206,13 +234,13 @@ private:
 
 void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 {
-	DiffSession = MakeShared<FAssetSerializationDiffSession>();
+	DiffSession = InArgs._Session.IsValid() ? InArgs._Session : MakeShared<FAssetSerializationDiffSession>();
 
 	StatusText = LOCTEXT("ReadyStatus", "Select two .uasset files to compare.");
 
 	HexDiffStyle = MakeShared<FSlateStyleSet>(TEXT("AssetSerializationHexDiffStyle"));
 	FTextBlockStyle NormalStyle = FAppStyle::GetWidgetStyle<FTextBlockStyle>(TEXT("NormalText"));
-	NormalStyle.SetFont(FAppStyle::GetFontStyle(TEXT("MonoFont")));
+	NormalStyle.SetFont(FAppStyle::GetFontStyle(TEXT("Sequencer.FixedFont")));
 	HexDiffStyle->Set(TEXT("Normal"), NormalStyle);
 	FTextBlockStyle ChangedStyle = NormalStyle;
 	ChangedStyle.SetColorAndOpacity(FSlateColor(FStyleColors::AccentRed));
@@ -274,6 +302,23 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
+
+	if (DiffSession->Old.Document.IsValid() && DiffSession->New.Document.IsValid() && DiffSession->DiffResult.IsSet())
+	{
+		LoadSessionIntoUI();
+	}
+}
+
+void SAssetSerializationDiff::SetSession(TSharedPtr<FAssetSerializationDiffSession> InSession)
+{
+	if (!InSession.IsValid())
+	{
+		return;
+	}
+
+	DiffSession = MoveTemp(InSession);
+
+	LoadSessionIntoUI();
 }
 
 TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSide)
@@ -799,6 +844,16 @@ int64 SAssetSerializationDiff::GetSelectedChangedByteCount() const
 	return Result;
 }
 
+FText SAssetSerializationDiff::GetComparisonTitle() const
+{
+	if (!DiffSession.IsValid() || !DiffSession->New.Document.IsValid())
+	{
+		return LOCTEXT("ManualComparison", "Asset Comparison");
+	}
+
+	return FText::FromString(FPaths::GetBaseFilename(DiffSession->New.Document->Filename));
+}
+
 FText SAssetSerializationDiff::BuildHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, bool bRelativeOffsets) const
 {
 	if (Document == nullptr)
@@ -1113,6 +1168,76 @@ FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDoc
 	}
 
 	return FText::FromString(MoveTemp(Result));
+}
+
+void SAssetSerializationDiff::LoadSessionIntoUI()
+{
+	if (!DiffSession.IsValid())
+	{
+		return;
+	}
+
+	if (OldFilenameTextBox.IsValid() && DiffSession->Old.Document.IsValid())
+	{
+		OldFilenameTextBox->SetText(FText::FromString(DiffSession->Old.Document->Filename));
+	}
+
+	if (NewFilenameTextBox.IsValid() && DiffSession->New.Document.IsValid())
+	{
+		NewFilenameTextBox->SetText(FText::FromString(DiffSession->New.Document->Filename));
+	}
+
+	RebuildDiffTree();
+
+	SelectFirstMeaningfulDifference();
+	StatusText =
+		DiffSession->DiffResult->bFilesIdentical ? LOCTEXT("ObservedFilesIdentical", "Saved file is byte-identical.") : LOCTEXT("ObservedSaveLoaded", "Displaying changes produced by the save.");
+}
+
+void SAssetSerializationDiff::SelectFirstMeaningfulDifference()
+{
+	if (!DiffTreeView.IsValid())
+	{
+		return;
+	}
+
+	for (const FDiffTreeNodePtr& Root : RootDiffNodes)
+	{
+		FDiffTreeNodePtr Found = FindFirstChangedNode(Root);
+		if (Found.IsValid())
+		{
+			ExpandDiffAncestors(Found);
+
+			DiffTreeView->SetSelection(Found, ESelectInfo::Direct);
+			DiffTreeView->RequestScrollIntoView(Found);
+
+			break;
+		}
+	}
+}
+
+void SAssetSerializationDiff::ExpandDiffAncestors(const FDiffTreeNodePtr& Node)
+{
+	if (!Node.IsValid() || !DiffTreeView.IsValid())
+	{
+		return;
+	}
+
+	TArray<FDiffTreeNodePtr> Ancestors;
+
+	FDiffTreeNodePtr Parent = Node->Parent.Pin();
+
+	while (Parent.IsValid())
+	{
+		Ancestors.Add(Parent);
+		Parent = Parent->Parent.Pin();
+	}
+
+	// Expand from the root downward.
+	for (int32 Index = Ancestors.Num() - 1; Index >= 0; --Index)
+	{
+		DiffTreeView->SetItemExpansion(Ancestors[Index], true);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

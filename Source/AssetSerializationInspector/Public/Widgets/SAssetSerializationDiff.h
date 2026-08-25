@@ -73,14 +73,17 @@ struct FAssetPackageDiffTreeNode
 class SAssetSerializationDiff : public SCompoundWidget
 {
 public:
+	using FDiffTreeNodePtr = TSharedPtr<FAssetPackageDiffTreeNode>;
+
 	SLATE_BEGIN_ARGS(SAssetSerializationDiff) {}
+	SLATE_ARGUMENT(TSharedPtr<FAssetSerializationDiffSession>, Session)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
 
-private:
-	using FDiffTreeNodePtr = TSharedPtr<FAssetPackageDiffTreeNode>;
+	void SetSession(TSharedPtr<FAssetSerializationDiffSession> InSession);
 
+private:
 	TSharedRef<SWidget> BuildDetailsPanel(bool bOldSide);
 
 	// File selection
@@ -118,12 +121,18 @@ private:
 	FText GetSelectedNewHexText() const;
 	FText GetSelectedByteComparisonText() const;
 	int64 GetSelectedChangedByteCount() const;
+	FText GetComparisonTitle() const;
+	FText GetChangeClassificationText() const;
 
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
 	TArray<FAssetByteDiffSpan> BuildByteDiffSpans(const FAssetPackageDocument* OldDoc, int64 OldOffset, int64 OldSize, const FAssetPackageDocument* NewDoc, int64 NewOffset, int64 NewSize) const;
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
 	FText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
+
+	void LoadSessionIntoUI();
+	void SelectFirstMeaningfulDifference();
+	void ExpandDiffAncestors(const FDiffTreeNodePtr& Node);
 
 private:
 	TSharedPtr<SEditableTextBox> OldFilenameTextBox;

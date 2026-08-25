@@ -12,6 +12,16 @@ class FObjectPostSaveContext;
 struct FAssetPackageDocument;
 struct FAssetPackageTraceCollection;
 
+enum class EObservedSaveChangeKind : uint8
+{
+	Identical,
+	MetadataOnly,
+	LayoutOnly,
+	TableChange,
+	PayloadChange,
+	Unknown
+};
+
 struct FAssetSaveSnapshot
 {
 	FName PackageName;
@@ -25,19 +35,38 @@ struct FObservedAssetSave
 {
 	FName PackageName;
 
+	FString BeforeFilename;
+	FString AfterFilename;
+
 	TSharedPtr<FAssetPackageDocument> Before;
 	TSharedPtr<FAssetPackageDocument> After;
 
-	TOptional<FAssetPackageDiffResult> StructuralDiff;
+	FAssetPackageDiffResult Diff;
 
 	TSharedPtr<FAssetPackageTraceCollection> BeforeFields;
 	TSharedPtr<FAssetPackageTraceCollection> AfterFields;
+
+	FDateTime Timestamp;
+
+	EObservedSaveChangeKind ChangeKind = EObservedSaveChangeKind::Unknown;
+
+	int64 ChangedPayloadBytes = 0;
+	int32 ChangedPayloadSpans = 0;
+
+	bool HasChanges() const { return !Diff.bFilesIdentical; }
 };
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnObservedAssetSave, TSharedPtr<FObservedAssetSave>);
 
 class FAssetSaveObserver
 {
+	static constexpr int32 MaxRecentSaves = 50;
+
 public:
 	static FAssetSaveObserver& Get();
+
+	FOnObservedAssetSave& OnObservedAssetSave() { return ObservedAssetSaveEvent; }
+	TSharedPtr<FObservedAssetSave> FindLatestSave(FName PackageName) const;
 
 	void Startup();
 	void Shutdown();
@@ -48,8 +77,12 @@ private:
 	FString MakeSnapshotFilename(const FString& SourceFilename) const;
 
 private:
+	FOnObservedAssetSave ObservedAssetSaveEvent;
+
 	TMap<FName, FAssetSaveSnapshot> PendingSaves;
 	TMap<FName, TSharedPtr<FObservedAssetSave>> ObservedSaves;
+
+	TArray<TSharedPtr<FObservedAssetSave>> RecentSaves;
 
 	FDelegateHandle PreSaveHandle;
 	FDelegateHandle PostSaveHandle;
