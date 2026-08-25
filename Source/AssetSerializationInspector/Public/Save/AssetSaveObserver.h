@@ -4,9 +4,13 @@
 
 #include "CoreMinimal.h"
 
+#include "Diff/AssetPackageDiff.h"
+
 class UPackage;
 class FObjectPreSaveContext;
 class FObjectPostSaveContext;
+struct FAssetPackageDocument;
+struct FAssetPackageTraceCollection;
 
 struct FAssetSaveSnapshot
 {
@@ -49,4 +53,22 @@ private:
 
 	FDelegateHandle PreSaveHandle;
 	FDelegateHandle PostSaveHandle;
+};
+
+class FAssetMonitoringManager
+{
+public:
+	static FAssetMonitoringManager& Get();
+
+	FAssetMonitoringManager();
+
+	bool IsMonitored(FName PackageName) const;
+
+	void AddMonitoredAsset(FName PackageName);
+	void RemoveMonitoredAsset(FName PackageName);
+
+	const TSet<FName>& GetMonitoredAssets() const { return MonitoredPackages; }
+
+private:
+	TSet<FName> MonitoredPackages;
 };

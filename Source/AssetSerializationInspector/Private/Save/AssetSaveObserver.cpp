@@ -8,6 +8,7 @@
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/Package.h"
 
+#include "AssetSerializationInspectorSettings.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 
 FAssetSaveObserver& FAssetSaveObserver::Get()
@@ -48,6 +49,11 @@ void FAssetSaveObserver::HandlePreSavePackage(UPackage* Package, FObjectPreSaveC
 
 	const FName PackageName = Package->GetFName();
 
+	if (!FAssetMonitoringManager::Get().IsMonitored(PackageName))
+	{
+		return;
+	}
+
 	// The pre-save delegate may occur more than once as part of a save.
 	// Don't overwrite our original "before" snapshot.
 	if (PendingSaves.Contains(PackageName))
@@ -82,6 +88,11 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 
 	const FName PackageName = Package->GetFName();
 
+	if (!FAssetMonitoringManager::Get().IsMonitored(PackageName))
+	{
+		return;
+	}
+
 	FAssetSaveSnapshot* Snapshot = PendingSaves.Find(PackageName);
 
 	if (Snapshot == nullptr)
@@ -90,7 +101,6 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 	}
 
 	TSharedPtr<FObservedAssetSave> Save = MakeShared<FObservedAssetSave>();
-
 	Save->PackageName = PackageName;
 
 	FText Error;
@@ -121,4 +131,43 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 	ObservedSaves.Add(PackageName, Save);
 
 	PendingSaves.Remove(PackageName);
+}
+
+FAssetMonitoringManager& FAssetMonitoringManager::Get()
+{
+	static FAssetMonitoringManager Instance;
+	return Instance;
+}
+
+FAssetMonitoringManager::FAssetMonitoringManager()
+{
+	const UAssetSerializationInspectorSettings* Settings = GetDefault<UAssetSerializationInspectorSettings>();
+
+	for (const FName PackageName : Settings->MonitoredPackages)
+	{
+		MonitoredPackages.Add(PackageName);
+	}
+}
+
+bool FAssetMonitoringManager::IsMonitored(const FName PackageName) const
+{
+	return MonitoredPackages.Contains(PackageName);
+}
+
+void FAssetMonitoringManager::AddMonitoredAsset(const FName PackageName)
+{
+	MonitoredPackages.Add(PackageName);
+
+	UAssetSerializationInspectorSettings* Settings = GetMutableDefault<UAssetSerializationInspectorSettings>();
+	Settings->MonitoredPackages.Add(PackageName);
+	Settings->SaveConfig();
+}
+
+void FAssetMonitoringManager::RemoveMonitoredAsset(const FName PackageName)
+{
+	MonitoredPackages.Remove(PackageName);
+
+	UAssetSerializationInspectorSettings* Settings = GetMutableDefault<UAssetSerializationInspectorSettings>();
+	Settings->MonitoredPackages.Remove(PackageName);
+	Settings->SaveConfig();
 }

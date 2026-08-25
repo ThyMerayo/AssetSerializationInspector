@@ -2,6 +2,7 @@
 
 #include "AssetSerializationInspector.h"
 
+#include "ContentBrowserMenuContexts.h"
 #include "LevelEditor.h"
 #include "ToolMenus.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -10,6 +11,7 @@
 
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
+#include "Save/AssetSaveObserver.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
 
@@ -100,6 +102,65 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 				Entry.SetCommandList(PluginCommands);
 			}
 		}
+	}
+
+	// Context Menu
+	{
+		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.AssetContextMenu");
+
+		FToolMenuSection& Section = Menu->FindOrAddSection("AssetSerializationInspector", LOCTEXT("AssetSerializationSection", "Asset Serialization"));
+
+		Section.AddDynamicEntry("AssetSerializationMonitoring", FNewToolMenuSectionDelegate::CreateLambda([this](FToolMenuSection& InSection) {
+			const UContentBrowserAssetContextMenuContext* Context = InSection.FindContext<UContentBrowserAssetContextMenuContext>();
+
+			if (Context == nullptr || Context->SelectedAssets.IsEmpty())
+			{
+				return;
+			}
+
+			// Add menu entries here.
+			TArray<FName> SelectedPackages;
+			for (const FAssetData& AssetData : Context->SelectedAssets)
+			{
+				SelectedPackages.Add(AssetData.PackageName);
+			}
+
+			bool bAllMonitored = true;
+			bool bAnyMonitored = false;
+
+			for (const FName PackageName : SelectedPackages)
+			{
+				const bool bMonitored = FAssetMonitoringManager::Get().IsMonitored(PackageName);
+
+				bAllMonitored &= bMonitored;
+				bAnyMonitored |= bMonitored;
+			}
+
+			if (!bAllMonitored)
+			{
+				InSection.AddMenuEntry("StartAssetSerializationMonitoring", LOCTEXT("StartMonitoring", "Start Monitoring"),
+					LOCTEXT("StartMonitoringTooltip",
+						"Monitor the selected assets and record structural "
+						"differences whenever they are saved."),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Eye"), FUIAction(FExecuteAction::CreateLambda([SelectedPackages = SelectedPackages]() {
+						for (const FName PackageName : SelectedPackages)
+						{
+							FAssetMonitoringManager::Get().AddMonitoredAsset(PackageName);
+						}
+					})));
+			}
+
+			if (bAnyMonitored)
+			{
+				InSection.AddMenuEntry("StopAssetSerializationMonitoring", LOCTEXT("StopMonitoring", "Stop Monitoring"), LOCTEXT("StopMonitoringTooltip", "Stop monitoring the selected assets."),
+					FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([SelectedPackages = SelectedPackages]() {
+						for (const FName PackageName : SelectedPackages)
+						{
+							FAssetMonitoringManager::Get().RemoveMonitoredAsset(PackageName);
+						}
+					})));
+			}
+		}));
 	}
 }
 
