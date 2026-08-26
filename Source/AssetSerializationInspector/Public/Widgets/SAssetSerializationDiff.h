@@ -15,6 +15,12 @@ template <typename ItemType> class STreeView;
 
 struct FAssetPackageDocument;
 
+struct FHexPreviewText
+{
+	FText Rich;
+	FText Plain;
+};
+
 enum class EAssetByteDiffState : uint8
 {
 	Unchanged,
@@ -85,6 +91,7 @@ public:
 
 private:
 	TSharedRef<SWidget> BuildDetailsPanel(bool bOldSide);
+	TSharedRef<SWidget> BuildSelectableDetailRow(const FText& Label, TAttribute<FText> Value);
 
 	// File selection
 	FReply HandleBrowseOldClicked();
@@ -117,8 +124,10 @@ private:
 	FText GetSelectedNewOffset() const;
 	FText GetSelectedOldSize() const;
 	FText GetSelectedNewSize() const;
-	FText GetSelectedOldHexText() const;
-	FText GetSelectedNewHexText() const;
+	FText GetSelectedOldHexRichText() const;
+	FText GetSelectedOldHexPlainText() const;
+	FText GetSelectedNewHexRichText() const;
+	FText GetSelectedNewHexPlainText() const;
 	FText GetSelectedByteComparisonText() const;
 	int64 GetSelectedChangedByteCount() const;
 	FText GetComparisonTitle() const;
@@ -128,13 +137,16 @@ private:
 
 	TArray<FAssetByteDiffSpan> BuildByteDiffSpans(const FAssetPackageDocument* OldDoc, int64 OldOffset, int64 OldSize, const FAssetPackageDocument* NewDoc, int64 NewOffset, int64 NewSize) const;
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
-	FText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
+	FHexPreviewText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
 
 	void LoadSessionIntoUI();
 	void SelectFirstMeaningfulDifference();
 	void ExpandDiffAncestors(const FDiffTreeNodePtr& Node);
 
 private:
+	FHexPreviewText OldHexPreview;
+	FHexPreviewText NewHexPreview;
+
 	TSharedPtr<SEditableTextBox> OldFilenameTextBox;
 	TSharedPtr<SEditableTextBox> NewFilenameTextBox;
 

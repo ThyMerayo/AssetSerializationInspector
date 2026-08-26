@@ -4,6 +4,7 @@
 
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "IDesktopPlatform.h"
 #include "Misc/Paths.h"
 #include "Styling/AppStyle.h"
@@ -16,6 +17,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/SExpanderArrow.h"
@@ -24,6 +26,7 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Widgets/SSelectableRichText.h"
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationDiff"
 
@@ -267,10 +270,8 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 		+ SVerticalBox::Slot().AutoHeight()[SNew(SSeparator)]
 
 		// Summary/filter bar
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 6.0f)[SNew(SHorizontalBox)
-
-			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSummaryText)]
-
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			8.0f, 6.0f)[SNew(SHorizontalBox) + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSummaryText)]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SCheckBox)
 					.IsChecked_Lambda([this]() { return bShowUnchanged ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
@@ -328,30 +329,46 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			0.0f, 0.0f, 0.0f, 8.0f)[SNew(STextBlock).Text(bOldSide ? LOCTEXT("OldDetailsHeading", "Old") : LOCTEXT("NewDetailsHeading", "New")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("SelectedNameFormat", "Name: {0}"), GetSelectedDisplayName()); })]
-
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock)
-				.Text_Lambda([this, bOldSide]() { return FText::Format(LOCTEXT("SelectedValueFormat", "Value: {0}"), bOldSide ? GetSelectedOldValue() : GetSelectedNewValue()); })
-				.AutoWrapText(true)]
-
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this, bOldSide]() {
-			  return FText::Format(LOCTEXT("SelectedOffsetFormat", "Offset: {0}"), bOldSide ? GetSelectedOldOffset() : GetSelectedNewOffset());
-		  })]
-
 		+ SVerticalBox::Slot().AutoHeight().Padding(
-			0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this, bOldSide]() { return FText::Format(LOCTEXT("SelectedSizeFormat", "Size: {0}"), bOldSide ? GetSelectedOldSize() : GetSelectedNewSize()); })]
+			0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("SelectedNameFormat", "Name:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedDisplayName(); }))]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
+			LOCTEXT("SelectedValueLabel", "Value:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldValue() : GetSelectedNewValue(); }))]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
+			LOCTEXT("SelectedOffsetFormat", "Offset:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldOffset() : GetSelectedNewOffset(); }))]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
+			LOCTEXT("SelectedSizeFormat", "Size:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldSize() : GetSelectedNewSize(); }))]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f)[SNew(SSeparator)]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+				.VAlign(VAlign_Center)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SButton).Text(LOCTEXT("CopyHex", "Copy")).OnClicked_Lambda([this, bOldSide]() {
+				  const FString Text = (bOldSide ? GetSelectedOldHexPlainText() : GetSelectedNewHexPlainText()).ToString();
+				  FPlatformApplicationMisc::ClipboardCopy(*Text);
+				  return FReply::Handled();
+			  })]]
 
 		+ SVerticalBox::Slot().FillHeight(1.0f)[SNew(SScrollBox)
 
-			+ SScrollBox::Slot()[SNew(SRichTextBlock)
-					.Text_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexText() : GetSelectedNewHexText(); })
-					.TextStyle(&HexDiffStyle->GetWidgetStyle<FTextBlockStyle>(TEXT("Normal")))
-					.DecoratorStyleSet(HexDiffStyle.Get())
-					.AutoWrapText(false)]];
+			+ SScrollBox::Slot()[SNew(SSelectableRichText)
+					.RichText_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexRichText() : GetSelectedNewHexRichText(); })
+					.PlainText_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexPlainText() : GetSelectedNewHexPlainText(); })
+					.TextStyle(HexDiffStyle->GetWidgetStyle<FTextBlockStyle>(TEXT("Normal")))
+					.DecoratorStyleSet(HexDiffStyle.Get())]];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSelectableDetailRow(const FText& Label, TAttribute<FText> Value)
+{
+	return SNew(SHorizontalBox)
+
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Label)]
+		+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(SEditableText).Text(Value).IsReadOnly(true)];
 }
 
 bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& OutFilename)
@@ -598,6 +615,9 @@ void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, 
 	SelectedByteDiffSpans = BuildByteDiffSpans(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize);
 
 	AnnotateSelectedDiffSpans();
+
+	OldHexPreview = BuildHighlightedHexPreview(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, SelectedByteDiffSpans);
+	NewHexPreview = BuildHighlightedHexPreview(DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize, SelectedByteDiffSpans);
 }
 
 void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
@@ -940,24 +960,24 @@ FText SAssetSerializationDiff::BuildHexPreview(const FAssetPackageDocument* Docu
 	return FText::FromString(MoveTemp(Result));
 }
 
-FText SAssetSerializationDiff::GetSelectedOldHexText() const
+FText SAssetSerializationDiff::GetSelectedOldHexRichText() const
 {
-	if (!SelectedDiffNode.IsValid())
-	{
-		return LOCTEXT("NoOldHexSelection", "Select a diff node.");
-	}
-
-	return BuildHighlightedHexPreview(DiffSession->Old.Document.Get(), SelectedDiffNode->Diff.OldOffset, SelectedDiffNode->Diff.OldSize, SelectedByteDiffSpans);
+	return OldHexPreview.Rich;
 }
 
-FText SAssetSerializationDiff::GetSelectedNewHexText() const
+FText SAssetSerializationDiff::GetSelectedOldHexPlainText() const
 {
-	if (!SelectedDiffNode.IsValid())
-	{
-		return LOCTEXT("NoNewHexSelection", "Select a diff node.");
-	}
+	return OldHexPreview.Plain;
+}
 
-	return BuildHighlightedHexPreview(DiffSession->New.Document.Get(), SelectedDiffNode->Diff.NewOffset, SelectedDiffNode->Diff.NewSize, SelectedByteDiffSpans);
+FText SAssetSerializationDiff::GetSelectedNewHexRichText() const
+{
+	return NewHexPreview.Rich;
+}
+
+FText SAssetSerializationDiff::GetSelectedNewHexPlainText() const
+{
+	return NewHexPreview.Plain;
 }
 
 TArray<FAssetByteDiffSpan> SAssetSerializationDiff::BuildByteDiffSpans(
@@ -1025,16 +1045,18 @@ bool SAssetSerializationDiff::IsByteDifferent(const int64 RelativeOffset, const 
 	return false;
 }
 
-FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const
+FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const
 {
 	if (Document == nullptr || Offset == INDEX_NONE)
 	{
-		return FText::FromString(TEXT("No byte range."));
+		FText Result = FText::FromString(TEXT("No byte range."));
+		return { Result, Result };
 	}
 
 	if (Size < 0 || !Document->IsValidRange(Offset, Size))
 	{
-		return FText::FromString(TEXT("Invalid byte range."));
+		FText Result = FText::FromString(TEXT("Invalid byte range."));
+		return { Result, Result };
 	}
 
 	constexpr int64 MaximumPreviewBytes = 4096;
@@ -1042,12 +1064,15 @@ FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDoc
 
 	const int64 PreviewSize = FMath::Min<int64>(Size, MaximumPreviewBytes);
 
-	FString Result;
+	FString RichResult;
+	FString PlainResult;
 
 	for (int64 RowOffset = 0; RowOffset < PreviewSize; RowOffset += BytesPerRow)
 	{
 		// Relative offsets are much better for side-by-side diffing.
-		Result += FString::Printf(TEXT("%08llX  "), RowOffset);
+		const FString OffsetText = FString::Printf(TEXT("%08llX  "), RowOffset);
+		RichResult += OffsetText;
+		PlainResult += OffsetText;
 
 		// HEX
 		bool bMarkupOpen = false;
@@ -1065,32 +1090,35 @@ FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDoc
 
 			if (bChanged && !bMarkupOpen)
 			{
-				Result += TEXT("<Changed>");
+				RichResult += TEXT("<Changed>");
 				bMarkupOpen = true;
 			}
 			else if (!bChanged && bMarkupOpen)
 			{
-				Result += TEXT("</>");
+				RichResult += TEXT("</>");
 				bMarkupOpen = false;
 			}
 
 			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
 
-			Result += FString::Printf(TEXT("%02X "), Byte);
+			const FString ByteText = FString::Printf(TEXT("%02X "), Byte);
+			RichResult += ByteText;
+			PlainResult += ByteText;
 
 			if (Column == 7)
 			{
-				Result += TEXT(" ");
+				RichResult += TEXT(" ");
 			}
 		}
 
 		if (bMarkupOpen)
 		{
-			Result += TEXT("</>");
+			RichResult += TEXT("</>");
 		}
 
 		// ASCII
-		Result += TEXT(" |");
+		RichResult += TEXT(" |");
+		PlainResult += TEXT(" |");
 
 		bMarkupOpen = false;
 
@@ -1107,12 +1135,12 @@ FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDoc
 
 			if (bChanged && !bMarkupOpen)
 			{
-				Result += TEXT("<Changed>");
+				RichResult += TEXT("<Changed>");
 				bMarkupOpen = true;
 			}
 			else if (!bChanged && bMarkupOpen)
 			{
-				Result += TEXT("</>");
+				RichResult += TEXT("</>");
 				bMarkupOpen = false;
 			}
 
@@ -1120,54 +1148,62 @@ FText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDoc
 
 			const TCHAR Character = Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.');
 
+			PlainResult.AppendChar(Character);
+
 			/*
 			 * Escape markup-sensitive ASCII.
 			 */
 			switch (Character)
 			{
 				case TEXT('<'):
-					Result += TEXT("&lt;");
+					RichResult += TEXT("&lt;");
 					break;
 
 				case TEXT('>'):
-					Result += TEXT("&gt;");
+					RichResult += TEXT("&gt;");
 					break;
 
 				case TEXT('&'):
-					Result += TEXT("&amp;");
+					RichResult += TEXT("&amp;");
 					break;
 
 				default:
-					Result.AppendChar(Character);
+					RichResult.AppendChar(Character);
 					break;
 			}
 		}
 
 		if (bMarkupOpen)
 		{
-			Result += TEXT("</>");
+			RichResult += TEXT("</>");
 		}
 
-		Result += TEXT("|");
+		FString LineResult;
+		LineResult += TEXT("|");
+		LineResult += LINE_TERMINATOR;
 
-		Result += LINE_TERMINATOR;
+		RichResult += LineResult;
+		PlainResult += LineResult;
 	}
 
-	Result += LINE_TERMINATOR;
+	FString FooterResult;
+	FooterResult += LINE_TERMINATOR;
+	FooterResult += FString::Printf(TEXT("Payload size: %lld"), Size);
+	FooterResult += LINE_TERMINATOR;
+	FooterResult += FString::Printf(TEXT("Changed bytes: %lld"), GetSelectedChangedByteCount());
+	FooterResult += LINE_TERMINATOR;
 
-	Result += FString::Printf(TEXT("Payload size: %llX"), Size);
-	Result += LINE_TERMINATOR;
-	Result += FString::Printf(TEXT("Changed bytes: %llX"), GetSelectedChangedByteCount());
-	Result += LINE_TERMINATOR;
+	RichResult += FooterResult;
+	PlainResult += FooterResult;
 
 	if (Size > PreviewSize)
 	{
-		Result += LINE_TERMINATOR;
+		RichResult += LINE_TERMINATOR;
 
-		Result += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, Size);
+		RichResult += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, Size);
 	}
 
-	return FText::FromString(MoveTemp(Result));
+	return { FText::FromString(MoveTemp(RichResult)), FText::FromString(MoveTemp(PlainResult)) };
 }
 
 void SAssetSerializationDiff::LoadSessionIntoUI()

@@ -34,6 +34,7 @@ public class AssetSerializationInspector : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
+                "ApplicationCore",
                 "ContentBrowser",
                 "CoreUObject",
                 "DesktopPlatform",
