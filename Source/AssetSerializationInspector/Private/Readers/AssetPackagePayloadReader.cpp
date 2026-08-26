@@ -53,3 +53,53 @@ FArchive& FAssetPackagePayloadReader::operator<<(FName& Value)
 
 	return *this;
 }
+
+bool FAssetPackagePayloadReader::ReadNameReference(FAssetPackageNameReference& OutReference)
+{
+	int32 NameIndex = INDEX_NONE;
+	int32 Number = 0;
+
+	if (!CanRead(sizeof(int32) * 2))
+	{
+		SetError();
+		return false;
+	}
+
+	*this << NameIndex;
+	*this << Number;
+
+	if (IsError())
+	{
+		return false;
+	}
+
+	OutReference.NameIndex = NameIndex;
+	OutReference.Number = Number;
+
+	if (!OutReference.IsValid(Document.NameMap.Num()))
+	{
+		SetError();
+		return false;
+	}
+
+	return true;
+}
+
+bool FAssetPackagePayloadReader::ReadResolvedName(FString& OutName, FAssetPackageNameReference* OutReference)
+{
+	FAssetPackageNameReference Reference;
+
+	if (!ReadNameReference(Reference))
+	{
+		return false;
+	}
+
+	OutName = Document.ResolveNameReference(Reference);
+
+	if (OutReference != nullptr)
+	{
+		*OutReference = Reference;
+	}
+
+	return true;
+}

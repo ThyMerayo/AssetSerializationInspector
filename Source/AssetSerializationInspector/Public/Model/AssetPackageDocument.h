@@ -119,8 +119,19 @@ struct FAssetPackageExportEntry
 	 * These may contain PackageName, optional-import state, or other
 	 * version-dependent fields.
 	 */
+
+	int64 ScriptSerializationStartOffset = 0;
+	int64 ScriptSerializationEndOffset = 0;
+
 	int64 UndecodedTailOffset = 0;
 	int64 UndecodedTailSize = 0;
+
+	bool HasScriptSerializationRange() const
+	{
+		return ScriptSerializationStartOffset >= 0 && ScriptSerializationEndOffset > ScriptSerializationStartOffset && ScriptSerializationEndOffset <= SerialSize;
+	}
+
+	int64 GetScriptSerializationSize() const { return HasScriptSerializationRange() ? ScriptSerializationEndOffset - ScriptSerializationStartOffset : 0; }
 };
 
 struct FAssetPackageDocument
@@ -165,8 +176,10 @@ struct FAssetPackageDocument
 	FString DescribePackageIndexDetailed(const FAssetPackageIndexReference& Reference) const;
 	FString ResolveExportPath(int32 ExportIndex) const;
 	bool IsValidExportPayload(const FAssetPackageExportEntry& Export) const;
+	bool IsCoreUObjectClassImport(const int32 ImportIndex) const;
+	bool IsExportUClass(const int32 ExportIndex) const;
 
 private:
 	FString ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
-	FString ResolveExportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
+	FString ResolveExportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedExports) const;
 };

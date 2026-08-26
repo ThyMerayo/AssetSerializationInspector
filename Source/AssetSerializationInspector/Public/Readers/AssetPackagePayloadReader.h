@@ -15,6 +15,9 @@ public:
 
 	virtual FArchive& operator<<(FName& Value) override;
 
+	bool ReadNameReference(FAssetPackageNameReference& OutReference);
+	bool ReadResolvedName(FString& OutName, FAssetPackageNameReference* OutReference = nullptr);
+
 private:
 	const FAssetPackageDocument& Document;
 };

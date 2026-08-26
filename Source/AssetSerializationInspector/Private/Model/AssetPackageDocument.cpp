@@ -237,3 +237,41 @@ bool FAssetPackageDocument::IsValidExportPayload(const FAssetPackageExportEntry&
 
 	return IsValidRange(Export.SerialOffset, Export.SerialSize);
 }
+
+bool FAssetPackageDocument::IsCoreUObjectClassImport(const int32 ImportIndex) const
+{
+	if (!ImportMap.IsValidIndex(ImportIndex))
+	{
+		return false;
+	}
+
+	const FAssetPackageImportEntry& Import = ImportMap[ImportIndex];
+
+	const FString ObjectName = ResolveNameReference(Import.ObjectName);
+
+	if (ObjectName != TEXT("Class"))
+	{
+		return false;
+	}
+
+	const FString Path = ResolveImportPath(ImportIndex);
+
+	return Path == TEXT("/Script/CoreUObject.Class");
+}
+
+bool FAssetPackageDocument::IsExportUClass(const int32 ExportIndex) const
+{
+	if (!ExportMap.IsValidIndex(ExportIndex))
+	{
+		return false;
+	}
+
+	const FAssetPackageExportEntry& Export = ExportMap[ExportIndex];
+
+	if (Export.ClassIndex.GetKind() != EAssetPackageIndexKind::Import)
+	{
+		return false;
+	}
+
+	return IsCoreUObjectClassImport(Export.ClassIndex.GetArrayIndex());
+}
