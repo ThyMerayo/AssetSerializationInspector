@@ -131,7 +131,6 @@ namespace
 		if (!ReadInt<int32>(Reader, OutReference.NameIndex) || !ReadInt<int32>(Reader, OutReference.Number))
 		{
 			OutError = NSLOCTEXT("AssetPackageReader", "PackageNameReferenceReadFailed", "Could not read a package-local name reference.");
-
 			return false;
 		}
 
@@ -155,7 +154,6 @@ namespace
 		if (!ReadInt<int32>(Reader, OutReference.RawIndex))
 		{
 			OutError = NSLOCTEXT("AssetPackageReader", "PackageIndexReadFailed", "Could not read a package index.");
-
 			return false;
 		}
 
@@ -538,26 +536,22 @@ namespace
 			Entry.Size = EntryStride;
 
 			FText FieldError;
-
 			if (!ReadPackageNameReference(EntryReader, Entry.ClassPackage, Document.NameMap.Num(), FieldError))
 			{
 				OutError = FText::Format(LOCTEXT("ImportClassPackageFailed", "Could not decode ClassPackage for import {0} at offset 0x{1}:\n{2}"), FText::AsNumber(ImportIndex),
 					FText::FromString(FString::Printf(TEXT("%llX"), EntryStart)), FieldError);
 				return false;
 			}
-
 			if (!ReadPackageNameReference(EntryReader, Entry.ClassName, Document.NameMap.Num(), FieldError))
 			{
 				OutError = FText::Format(LOCTEXT("ImportClassNameFailed", "Could not decode ClassName for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
 				return false;
 			}
-
 			if (!ReadPackageIndexReference(EntryReader, Entry.OuterIndex, FieldError))
 			{
 				OutError = FText::Format(LOCTEXT("ImportOuterIndexFailed", "Could not decode OuterIndex for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
 				return false;
 			}
-
 			if (!ReadPackageNameReference(EntryReader, Entry.ObjectName, Document.NameMap.Num(), FieldError))
 			{
 				OutError = FText::Format(LOCTEXT("ImportObjectNameFailed", "Could not decode ObjectName for import {0}:\n{1}"), FText::AsNumber(ImportIndex), FieldError);
@@ -782,8 +776,67 @@ namespace
 				}
 				Entry.SerialOffset = SerialOffset;
 			}
+
+			// From void operator<<(FStructuredArchive::FSlot Slot, FObjectExport& E)
+			bool DummyBool;
+			EntryReader << DummyBool; // bForcedExport
+			EntryReader << DummyBool; // bNotForClient
+			EntryReader << DummyBool; // bNotForServer
+
+			if (EntryReader.UEVer() < EUnrealEngineObjectUE5Version::REMOVE_OBJECT_EXPORT_PACKAGE_GUID)
+			{
+				FGuid DummyGuid;
+				EntryReader << DummyGuid;
+			}
+			if (EntryReader.UEVer() >= EUnrealEngineObjectUE5Version::TRACK_OBJECT_EXPORT_IS_INHERITED)
+			{
+				EntryReader << DummyBool; // bIsInheritedInstance
+			}
+			uint32 DummyUint32;
+			EntryReader << DummyUint32; // E.PackageFlags
+			if (EntryReader.UEVer() >= VER_UE4_LOAD_FOR_EDITOR_GAME)
+			{
+				EntryReader << DummyBool; // bNotAlwaysLoadedForEditorGame
+			}
+			if (EntryReader.UEVer() >= VER_UE4_COOKED_ASSETS_IN_EDITOR_SUPPORT)
+			{
+				EntryReader << DummyBool; // bIsAsset
+			}
+			if (EntryReader.UEVer() >= EUnrealEngineObjectUE5Version::OPTIONAL_RESOURCES)
+			{
+				EntryReader << DummyBool; // bGeneratePublicHash
+			}
+			if (EntryReader.UEVer() >= VER_UE4_PRELOAD_DEPENDENCIES_IN_COOKED_EXPORTS)
+			{
+				EntryReader << DummyUint32; // E.FirstExportDependency
+				EntryReader << DummyUint32; // E.SerializationBeforeSerializationDependencies
+				EntryReader << DummyUint32; // E.CreateBeforeSerializationDependencies
+				EntryReader << DummyUint32; // E.SerializationBeforeCreateDependencies
+				EntryReader << DummyUint32; // E.CreateBeforeCreateDependencies
+			}
+
 			Entry.UndecodedTailOffset = EntryReader.Tell();
 			Entry.UndecodedTailSize = EntryStart + EntryStride - EntryReader.Tell();
+
+			if (!EntryReader.UseUnversionedPropertySerialization() && EntryReader.UEVer() >= EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET)
+			{
+				int64 ScriptSerializationStartOffset;
+				if (!ReadInt<int64>(EntryReader, ScriptSerializationStartOffset))
+				{
+					OutError = FText::Format(
+						LOCTEXT("ExportScriptSerializationStartOffsetFailed", "Could not decode ScriptSerializationStartOffset for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+				Entry.ScriptSerializationStartOffset = ScriptSerializationStartOffset;
+				int64 ScriptSerializationEndOffset;
+				if (!ReadInt<int64>(EntryReader, ScriptSerializationEndOffset))
+				{
+					OutError = FText::Format(
+						LOCTEXT("ExportScriptSerializationEndOffsetFailed", "Could not decode ScriptSerializationEndOffset for export {0}:\n{1}"), FText::AsNumber(ExportIndex), FieldError);
+					return false;
+				}
+				Entry.ScriptSerializationEndOffset = ScriptSerializationEndOffset;
+			}
 
 			switch (Entry.OuterIndex.GetKind())
 			{
