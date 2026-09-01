@@ -171,11 +171,6 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 
 	Save->After = FAssetPackageReader::LoadFromFile(PackageFilename, Error);
 
-	if (Save->Before.IsValid() && Save->After.IsValid())
-	{
-		Save->Diff = FAssetPackageDiff::Compare(*Save->Before, *Save->After);
-	}
-
 	// We'll implement these below.
 	if (Save->Before.IsValid())
 	{
@@ -187,6 +182,12 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 		Save->AfterFields = FAssetPackageFieldDecoder::Decode(*Save->After);
 	}
 
+	if (Save->Before.IsValid() && Save->After.IsValid())
+	{
+		Save->Diff = FAssetPackageDiff::Compare(*Save->Before, *Save->After, Save->BeforeFields.Get(), Save->AfterFields.Get());
+	}
+
+	PendingSaves.Remove(PackageName);
 	Save->Timestamp = FDateTime::Now();
 	Save->ChangeKind = ClassifySave(Save->Diff);
 	ObservedSaves.Add(PackageName, Save);
