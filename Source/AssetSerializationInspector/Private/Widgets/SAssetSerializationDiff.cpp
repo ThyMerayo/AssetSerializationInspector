@@ -70,34 +70,6 @@ namespace
 		}
 	}
 
-	FString BuildTracePath(const FAssetSerializationTraceNode* Node)
-	{
-		if (Node == nullptr)
-		{
-			return TEXT("<unknown>");
-		}
-
-		TArray<FString> Parts;
-
-		const FAssetSerializationTraceNode* Current = Node;
-
-		while (Current != nullptr)
-		{
-			if (!Current->Name.IsEmpty())
-			{
-				Parts.Add(Current->Name);
-			}
-
-			const TSharedPtr<FAssetSerializationTraceNode> Parent = Current->Parent.Pin();
-
-			Current = Parent.Get();
-		}
-
-		Algo::Reverse(Parts);
-
-		return FString::Join(Parts, TEXT("."));
-	}
-
 	SAssetSerializationDiff::FDiffTreeNodePtr FindFirstChangedNode(const SAssetSerializationDiff::FDiffTreeNodePtr& Node)
 	{
 		if (!Node.IsValid())
@@ -168,7 +140,11 @@ public:
 			return SNew(STextBlock).Text(FText::FromString(Diff.OldValue)).ToolTipText(FText::FromString(Diff.OldValue));
 		}
 
-		if (ColumnName == TEXT("New"))
+		if (ColumnName == TEXT("New") && (Diff.Kind == EAssetPackageDiffKind::Property || Diff.Kind == EAssetPackageDiffKind::UnknownPayloadRange))
+		{
+			return SNew(STextBlock).Text(FText::Format(NSLOCTEXT("AssetPackageDiff", "ChangedBytesFormat", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));
+		}
+		else if (ColumnName == TEXT("New"))
 		{
 			return SNew(STextBlock).Text(FText::FromString(Diff.NewValue)).ToolTipText(FText::FromString(Diff.NewValue));
 		}
@@ -467,10 +443,10 @@ FReply SAssetSerializationDiff::HandleCompareClicked()
 		return FReply::Handled();
 	}
 
-	DiffSession->DiffResult = FAssetPackageDiff::Compare(*DiffSession->Old.Document, *DiffSession->New.Document);
-
 	BuildTracesForSide(DiffSession->Old);
 	BuildTracesForSide(DiffSession->New);
+
+	DiffSession->DiffResult = FAssetPackageDiff::Compare(*DiffSession->Old.Document.Get(), *DiffSession->New.Document.Get(), DiffSession->Old.Traces.Get(), DiffSession->New.Traces.Get());
 
 	RebuildDiffTree();
 
@@ -637,14 +613,14 @@ void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
 		{
 			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(OldTrace->Root, Span.Offset, Span.Size);
 
-			Span.OldFieldPath = BuildTracePath(Node);
+			Span.OldFieldPath = FAssetPackageDiff::BuildTracePath(Node);
 		}
 
 		if (NewTrace != nullptr && NewTrace->Root.IsValid())
 		{
 			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(NewTrace->Root, Span.Offset, Span.Size);
 
-			Span.NewFieldPath = BuildTracePath(Node);
+			Span.NewFieldPath = FAssetPackageDiff::BuildTracePath(Node);
 		}
 	}
 }

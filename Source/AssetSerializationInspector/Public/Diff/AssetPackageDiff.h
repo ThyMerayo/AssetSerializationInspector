@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 
 struct FAssetPackageDocument;
+struct FAssetPackageTraceCollection;
+struct FAssetSerializationTrace;
+struct FAssetSerializationTraceNode;
 
 enum class EAssetPackageDiffState : uint8
 {
@@ -22,7 +25,30 @@ enum class EAssetPackageDiffKind : uint8
 	Name,
 	Import,
 	Export,
-	ExportPayload
+	ExportPayload,
+	Property,
+	UnknownPayloadRange
+};
+
+struct FAssetByteDiffSpan
+{
+	int64 Offset = 0; // relative to selected range
+	int64 Size = 0;
+
+	FString OldFieldPath;
+	FString NewFieldPath;
+
+	int64 End() const { return Offset + Size; }
+};
+
+struct FPropertyDiffAccumulator
+{
+	const FAssetSerializationTraceNode* OldNode = nullptr;
+	const FAssetSerializationTraceNode* NewNode = nullptr;
+
+	int64 ChangedByteCount = 0;
+
+	TArray<FAssetByteDiffSpan> Spans;
 };
 
 struct FAssetPackageDiffEntry
@@ -37,6 +63,8 @@ struct FAssetPackageDiffEntry
 	FString OldValue;
 	FString NewValue;
 
+	FString TypeName;
+
 	int64 OldOffset = INDEX_NONE;
 	int64 NewOffset = INDEX_NONE;
 
@@ -45,6 +73,10 @@ struct FAssetPackageDiffEntry
 
 	int32 OldExportIndex = INDEX_NONE;
 	int32 NewExportIndex = INDEX_NONE;
+
+	int64 ChangedByteCount = 0;
+
+	TArray<FAssetByteDiffSpan> ChangedSpans;
 
 	TArray<FAssetPackageDiffEntry> Children;
 };
@@ -70,5 +102,11 @@ struct FAssetPackageDiffResult
 class FAssetPackageDiff
 {
 public:
-	static FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument);
+	static FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces = nullptr,
+		const FAssetPackageTraceCollection* NewTraces = nullptr);
+
+	static void BuildPropertyDiffs(
+		const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
+
+	static FString BuildTracePath(const FAssetSerializationTraceNode* Node);
 };

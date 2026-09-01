@@ -29,17 +29,6 @@ enum class EAssetByteDiffState : uint8
 	Removed
 };
 
-struct FAssetByteDiffSpan
-{
-	int64 Offset = 0; // relative to selected range
-	int64 Size = 0;
-
-	FString OldFieldPath;
-	FString NewFieldPath;
-
-	int64 End() const { return Offset + Size; }
-};
-
 struct FAssetPackageTraceCollection
 {
 	TMap<int32, FAssetSerializationTrace> ExportTraces;

@@ -64,4 +64,6 @@ namespace AssetSerializationTrace
 {
 	const FAssetSerializationTraceNode* FindDeepestTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, int64 Offset, int64 Size);
 	FAssetSerializationTrace BuildSerializationTrace(const UObject* Object, int64 PayloadSize, const TArray<FAssetSerializationTraceEvent>& Events);
+
+	const FAssetSerializationTraceNode* FindDeepestFieldTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 Offset, const int64 Size);
 } // namespace AssetSerializationTrace

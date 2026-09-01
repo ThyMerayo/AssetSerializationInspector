@@ -66,4 +66,26 @@ namespace AssetSerializationTrace
 
 		return Result;
 	}
+
+	const FAssetSerializationTraceNode* FindDeepestFieldTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 Offset, const int64 Size)
+	{
+		if (!Root.IsValid())
+		{
+			return nullptr;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Child : Root->Children)
+		{
+			if (!Child.IsValid() || !Child->Overlaps(Offset, Size))
+			{
+				continue;
+			}
+
+			const FAssetSerializationTraceNode* Deeper = FindDeepestFieldTraceNode(Child, Offset, Size);
+
+			return Deeper != nullptr ? Deeper : Child.Get();
+		}
+
+		return nullptr;
+	}
 } // namespace AssetSerializationTrace
