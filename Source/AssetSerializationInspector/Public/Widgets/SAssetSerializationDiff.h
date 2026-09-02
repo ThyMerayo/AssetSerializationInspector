@@ -33,7 +33,15 @@ struct FAssetPackageTraceCollection
 {
 	TMap<int32, FAssetSerializationTrace> ExportTraces;
 
-	const FAssetSerializationTrace* FindExportTrace(const int32 ExportIndex) const { return ExportTraces.Find(ExportIndex); }
+	const FAssetSerializationTrace* FindExportTrace(const int32 ExportIndex) const
+	{
+		if (ExportIndex == INDEX_NONE)
+		{
+			return nullptr;
+		}
+
+		return ExportTraces.Find(ExportIndex);
+	}
 };
 
 struct FAssetSerializationDiffSide
@@ -124,7 +132,6 @@ private:
 
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
-	TArray<FAssetByteDiffSpan> BuildByteDiffSpans(const FAssetPackageDocument* OldDoc, int64 OldOffset, int64 OldSize, const FAssetPackageDocument* NewDoc, int64 NewOffset, int64 NewSize) const;
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
 	FHexPreviewText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
 

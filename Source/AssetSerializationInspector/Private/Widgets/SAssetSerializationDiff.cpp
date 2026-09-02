@@ -284,13 +284,10 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 							.OnGenerateRow(this, &SAssetSerializationDiff::GenerateDiffTreeRow)
 							.OnGetChildren(this, &SAssetSerializationDiff::GetDiffTreeChildren)
 							.OnSelectionChanged(this, &SAssetSerializationDiff::HandleDiffSelectionChanged)
-							.HeaderRow(SNew(SHeaderRow)
-
-								+ SHeaderRow::Column("Name").DefaultLabel(LOCTEXT("DiffColumn", "Difference")).FillWidth(0.50f)
-
+							.HeaderRow(SNew(SHeaderRow) + SHeaderRow::Column("Name").DefaultLabel(LOCTEXT("DiffColumn", "Difference")).FillWidth(0.50f)
 								+ SHeaderRow::Column("Old").DefaultLabel(LOCTEXT("OldColumn", "Old")).FillWidth(0.25f)
-
-								+ SHeaderRow::Column("New").DefaultLabel(LOCTEXT("NewColumn", "New")).FillWidth(0.25f))]]
+								+ SHeaderRow::Column("New").DefaultLabel(LOCTEXT("NewColumn", "New")).FillWidth(0.25f)
+								+ SHeaderRow::Column("Type").DefaultLabel(LOCTEXT("TypeColumn", "Type")).FillWidth(0.20f))]]
 
 			// Details
 			+ SSplitter::Slot().Value(0.50f)[SNew(SSplitter).Orientation(Orient_Horizontal)
@@ -607,7 +604,7 @@ void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, 
 
 	const FAssetPackageDiffEntry& Diff = SelectedDiffNode->Diff;
 
-	SelectedByteDiffSpans = BuildByteDiffSpans(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize);
+	SelectedByteDiffSpans = FAssetByteDiff::Compare(*DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, *DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize);
 
 	AnnotateSelectedDiffSpans();
 
@@ -675,7 +672,9 @@ bool SAssetSerializationDiff::BuildTracesForSide(FAssetSerializationDiffSide& Si
 		return false;
 	}
 
-	Side.Traces = MakeShared<FAssetPackageTraceCollection>();
+	Side.Traces = FAssetPackageFieldDecoder::Decode(*Side.Document.Get());
+
+	// 	Side.Traces = MakeShared<FAssetPackageTraceCollection>();
 	//
 	// 	for (const FAssetPackageExportEntry& Export : Side.Document->ExportMap)
 	// 	{
@@ -973,53 +972,6 @@ FText SAssetSerializationDiff::GetSelectedNewHexRichText() const
 FText SAssetSerializationDiff::GetSelectedNewHexPlainText() const
 {
 	return NewHexPreview.Plain;
-}
-
-TArray<FAssetByteDiffSpan> SAssetSerializationDiff::BuildByteDiffSpans(
-	const FAssetPackageDocument* OldDoc, const int64 OldOffset, const int64 OldSize, const FAssetPackageDocument* NewDoc, const int64 NewOffset, const int64 NewSize) const
-{
-	TArray<FAssetByteDiffSpan> Result;
-
-	if (OldDoc == nullptr || NewDoc == nullptr || OldOffset == INDEX_NONE || NewOffset == INDEX_NONE || OldSize < 0 || NewSize < 0 || !OldDoc->IsValidRange(OldOffset, OldSize)
-		|| !NewDoc->IsValidRange(NewOffset, NewSize))
-	{
-		return Result;
-	}
-
-	const int64 CommonSize = FMath::Min(OldSize, NewSize);
-	int64 SpanStart = INDEX_NONE;
-
-	for (int64 Index = 0; Index < CommonSize; ++Index)
-	{
-		const uint8 OldByte = OldDoc->FileData[OldOffset + Index];
-		const uint8 NewByte = NewDoc->FileData[NewOffset + Index];
-		const bool bDifferent = OldByte != NewByte;
-
-		if (bDifferent && SpanStart == INDEX_NONE)
-		{
-			SpanStart = Index;
-		}
-		else if (!bDifferent && SpanStart != INDEX_NONE)
-		{
-			Result.Add({ SpanStart, Index - SpanStart });
-
-			SpanStart = INDEX_NONE;
-		}
-	}
-
-	if (SpanStart != INDEX_NONE)
-	{
-		Result.Add({ SpanStart, CommonSize - SpanStart });
-	}
-
-	// Anything beyond the common length only exists on one side,
-	// so treat that region as changed too.
-	if (OldSize != NewSize)
-	{
-		Result.Add({ CommonSize, FMath::Max(OldSize, NewSize) - CommonSize });
-	}
-
-	return Result;
 }
 
 bool SAssetSerializationDiff::IsByteDifferent(const int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const
