@@ -52,6 +52,12 @@ struct FPropertyDiffAccumulator
 	TArray<FAssetByteDiffSpan> Spans;
 };
 
+enum class EAssetSerializedPropertyPresence : uint8
+{
+	Present,
+	NotSerialized
+};
+
 struct FAssetPackageDiffEntry
 {
 	EAssetPackageDiffKind Kind = EAssetPackageDiffKind::File;
@@ -83,6 +89,9 @@ struct FAssetPackageDiffEntry
 
 	int32 OldExportIndex = INDEX_NONE;
 	int32 NewExportIndex = INDEX_NONE;
+
+	EAssetSerializedPropertyPresence OldPresence = EAssetSerializedPropertyPresence::Present;
+	EAssetSerializedPropertyPresence NewPresence = EAssetSerializedPropertyPresence::Present;
 
 	int64 ChangedByteCount = 0;
 
@@ -132,6 +141,7 @@ public:
 		const FAssetPackageTraceCollection* NewTraces = nullptr);
 
 	static void BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
+	static void BuildSemanticPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, FAssetPackageDiffEntry& PayloadEntry);
 
 	static FString BuildTracePath(const FAssetSerializationTraceNode* Node);
 

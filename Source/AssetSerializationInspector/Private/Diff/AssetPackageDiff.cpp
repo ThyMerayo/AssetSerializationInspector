@@ -5,6 +5,7 @@
 #include "Algo/Unique.h"
 #include "Misc/SecureHash.h"
 
+#include "Diff/AssetByteDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -331,8 +332,8 @@ namespace
 
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
-					FAssetPackageDiff::BuildPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload.ChangedSpans, Payload);
-					// FAssetPackageDiff::BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
+					// 					FAssetPackageDiff::BuildPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload.ChangedSpans, Payload);
+					FAssetPackageDiff::BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
 				{
@@ -352,6 +353,67 @@ namespace
 		Result.Entries.Add(MoveTemp(Root));
 	}
 
+	struct FAssetSerializedPropertyIdentity
+	{
+		FString Path;
+		FString TypeName;
+		int32 ArrayIndex = 0;
+
+		bool operator==(const FAssetSerializedPropertyIdentity& Other) const { return Path == Other.Path && TypeName == Other.TypeName && ArrayIndex == Other.ArrayIndex; }
+	};
+
+	uint32 GetTypeHash(const FAssetSerializedPropertyIdentity& Identity)
+	{
+		uint32 Hash = GetTypeHash(Identity.Path);
+		Hash = HashCombine(Hash, GetTypeHash(Identity.TypeName));
+		Hash = HashCombine(Hash, static_cast<uint32>(Identity.ArrayIndex));
+
+		return Hash;
+	}
+
+	FAssetSerializedPropertyIdentity MakePropertyIdentity(const FAssetSerializationTraceNode& Node)
+	{
+		FAssetSerializedPropertyIdentity Result;
+		Result.Path = FAssetPackageDiff::BuildTracePath(&Node);
+		Result.TypeName = Node.TypeName;
+		Result.ArrayIndex = Node.ArrayIndex;
+
+		return Result;
+	}
+
+	using FPropertyNodeMap = TMap<FAssetSerializedPropertyIdentity, const FAssetSerializationTraceNode*>;
+
+	FPropertyNodeMap BuildPropertyNodeMap(const FAssetSerializationTrace* Trace)
+	{
+		FPropertyNodeMap Result;
+
+		if (Trace == nullptr || !Trace->Root.IsValid())
+		{
+			return Result;
+		}
+
+		TFunction<void(const TSharedPtr<FAssetSerializationTraceNode>&)> Visit;
+		Visit = [&](const TSharedPtr<FAssetSerializationTraceNode>& Node) {
+			if (!Node.IsValid())
+			{
+				return;
+			}
+
+			if (Node->Kind == EAssetSerializationTraceKind::Property)
+			{
+				Result.Add(MakePropertyIdentity(*Node), Node.Get());
+			}
+
+			for (const auto& Child : Node->Children)
+			{
+				Visit(Child);
+			}
+		};
+
+		Visit(Trace->Root);
+
+		return Result;
+	}
 } // namespace
 
 FAssetPackageDiffResult FAssetPackageDiff::Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces /*= nullptr*/,
@@ -380,6 +442,18 @@ FAssetPackageDiffResult FAssetPackageDiff::Compare(const FAssetPackageDocument& 
 
 void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry)
 {
+	FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
+	FPropertyNodeMap NewProperties = BuildPropertyNodeMap(NewData.Trace);
+	TSet<FAssetSerializedPropertyIdentity> PropertyKeys;
+	for (const auto& Pair : OldProperties)
+	{
+		PropertyKeys.Add(Pair.Key);
+	}
+	for (const auto& Pair : NewProperties)
+	{
+		PropertyKeys.Add(Pair.Key);
+	}
+
 	TMap<FPropertyDiffKey, FPropertyDiffAccumulator> Accumulators;
 
 	for (const FAssetByteDiffSpan& Span : ChangedSpans)
@@ -496,7 +570,168 @@ void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, con
 			}
 		}
 
+		// Defaul detection
+		if (!bOldKnown && bNewKnown)
+		{
+			PropertyEntry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
+			PropertyEntry.NewPresence = EAssetSerializedPropertyPresence::Present;
+			PropertyEntry.OldDecodedValue = TEXT("<not serialized; likely default>");
+			PropertyEntry.bHasOldDecodedValue = true;
+		}
+
+		if (bOldKnown && !bNewKnown)
+		{
+			PropertyEntry.OldPresence = EAssetSerializedPropertyPresence::Present;
+			PropertyEntry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
+			PropertyEntry.NewDecodedValue = TEXT("<not serialized; likely default>");
+			PropertyEntry.bHasNewDecodedValue = true;
+		}
+
 		PayloadEntry.Children.Add(MoveTemp(PropertyEntry));
+	}
+}
+
+struct FPropertyDiffNodeData
+{
+	const FAssetPackageDocument& Document;
+	const FAssetPackageExportEntry& Export;
+	const FAssetSerializationTraceNode* Node;
+};
+
+static bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData)
+{
+	if (OldData.Node->Size != NewData.Node->Size)
+	{
+		return false;
+	}
+
+	if (OldData.Node->Size == 0)
+	{
+		// Important for inline BoolProperty.
+		return OldData.Node->bHasInlineBoolValue == NewData.Node->bHasInlineBoolValue && OldData.Node->bInlineBoolValue == NewData.Node->bInlineBoolValue;
+	}
+
+	const int64 OldAbsoluteOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
+	const int64 NewAbsoluteOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
+
+	if (!OldData.Document.IsValidRange(OldAbsoluteOffset, OldData.Node->Size) || !NewData.Document.IsValidRange(NewAbsoluteOffset, NewData.Node->Size))
+	{
+		return false;
+	}
+
+	return FMemory::Memcmp(OldData.Document.FileData.GetData() + OldAbsoluteOffset, NewData.Document.FileData.GetData() + NewAbsoluteOffset, OldData.Node->Size) == 0;
+}
+
+static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData, const FAssetSerializedPropertyIdentity& Identity, FAssetPackageDiffEntry& PayloadEntry)
+{
+	FAssetPackageDiffEntry Entry;
+
+	Entry.Kind = EAssetPackageDiffKind::Property;
+	Entry.Key = Identity.Path;
+	Entry.DisplayName = FText::FromString(Identity.Path);
+	Entry.TypeName = Identity.TypeName;
+
+	if (OldData.Node == nullptr && NewData.Node != nullptr)
+	{
+		Entry.State = EAssetPackageDiffState::Modified;
+		Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
+		Entry.NewPresence = EAssetSerializedPropertyPresence::Present;
+		Entry.bHasOldDecodedValue = true;
+		Entry.OldDecodedValue = TEXT("<not serialized; likely default>");
+
+		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
+		if (NewDecoded.bSuccess)
+		{
+			Entry.bHasOldDecodedValue = true;
+			Entry.NewDecodedValue = NewDecoded.Value;
+			Entry.NewValue = NewDecoded.Value;
+		}
+
+		PayloadEntry.Children.Add(MoveTemp(Entry));
+
+		return;
+	}
+
+	if (OldData.Node != nullptr && NewData.Node == nullptr)
+	{
+		Entry.State = EAssetPackageDiffState::Modified;
+		Entry.OldPresence = EAssetSerializedPropertyPresence::Present;
+		Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
+		Entry.bHasNewDecodedValue = true;
+		Entry.NewDecodedValue = TEXT("<not serialized; likely default>");
+
+		const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
+		if (OldDecoded.bSuccess)
+		{
+			Entry.bHasOldDecodedValue = true;
+			Entry.OldDecodedValue = OldDecoded.Value;
+			Entry.OldValue = OldDecoded.Value;
+		}
+
+		PayloadEntry.Children.Add(MoveTemp(Entry));
+
+		return;
+	}
+
+	if (OldData.Node == nullptr || NewData.Node == nullptr)
+	{
+		return;
+	}
+
+	if (ArePropertyBytesIdentical(OldData, NewData))
+	{
+		return;
+	}
+
+	Entry.State = EAssetPackageDiffState::Modified;
+	Entry.OldOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
+	Entry.NewOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
+	Entry.OldSize = OldData.Node->Size;
+	Entry.NewSize = NewData.Node->Size;
+
+	const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
+	if (OldDecoded.bSuccess)
+	{
+		Entry.bHasOldDecodedValue = true;
+		Entry.OldDecodedValue = OldDecoded.Value;
+		Entry.OldValue = OldDecoded.Value;
+	}
+	const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
+	if (NewDecoded.bSuccess)
+	{
+		Entry.bHasNewDecodedValue = true;
+		Entry.NewDecodedValue = NewDecoded.Value;
+		Entry.NewValue = NewDecoded.Value;
+	}
+
+	PayloadEntry.Children.Add(MoveTemp(Entry));
+}
+
+void FAssetPackageDiff::BuildSemanticPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, FAssetPackageDiffEntry& PayloadEntry)
+{
+	const FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
+	const FPropertyNodeMap NewProperties = BuildPropertyNodeMap(NewData.Trace);
+
+	TSet<FAssetSerializedPropertyIdentity> Keys;
+
+	for (const auto& Pair : OldProperties)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const auto& Pair : NewProperties)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const FAssetSerializedPropertyIdentity& Key : Keys)
+	{
+		const FAssetSerializationTraceNode* const* OldFound = OldProperties.Find(Key);
+		const FAssetSerializationTraceNode* const* NewFound = NewProperties.Find(Key);
+		const FAssetSerializationTraceNode* OldNode = OldFound != nullptr ? *OldFound : nullptr;
+		const FAssetSerializationTraceNode* NewNode = NewFound != nullptr ? *NewFound : nullptr;
+
+		BuildOnePropertyDiff({ OldData.Document, OldData.Export, OldNode }, { NewData.Document, NewData.Export, NewNode }, Key, PayloadEntry);
 	}
 }
 

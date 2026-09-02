@@ -27,6 +27,7 @@ struct FAssetSerializationTraceNode
 
 	int64 Offset = 0;
 	int64 Size = 0;
+	int32 ArrayIndex = 0;
 
 	bool bHasInlineBoolValue = false;
 	bool bInlineBoolValue = false;
