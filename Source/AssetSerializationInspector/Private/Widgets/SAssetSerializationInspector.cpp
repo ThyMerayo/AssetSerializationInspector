@@ -224,24 +224,23 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 							+ SVerticalBox::Slot().AutoHeight().Padding(
 								0.0f, 0.0f, 0.0f, 8.0f)[SNew(STextBlock).Text(LOCTEXT("SelectionHeading", "Selection Details")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
 
-							+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock)
-									.Text_Lambda([this]() { return FText::Format(LOCTEXT("FilenameFormat", "File: {0}"), GetLoadedFilenameText()); })
-									.ToolTipText(this, &SAssetSerializationInspector::GetLoadedFilenameText)]
+							+ SVerticalBox::Slot().AutoHeight().Padding(
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("FilenameFormat", "File:"), TAttribute<FText>::CreateLambda([this]() { return GetLoadedFilenameText(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("FileSizeFormat", "Size: {0}"), GetFileSizeText()); })]
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("FileSizeFormat", "Size:"), TAttribute<FText>::CreateLambda([this]() { return GetFileSizeText(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("TypeFormat", "Type: {0}"), GetSelectedNodeType()); })]
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("TypeFormat", "Type:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedNodeType(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("OffsetFormat", "Offset: {0}"), GetSelectedNodeOffset()); })]
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("OffsetFormat", "Offset:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedNodeOffset(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("ValueFormat", "Value: {0}"), GetSelectedNodeValue()); })]
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("ValueFormat", "Value:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedNodeValue(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 2.0f)[SNew(STextBlock).Text_Lambda([this]() { return FText::Format(LOCTEXT("RangeFormat", "Range: {0}"), GetSelectedNodeRange()); })]
+								0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("RangeFormat", "Range:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedNodeRange(); }))]
 
 							+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)[SNew(SButton)
 									.Visibility(this, &SAssetSerializationInspector::GetNavigateToReferenceVisibility)
@@ -253,16 +252,36 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 						.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
 						.Padding(8.0f)[SNew(SVerticalBox)
 
-							+ SVerticalBox::Slot().AutoHeight().Padding(
-								0.0f, 0.0f, 0.0f, 8.0f)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
+							+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[SNew(SHorizontalBox)
+								+ SHorizontalBox::Slot()
+									.AutoWidth()
+									.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+									.VAlign(VAlign_Center)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
+								+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SButton).Text(LOCTEXT("CopyHex", "Copy")).OnClicked_Lambda([this]() {
+									  const FString Text = GetHexPreviewText().ToString();
+									  FPlatformApplicationMisc::ClipboardCopy(*Text);
+									  return FReply::Handled();
+								  })]]
 
 							+ SVerticalBox::Slot().FillHeight(1.0f)[SNew(SScrollBox)
 
-								+ SScrollBox::Slot()[SNew(STextBlock).Text(this, &SAssetSerializationInspector::GetHexPreviewText).Font(FAppStyle::GetFontStyle("MonoFont")).AutoWrapText(false)]]]]]]
+								+ SScrollBox::Slot()[SNew(SMultiLineEditableText)
+										.Text(this, &SAssetSerializationInspector::GetHexPreviewText)
+										.IsReadOnly(true)
+										.Font(FAppStyle::GetFontStyle("Sequencer.FixedFont"))
+										.AutoWrapText(false)]]]]]]
 
 		// Status bar
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationInspector::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
+}
+
+TSharedRef<SWidget> SAssetSerializationInspector::BuildSelectableDetailRow(const FText& Label, TAttribute<FText> Value)
+{
+	return SNew(SHorizontalBox)
+
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Label)]
+		+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(SEditableText).Text(Value).IsReadOnly(true)];
 }
 
 FReply SAssetSerializationInspector::HandleBrowseClicked()

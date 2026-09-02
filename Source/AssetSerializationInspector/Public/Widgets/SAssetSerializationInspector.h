@@ -89,6 +89,8 @@ public:
 private:
 	using FTreeNodePtr = TSharedPtr<FAssetPackageTreeNode>;
 
+	TSharedRef<SWidget> BuildSelectableDetailRow(const FText& Label, TAttribute<FText> Value);
+
 	FReply HandleBrowseClicked();
 	FReply HandleInspectClicked();
 	FReply HandleClearClicked();
