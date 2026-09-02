@@ -1,3 +1,5 @@
+// Copyright Diego Merayo Merayo. All Rights Reserved
+
 #include "Serialization/AssetSerializationPrimitives.h"
 
 namespace
