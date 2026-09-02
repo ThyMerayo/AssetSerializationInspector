@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 
 struct FAssetPackageDocument;
+struct FAssetPackageExportEntry;
 struct FAssetPackageTraceCollection;
 struct FAssetSerializationTrace;
 struct FAssetSerializationTraceNode;
@@ -63,6 +64,12 @@ struct FAssetPackageDiffEntry
 	FString OldValue;
 	FString NewValue;
 
+	FString OldDecodedValue;
+	FString NewDecodedValue;
+
+	bool bHasOldDecodedValue = false;
+	bool bHasNewDecodedValue = false;
+
 	FString OldFieldPath;
 	FString NewFieldPath;
 
@@ -111,14 +118,20 @@ struct FAssetAttributedByteDiffSpan
 	const FAssetSerializationTraceNode* NewNode = nullptr;
 };
 
+struct FPropertyDiffData
+{
+	const FAssetPackageDocument& Document;
+	const FAssetPackageExportEntry& Export;
+	const FAssetSerializationTrace* Trace;
+};
+
 class FAssetPackageDiff
 {
 public:
 	static FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces = nullptr,
 		const FAssetPackageTraceCollection* NewTraces = nullptr);
 
-	static void BuildPropertyDiffs(
-		const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
+	static void BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
 
 	static FString BuildTracePath(const FAssetSerializationTraceNode* Node);
 

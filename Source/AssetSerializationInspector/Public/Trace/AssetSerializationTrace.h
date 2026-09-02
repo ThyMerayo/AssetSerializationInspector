@@ -28,6 +28,9 @@ struct FAssetSerializationTraceNode
 	int64 Offset = 0;
 	int64 Size = 0;
 
+	bool bHasInlineBoolValue = false;
+	bool bInlineBoolValue = false;
+
 	TArray<TSharedPtr<FAssetSerializationTraceNode>> Children;
 
 	TWeakPtr<FAssetSerializationTraceNode> Parent;

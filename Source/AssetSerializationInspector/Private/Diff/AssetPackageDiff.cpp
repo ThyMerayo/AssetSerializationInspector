@@ -6,6 +6,7 @@
 #include "Misc/SecureHash.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
@@ -330,7 +331,7 @@ namespace
 
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
-					FAssetPackageDiff::BuildPropertyDiffs(OldTrace, NewTrace, Payload.ChangedSpans, Payload);
+					FAssetPackageDiff::BuildPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload.ChangedSpans, Payload);
 					// FAssetPackageDiff::BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
@@ -377,14 +378,13 @@ FAssetPackageDiffResult FAssetPackageDiff::Compare(const FAssetPackageDocument& 
 	return Result;
 }
 
-void FAssetPackageDiff::BuildPropertyDiffs(
-	const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry)
+void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry)
 {
 	TMap<FPropertyDiffKey, FPropertyDiffAccumulator> Accumulators;
 
 	for (const FAssetByteDiffSpan& Span : ChangedSpans)
 	{
-		const TArray<FAssetAttributedByteDiffSpan> Fragments = SplitChangedSpanByFields(Span, OldTrace, NewTrace);
+		const TArray<FAssetAttributedByteDiffSpan> Fragments = SplitChangedSpanByFields(Span, OldData.Trace, NewData.Trace);
 
 		for (const FAssetAttributedByteDiffSpan& Fragment : Fragments)
 		{
@@ -470,6 +470,30 @@ void FAssetPackageDiff::BuildPropertyDiffs(
 		else if (bOldKnown)
 		{
 			PropertyEntry.TypeName = Accumulator.OldNode->TypeName;
+		}
+
+		if (bOldKnown)
+		{
+			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *Accumulator.OldNode, OldData.Export.SerialOffset);
+
+			if (OldDecoded.bSuccess)
+			{
+				PropertyEntry.bHasOldDecodedValue = true;
+				PropertyEntry.OldDecodedValue = OldDecoded.Value;
+				PropertyEntry.OldValue = OldDecoded.Value;
+			}
+		}
+
+		if (bNewKnown)
+		{
+			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *Accumulator.NewNode, NewData.Export.SerialOffset);
+
+			if (NewDecoded.bSuccess)
+			{
+				PropertyEntry.bHasNewDecodedValue = true;
+				PropertyEntry.NewDecodedValue = NewDecoded.Value;
+				PropertyEntry.NewValue = NewDecoded.Value;
+			}
 		}
 
 		PayloadEntry.Children.Add(MoveTemp(PropertyEntry));

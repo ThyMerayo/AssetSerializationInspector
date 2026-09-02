@@ -135,18 +135,37 @@ public:
 				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName)];
 		}
 
-		if (ColumnName == TEXT("Old"))
+		if (ColumnName == TEXT("Old") && Diff.Kind == EAssetPackageDiffKind::Property)
+		{
+			if (Diff.bHasOldDecodedValue)
+			{
+				return SNew(SEditableText).Text(FText::FromString(Diff.OldDecodedValue)).IsReadOnly(true);
+			}
+
+			return SNew(STextBlock).Text(FText::Format(LOCTEXT("ChangedBytesOld", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));
+		}
+		else if (ColumnName == TEXT("Old"))
 		{
 			return SNew(STextBlock).Text(FText::FromString(Diff.OldValue)).ToolTipText(FText::FromString(Diff.OldValue));
 		}
 
 		if (ColumnName == TEXT("New") && (Diff.Kind == EAssetPackageDiffKind::Property || Diff.Kind == EAssetPackageDiffKind::UnknownPayloadRange))
 		{
-			return SNew(STextBlock).Text(FText::Format(NSLOCTEXT("AssetPackageDiff", "ChangedBytesFormat", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));
+			if (Diff.bHasNewDecodedValue)
+			{
+				return SNew(SEditableText).Text(FText::FromString(Diff.NewDecodedValue)).IsReadOnly(true);
+			}
+
+			return SNew(STextBlock).Text(FText::Format(LOCTEXT("ChangedBytesNew", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));
 		}
 		else if (ColumnName == TEXT("New"))
 		{
 			return SNew(STextBlock).Text(FText::FromString(Diff.NewValue)).ToolTipText(FText::FromString(Diff.NewValue));
+		}
+
+		if (ColumnName == TEXT("Type"))
+		{
+			return SNew(STextBlock).Text(FText::FromString(Diff.TypeName));
 		}
 
 		return SNullWidget::NullWidget;
