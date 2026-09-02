@@ -9,7 +9,7 @@ class FAssetSerializationInspectorCommands : public TCommands<FAssetSerializatio
 {
 public:
 	FAssetSerializationInspectorCommands()
-		: TCommands<FAssetSerializationInspectorCommands>(TEXT("AssetSerializationInspector"), NSLOCTEXT("Contexts", "AssetSerializationInspector", "AssetSerializationInspector Plugin"), NAME_None,
+		: TCommands<FAssetSerializationInspectorCommands>(TEXT("Asset Serialization Inspector"), NSLOCTEXT("Contexts", "AssetSerializationInspector", "AssetSerializationInspector Plugin"), NAME_None,
 			  FAssetSerializationInspectorStyle::GetStyleSetName())
 	{
 	}
