@@ -60,10 +60,21 @@ struct FAssetSerializationTrace
 	TSharedPtr<FAssetSerializationTraceNode> Root;
 };
 
+struct FAssetByteRange
+{
+	int64 Offset = 0;
+	int64 Size = 0;
+
+	int64 End() const { return Offset + Size; }
+};
+
 namespace AssetSerializationTrace
 {
 	const FAssetSerializationTraceNode* FindDeepestTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, int64 Offset, int64 Size);
 	FAssetSerializationTrace BuildSerializationTrace(const UObject* Object, int64 PayloadSize, const TArray<FAssetSerializationTraceEvent>& Events);
 
 	const FAssetSerializationTraceNode* FindDeepestFieldTraceNode(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 Offset, const int64 Size);
+
+	bool IntersectRanges(const int64 AOffset, const int64 ASize, const int64 BOffset, const int64 BSize, int64& OutOffset, int64& OutSize);
+	void FindDeepestOverlappingFieldNodes(const TSharedPtr<FAssetSerializationTraceNode>& Node, const int64 Offset, const int64 Size, TArray<const FAssetSerializationTraceNode*>& OutNodes);
 } // namespace AssetSerializationTrace

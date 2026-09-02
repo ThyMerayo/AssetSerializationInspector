@@ -63,6 +63,9 @@ struct FAssetPackageDiffEntry
 	FString OldValue;
 	FString NewValue;
 
+	FString OldFieldPath;
+	FString NewFieldPath;
+
 	FString TypeName;
 
 	int64 OldOffset = INDEX_NONE;
@@ -99,6 +102,15 @@ struct FAssetPackageDiffResult
 	int32 MovedCount = 0;
 };
 
+struct FAssetAttributedByteDiffSpan
+{
+	int64 Offset = 0;
+	int64 Size = 0;
+
+	const FAssetSerializationTraceNode* OldNode = nullptr;
+	const FAssetSerializationTraceNode* NewNode = nullptr;
+};
+
 class FAssetPackageDiff
 {
 public:
@@ -109,4 +121,9 @@ public:
 		const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
 
 	static FString BuildTracePath(const FAssetSerializationTraceNode* Node);
+
+	static void AddRelevantTraceBoundaries(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 SpanOffset, const int64 SpanSize, TArray<int64>& InOutBoundaries);
+	static TArray<FAssetAttributedByteDiffSpan> SplitChangedSpanByFields(const FAssetByteDiffSpan& Span, const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace);
+
+	static void AddOrMergeChangedSpan(TArray<FAssetByteDiffSpan>& Spans, const int64 Offset, const int64 Size);
 };

@@ -2,6 +2,7 @@
 
 #include "Diff/AssetPackageDiff.h"
 
+#include "Algo/Unique.h"
 #include "Misc/SecureHash.h"
 
 #include "Model/AssetPackageDocument.h"
@@ -383,49 +384,57 @@ void FAssetPackageDiff::BuildPropertyDiffs(
 
 	for (const FAssetByteDiffSpan& Span : ChangedSpans)
 	{
-		const FAssetSerializationTraceNode* OldNode = nullptr;
+		const TArray<FAssetAttributedByteDiffSpan> Fragments = SplitChangedSpanByFields(Span, OldTrace, NewTrace);
 
-		const FAssetSerializationTraceNode* NewNode = nullptr;
-
-		if (OldTrace != nullptr && OldTrace->Root.IsValid())
+		for (const FAssetAttributedByteDiffSpan& Fragment : Fragments)
 		{
-			OldNode = AssetSerializationTrace::FindDeepestTraceNode(OldTrace->Root, Span.Offset, Span.Size);
+			const FString OldPath = BuildTracePath(Fragment.OldNode);
+			const FString NewPath = BuildTracePath(Fragment.NewNode);
+
+			FPropertyDiffKey Key;
+			Key.OldPath = OldPath;
+			Key.NewPath = NewPath;
+
+			FPropertyDiffAccumulator& Accumulator = Accumulators.FindOrAdd(Key);
+			Accumulator.OldNode = Fragment.OldNode;
+			Accumulator.NewNode = Fragment.NewNode;
+			Accumulator.ChangedByteCount += Fragment.Size;
+
+			FAssetByteDiffSpan SplitSpan;
+			SplitSpan.Offset = Fragment.Offset;
+			SplitSpan.Size = Fragment.Size;
+
+			AddOrMergeChangedSpan(Accumulator.Spans, Fragment.Offset, Fragment.Size);
 		}
-
-		if (NewTrace != nullptr && NewTrace->Root.IsValid())
-		{
-			NewNode = AssetSerializationTrace::FindDeepestTraceNode(NewTrace->Root, Span.Offset, Span.Size);
-		}
-
-		const FString OldPath = BuildTracePath(OldNode);
-
-		const FString NewPath = BuildTracePath(NewNode);
-
-		FPropertyDiffKey Key;
-
-		Key.OldPath = OldPath;
-		Key.NewPath = NewPath;
-
-		FPropertyDiffAccumulator& Accumulator = Accumulators.FindOrAdd(Key);
-
-		Accumulator.OldNode = OldNode;
-		Accumulator.NewNode = NewNode;
-
-		Accumulator.ChangedByteCount += Span.Size;
-
-		Accumulator.Spans.Add(Span);
 	}
 
+	struct FSortedPropertyAccumulator
+	{
+		FPropertyDiffKey Key;
+		FPropertyDiffAccumulator Value;
+
+		int64 GetFirstOffset() const { return Value.Spans.IsEmpty() ? MAX_int64 : Value.Spans[0].Offset; }
+	};
+
+	TArray<FSortedPropertyAccumulator> Sorted;
 	for (TPair<FPropertyDiffKey, FPropertyDiffAccumulator>& Pair : Accumulators)
 	{
-		const FPropertyDiffKey& Key = Pair.Key;
+		Sorted.Emplace(Pair.Key, Pair.Value);
+	}
+	Sorted.Sort([](const FSortedPropertyAccumulator& A, const FSortedPropertyAccumulator& B) { return A.GetFirstOffset() < B.GetFirstOffset(); });
 
+	for (FSortedPropertyAccumulator& Pair : Sorted)
+	{
+		const FPropertyDiffKey& Key = Pair.Key;
 		FPropertyDiffAccumulator& Accumulator = Pair.Value;
 
 		FAssetPackageDiffEntry PropertyEntry;
 
 		const bool bOldKnown = Accumulator.OldNode != nullptr;
 		const bool bNewKnown = Accumulator.NewNode != nullptr;
+
+		PropertyEntry.OldFieldPath = Key.OldPath;
+		PropertyEntry.NewFieldPath = Key.NewPath;
 
 		if (!bOldKnown && !bNewKnown)
 		{
@@ -436,12 +445,18 @@ void FAssetPackageDiff::BuildPropertyDiffs(
 		else
 		{
 			PropertyEntry.Kind = EAssetPackageDiffKind::Property;
-
 			const FString DisplayPath = !Key.NewPath.IsEmpty() ? Key.NewPath : Key.OldPath;
-
 			PropertyEntry.Key = DisplayPath;
 
-			PropertyEntry.DisplayName = FText::FromString(DisplayPath);
+			if (Key.OldPath == Key.NewPath)
+			{
+				PropertyEntry.DisplayName = FText::FromString(Key.NewPath);
+			}
+			else
+			{
+				PropertyEntry.DisplayName = FText::Format(NSLOCTEXT("AssetPackageDiff", "FieldOwnershipChanged", "{0} -> {1}"),
+					FText::FromString(Key.OldPath.IsEmpty() ? TEXT("<unknown>") : Key.OldPath), FText::FromString(Key.NewPath.IsEmpty() ? TEXT("<unknown>") : Key.NewPath));
+			}
 		}
 
 		PropertyEntry.State = EAssetPackageDiffState::Modified;
@@ -487,4 +502,106 @@ FString FAssetPackageDiff::BuildTracePath(const FAssetSerializationTraceNode* No
 	Algo::Reverse(Parts);
 
 	return FString::Join(Parts, TEXT("."));
+}
+
+void FAssetPackageDiff::AddRelevantTraceBoundaries(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 SpanOffset, const int64 SpanSize, TArray<int64>& InOutBoundaries)
+{
+	if (!Root.IsValid())
+	{
+		return;
+	}
+
+	TArray<const FAssetSerializationTraceNode*> Nodes;
+	AssetSerializationTrace::FindDeepestOverlappingFieldNodes(Root, SpanOffset, SpanSize, Nodes);
+
+	const int64 SpanEnd = SpanOffset + SpanSize;
+
+	for (const FAssetSerializationTraceNode* Node : Nodes)
+	{
+		const int64 Start = FMath::Max(Node->Offset, SpanOffset);
+		const int64 End = FMath::Min(Node->Offset + Node->Size, SpanEnd);
+
+		if (Start < End)
+		{
+			InOutBoundaries.Add(Start);
+			InOutBoundaries.Add(End);
+		}
+	}
+}
+
+TArray<FAssetAttributedByteDiffSpan> FAssetPackageDiff::SplitChangedSpanByFields(const FAssetByteDiffSpan& Span, const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace)
+{
+	TArray<int64> Boundaries;
+	Boundaries.Add(Span.Offset);
+	Boundaries.Add(Span.Offset + Span.Size);
+
+	if (OldTrace != nullptr)
+	{
+		AddRelevantTraceBoundaries(OldTrace->Root, Span.Offset, Span.Size, Boundaries);
+	}
+
+	if (NewTrace != nullptr)
+	{
+		AddRelevantTraceBoundaries(NewTrace->Root, Span.Offset, Span.Size, Boundaries);
+	}
+
+	Boundaries.Sort();
+	Boundaries.SetNum(Algo::Unique(Boundaries));
+
+	TArray<FAssetAttributedByteDiffSpan> Result;
+
+	for (int32 Index = 0; Index + 1 < Boundaries.Num(); ++Index)
+	{
+		const int64 Start = Boundaries[Index];
+		const int64 End = Boundaries[Index + 1];
+
+		if (End <= Start)
+		{
+			continue;
+		}
+
+		FAssetAttributedByteDiffSpan Fragment;
+
+		Fragment.Offset = Start;
+		Fragment.Size = End - Start;
+
+		if (OldTrace != nullptr && OldTrace->Root.IsValid())
+		{
+			Fragment.OldNode = AssetSerializationTrace::FindDeepestFieldTraceNode(OldTrace->Root, Fragment.Offset, Fragment.Size);
+		}
+
+		if (NewTrace != nullptr && NewTrace->Root.IsValid())
+		{
+			Fragment.NewNode = AssetSerializationTrace::FindDeepestFieldTraceNode(NewTrace->Root, Fragment.Offset, Fragment.Size);
+		}
+
+		Result.Add(MoveTemp(Fragment));
+	}
+
+	return Result;
+}
+
+void FAssetPackageDiff::AddOrMergeChangedSpan(TArray<FAssetByteDiffSpan>& Spans, const int64 Offset, const int64 Size)
+{
+	if (Size <= 0)
+	{
+		return;
+	}
+
+	if (!Spans.IsEmpty())
+	{
+		FAssetByteDiffSpan& Previous = Spans.Last();
+
+		if (Previous.Offset + Previous.Size == Offset)
+		{
+			Previous.Size += Size;
+			return;
+		}
+	}
+
+	FAssetByteDiffSpan Span;
+	Span.Offset = Offset;
+	Span.Size = Size;
+
+	Spans.Add(Span);
 }
