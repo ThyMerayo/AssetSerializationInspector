@@ -387,7 +387,11 @@ namespace
 			Node->Offset = Tag.ValueOffset - Export.SerialOffset;
 			Node->Size = Tag.Size;
 			Node->Parent = OutTrace.Root;
-
+			if (Tag.Type.Name == TEXT("BoolProperty"))
+			{
+				Node->bHasInlineBoolValue = true;
+				Node->bInlineBoolValue = Tag.bBoolValue;
+			}
 			OutTrace.Root->Children.Add(Node);
 
 			Reader.Seek(Tag.ValueOffset + Tag.Size);
