@@ -200,20 +200,20 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 		return false;
 	}
 
-	// FQuat Rotation;
-	// Reader << Rotation;
-	// FVector Translation;
-	// Reader << Translation;
-	// FVector Scale3D;
-	// Reader << Scale3D;
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	FQuat Rotation;
+	Reader << Rotation;
 
-	// const FTransform Value(Rotation, Translation, Scale3D);
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	FVector Translation;
+	Reader << Translation;
 
-	FTransform Value;
-	Reader << Value;
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	FVector Scale3D;
+	Reader << Scale3D;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
-	OutValue.Value = Value.ToString();
+	OutValue.Value = FString::Printf(TEXT("Rotation: %s\nTranslation: %s\nScale3D: %s"), *Rotation.ToString(), *Translation.ToString(), *Scale3D.ToString());
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
 	return true;
