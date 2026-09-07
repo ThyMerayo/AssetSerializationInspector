@@ -189,8 +189,6 @@ static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAs
 
 static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
-	// TODO: Not reading the payload properly, reads before the actual data
-
 	const int64 Start = Reader.Tell();
 
 	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) > ValueEnd)
@@ -200,15 +198,15 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 		return false;
 	}
 
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FQuat Rotation;
 	Reader << Rotation;
 
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FVector Translation;
 	Reader << Translation;
 
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1);
+	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FVector Scale3D;
 	Reader << Scale3D;
 
