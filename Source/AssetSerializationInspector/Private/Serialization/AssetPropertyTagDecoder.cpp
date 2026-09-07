@@ -119,7 +119,6 @@ static bool ReadPropertyExtensions(const FAssetPackageDocument& Document, FAsset
 	if (Reader.IsError())
 	{
 		OutError = NSLOCTEXT("AssetPropertyTagDecoder", "PropertyExtensionsReadFailed", "Could not read property tag extensions.");
-
 		return false;
 	}
 

@@ -3,37 +3,10 @@
 #include "Serialization/AssetPropertyValueDecoder.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetSerializationPrimitives.h"
-
-template <typename TValue> static FAssetDecodedPropertyValue DecodeIntegral(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
-{
-	FAssetDecodedPropertyValue Result;
-
-	if (Size != sizeof(TValue) || !Document.IsValidRange(AbsoluteOffset, sizeof(TValue)))
-	{
-		Result.Error = TEXT("Invalid integral value range.");
-
-		return Result;
-	}
-
-	TValue Value{};
-
-	FMemory::Memcpy(&Value, Document.FileData.GetData() + AbsoluteOffset, sizeof(TValue));
-
-	Result.bSuccess = true;
-
-	if constexpr (TIsSigned<TValue>::Value)
-	{
-		Result.Value = LexToString(static_cast<int64>(Value));
-	}
-	else
-	{
-		Result.Value = LexToString(static_cast<uint64>(Value));
-	}
-
-	return Result;
-}
+#include "Serialization/AssetSerializedPropertyTag.h"
 
 static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 AbsoluteOffset)
 {
@@ -41,9 +14,8 @@ static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Docume
 
 	if (Node.bHasInlineBoolValue)
 	{
-		Result.bSuccess = true;
+		Result.Status = EAssetPropertyDecodeStatus::Success;
 		Result.Value = Node.bInlineBoolValue ? TEXT("true") : TEXT("false");
-
 		return Result;
 	}
 
@@ -55,216 +27,510 @@ static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Docume
 	{
 		const uint8 Value = Document.FileData[AbsoluteOffset];
 
-		Result.bSuccess = true;
+		Result.Status = EAssetPropertyDecodeStatus::Success;
 		Result.Value = Value != 0 ? TEXT("true") : TEXT("false");
-
 		return Result;
 	}
 
 	Result.Error = TEXT("Bool value is not available.");
-
 	return Result;
 }
 
-static FAssetDecodedPropertyValue DecodeFloat(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
+template <typename TValue> static bool ReadBounded(FAssetPackagePayloadReader& Reader, const int64 ValueEnd, TValue& OutValue)
 {
-	FAssetDecodedPropertyValue Result;
-
-	if (Size != sizeof(float) || !Document.IsValidRange(AbsoluteOffset, sizeof(float)))
+	if (Reader.Tell() + static_cast<int64>(sizeof(TValue)) > ValueEnd)
 	{
-		Result.Error = TEXT("Invalid float range.");
-
-		return Result;
+		return false;
 	}
 
-	float Value = 0.0f;
+	Reader << OutValue;
 
-	FMemory::Memcpy(&Value, Document.FileData.GetData() + AbsoluteOffset, sizeof(float));
-
-	Result.bSuccess = true;
-
-	Result.Value = FString::Printf(TEXT("%.9g"), static_cast<double>(Value));
-
-	return Result;
+	return !Reader.IsError();
 }
 
-static FAssetDecodedPropertyValue DecodeDouble(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
+template <typename TValue> static bool DecodePrimitiveFromReader(FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
-	FAssetDecodedPropertyValue Result;
+	const int64 Start = Reader.Tell();
 
-	if (Size != sizeof(double) || !Document.IsValidRange(AbsoluteOffset, sizeof(double)))
+	TValue Value{};
+	if (!ReadBounded(Reader, ValueEnd, Value))
 	{
-		Result.Error = TEXT("Invalid double range.");
-
-		return Result;
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Primitive value extends beyond its range.");
+		return false;
 	}
 
-	double Value = 0.0;
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = LexToString(Value);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
 
-	FMemory::Memcpy(&Value, Document.FileData.GetData() + AbsoluteOffset, sizeof(double));
-
-	Result.bSuccess = true;
-
-	Result.Value = FString::Printf(TEXT("%.17g"), Value);
-
-	return Result;
+	return true;
 }
 
-static FAssetDecodedPropertyValue DecodeName(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
+struct FAssetPropertyDecodeContext
 {
-	FAssetDecodedPropertyValue Result;
+	const FAssetPackageDocument& Document;
 
-	if (Size != sizeof(int32) * 2 || !Document.IsValidRange(AbsoluteOffset, Size))
+	int32 MaximumDepth = 32;
+	int32 MaximumContainerElements = 100000;
+};
+
+static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
+	FAssetDecodedPropertyValue& OutValue, const int32 Depth);
+
+static bool DecodeTaggedStruct(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Depth)
+{
+	const int64 Start = Reader.Tell();
+
+	while (!Reader.IsError() && Reader.Tell() < ValueEnd)
 	{
-		Result.Error = TEXT("Invalid FName value range.");
+		FAssetSerializedPropertyTag Tag;
+		FText Error;
 
-		return Result;
+		if (!FAssetPropertyTagDecoder::ReadTag(Context.Document, Reader, Tag, Error))
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = Error.ToString();
+			return false;
+		}
+
+		if (Tag.IsTerminator())
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::Success;
+			OutValue.Value = FString::Printf(TEXT("%d fields"), OutValue.Children.Num());
+			OutValue.RelativeOffset = Start;
+			OutValue.Size = Reader.Tell() - Start;
+			return true;
+		}
+
+		const int64 ChildValueEnd = Tag.ValueOffset + Tag.Size;
+
+		if (ChildValueEnd > ValueEnd)
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = FString::Printf(TEXT("Struct field '%s' extends beyond the struct value range."), *Tag.ResolvedName);
+			return false;
+		}
+
+		FAssetDecodedPropertyValue Child;
+		Child.Name = Tag.ResolvedName;
+		Child.TypeName = Tag.Type.ToString();
+
+		if (Tag.Type.Name == TEXT("BoolProperty"))
+		{
+			Child.Status = EAssetPropertyDecodeStatus::Success;
+			Child.Value = Tag.bBoolValue ? TEXT("true") : TEXT("false");
+		}
+		else
+		{
+			Reader.Seek(Tag.ValueOffset);
+			DecodeValueFromReader(Context, Reader, Tag.Type, ChildValueEnd, Child, Depth);
+		}
+
+		OutValue.Children.Add(MoveTemp(Child));
+
+		/*
+		 * Always advance according to Tag.Size,
+		 * regardless of how much our value decoder consumed.
+		 */
+		Reader.Seek(ChildValueEnd);
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+	OutValue.Error = TEXT("Tagged struct ended without a None terminator.");
+	return false;
+}
+
+template <typename TValue, typename TFormatter>
+static bool DecodePodStructFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, TFormatter&& Formatter)
+{
+	const int64 Start = Reader.Tell();
+
+	if (Start + static_cast<int64>(sizeof(TValue)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding Struct");
+		return false;
+	}
+
+	TValue Value{};
+	Reader << Value;
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Formatter(Value);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+
+	return true;
+}
+
+static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	if (Start + static_cast<int64>(sizeof(FGuid)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding FGuid");
+		return false;
+	}
+
+	FGuid Value;
+	Reader << Value;
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Value.ToString(EGuidFormats::DigitsWithHyphens);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	// TODO: Not reading the payload properly, reads before the actual data
+
+	const int64 Start = Reader.Tell();
+
+	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding FTransform");
+		return false;
+	}
+
+	// FQuat Rotation;
+	// Reader << Rotation;
+	// FVector Translation;
+	// Reader << Translation;
+	// FVector Scale3D;
+	// Reader << Scale3D;
+
+	// const FTransform Value(Rotation, Translation, Scale3D);
+
+	FTransform Value;
+	Reader << Value;
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Value.ToString();
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool DecodeColorFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	if (Start + static_cast<int64>(sizeof(FColor)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding FTransform");
+		return false;
+	}
+
+	FColor Value;
+	Reader << Value;
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("R=%u G=%u B=%u A=%u"), static_cast<uint32>(Value.R), static_cast<uint32>(Value.G), static_cast<uint32>(Value.B), static_cast<uint32>(Value.A));
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FString& StructName, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	if (StructName == TEXT("Vector"))
+	{
+		return DecodePodStructFromReader<FVector>(Context, Reader, ValueEnd, OutValue, [](const FVector& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Vector2D"))
+	{
+		return DecodePodStructFromReader<FVector2D>(Context, Reader, ValueEnd, OutValue, [](const FVector2D& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Vector4"))
+	{
+		return DecodePodStructFromReader<FVector4>(Context, Reader, ValueEnd, OutValue, [](const FVector4& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Rotator"))
+	{
+		return DecodePodStructFromReader<FRotator>(Context, Reader, ValueEnd, OutValue, [](const FRotator& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Quat"))
+	{
+		return DecodePodStructFromReader<FQuat>(Context, Reader, ValueEnd, OutValue, [](const FQuat& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Guid"))
+	{
+		return DecodeGuidFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Transform"))
+	{
+		return DecodeTransformFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Color"))
+	{
+		return DecodeColorFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("LinearColor"))
+	{
+		return DecodePodStructFromReader<FLinearColor>(Context, Reader, ValueEnd, OutValue, [](const FLinearColor& Value) {
+			return FString::Printf(TEXT("R=%.9g G=%.9g B=%.9g A=%.9g"), static_cast<double>(Value.R), static_cast<double>(Value.G), static_cast<double>(Value.B), static_cast<double>(Value.A));
+		});
+	}
+
+	if (StructName == TEXT("IntPoint"))
+	{
+		return DecodePodStructFromReader<FIntPoint>(Context, Reader, ValueEnd, OutValue, [](const FIntPoint& Value) { return FString::Printf(TEXT("X=%d Y=%d"), Value.X, Value.Y); });
+	}
+
+	if (StructName == TEXT("IntVector"))
+	{
+		return DecodePodStructFromReader<FIntVector>(Context, Reader, ValueEnd, OutValue, [](const FIntVector& Value) { return FString::Printf(TEXT("X=%d Y=%d Z=%d"), Value.X, Value.Y, Value.Z); });
+	}
+
+	return false;
+}
+
+static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
+	FAssetDecodedPropertyValue& OutValue, const int32 Depth)
+{
+	if (Type.Parameters.IsEmpty())
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("StructProperty has no struct type.");
+		return false;
+	}
+
+	const FString StructName = Type.Parameters[0].Name;
+	if (TryDecodeKnownStruct(Context, Reader, StructName, ValueEnd, OutValue))
+	{
+		return true;
+	}
+
+	// TODO: Not working currently, needs to be fixed
+	// return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, Depth);
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+	OutValue.Error = TEXT("Generic StructProperty is not supported yet.");
+	return false;
+}
+
+static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
+	FAssetDecodedPropertyValue& OutValue, const int32 Depth)
+{
+	if (Type.Parameters.Num() != 1)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("ArrayProperty does not contain exactly one inner type.");
+		return false;
+	}
+
+	const int64 Start = Reader.Tell();
+	int32 Count = 0;
+
+	if (!ReadBounded(Reader, ValueEnd, Count))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not read array element count.");
+		return false;
+	}
+
+	if (Count < 0 || Count > Context.MaximumContainerElements)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = FString::Printf(TEXT("Invalid array element count: %d."), Count);
+		return false;
+	}
+
+	const FAssetSerializedPropertyType& InnerType = Type.Parameters[0];
+
+	OutValue.Children.Reserve(Count);
+
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FAssetDecodedPropertyValue Element;
+		Element.Name = FString::Printf(TEXT("[%d]"), Index);
+		Element.TypeName = InnerType.ToString();
+
+		if (!DecodeValueFromReader(Context, Reader, InnerType, ValueEnd, Element, Depth))
+		{
+			OutValue.Children.Add(MoveTemp(Element));
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = FString::Printf(TEXT("Could not decode array element %d."), Index);
+			return false;
+		}
+
+		OutValue.Children.Add(MoveTemp(Element));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("%d elements"), Count);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+
+	return true;
+}
+
+static bool DecodeNameFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+	if (Start + static_cast<int64>(2 * sizeof(int32)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding FName");
+		return false;
 	}
 
 	int32 NameIndex = INDEX_NONE;
 	int32 Number = 0;
 
-	FMemory::Memcpy(&NameIndex, Document.FileData.GetData() + AbsoluteOffset, sizeof(int32));
-	FMemory::Memcpy(&Number, Document.FileData.GetData() + AbsoluteOffset + sizeof(int32), sizeof(int32));
+	Reader << NameIndex;
+	Reader << Number;
 
-	if (!Document.NameMap.IsValidIndex(NameIndex))
+	if (!Context.Document.NameMap.IsValidIndex(NameIndex))
 	{
-		Result.Error = FString::Printf(TEXT("Invalid name index %d."), NameIndex);
-
-		return Result;
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = FString::Printf(TEXT("Could not find Name %d in NameMap"), NameIndex);
+		return false;
 	}
 
 	FAssetPackageNameReference Reference;
 	Reference.NameIndex = NameIndex;
 	Reference.Number = Number;
 
-	Result.bSuccess = true;
-
-	Result.Value = Document.ResolveNameReference(Reference);
-
-	return Result;
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Context.Document.ResolveNameReference(Reference);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
 }
 
-static FAssetDecodedPropertyValue DecodeString(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
+static bool DecodeStringFromReader(FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
-	FAssetDecodedPropertyValue Result;
-
-	if (Size <= 0 || !Document.IsValidRange(AbsoluteOffset, Size))
-	{
-		Result.Error = TEXT("Invalid FString value range.");
-
-		return Result;
-	}
-
-	FAssetPackageMemoryReader Reader(Document.FileData, AbsoluteOffset, Size);
+	const int64 Start = Reader.Tell();
 
 	FString Value;
 	FText Error;
-
 	if (!AssetSerializationPrimitives::ReadSerializedString(Reader, Value, Error))
 	{
-		Result.Error = Error.ToString();
-
-		return Result;
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not decode FString");
+		return false;
 	}
 
-	Result.bSuccess = true;
-	Result.Value = MoveTemp(Value);
-
-	return Result;
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = MoveTemp(Value);
+	OutValue.RelativeOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
 }
 
-static FAssetDecodedPropertyValue DecodeGuid(const FAssetPackageDocument& Document, const int64 AbsoluteOffset, const int64 Size)
+static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
+	FAssetDecodedPropertyValue& OutValue, const int32 Depth)
 {
-	FAssetDecodedPropertyValue Result;
-
-	if (Size != sizeof(FGuid) || !Document.IsValidRange(AbsoluteOffset, sizeof(FGuid)))
+	if (Depth >= Context.MaximumDepth)
 	{
-		Result.Error = TEXT("Invalid FGuid range.");
-
-		return Result;
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Maximum property nesting depth exceeded.");
+		return false;
 	}
 
-	FGuid Value;
-	FMemory::Memcpy(&Value, Document.FileData.GetData() + AbsoluteOffset, sizeof(FGuid));
-	Result.bSuccess = true;
-	Result.Value = Value.ToString(EGuidFormats::DigitsWithHyphens);
+	const int64 Start = Reader.Tell();
 
-	return Result;
+	if (Start > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Property reader moved beyond its value range.");
+		return false;
+	}
+
+	OutValue.TypeName = Type.ToString();
+
+	if (Type.Name == TEXT("BoolProperty"))
+	{
+		return DecodePrimitiveFromReader<uint8>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("IntProperty"))
+	{
+		return DecodePrimitiveFromReader<int32>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("FloatProperty"))
+	{
+		return DecodePrimitiveFromReader<float>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("DoubleProperty"))
+	{
+		return DecodePrimitiveFromReader<double>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("NameProperty"))
+	{
+		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("StrProperty"))
+	{
+		return DecodeStringFromReader(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("StructProperty"))
+	{
+		return DecodeStructFromReader(Context, Reader, Type, ValueEnd, OutValue, Depth + 1);
+	}
+
+	if (Type.Name == TEXT("ArrayProperty"))
+	{
+		return DecodeArrayFromReader(Context, Reader, Type, ValueEnd, OutValue, Depth + 1);
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+	OutValue.Error = FString::Printf(TEXT("Unsupported property type: %s"), *Type.ToString());
+
+	return false;
 }
 
 FAssetDecodedPropertyValue FAssetPropertyValueDecoder::Decode(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 ExportSerialOffset)
 {
+	FAssetDecodedPropertyValue Result;
+
 	const int64 AbsoluteOffset = ExportSerialOffset + Node.Offset;
 
-	if (Node.TypeName == TEXT("BoolProperty"))
+	if (!Document.IsValidRange(AbsoluteOffset, Node.Size))
+	{
+		Result.Status = EAssetPropertyDecodeStatus::InvalidData;
+		Result.Error = TEXT("The property value range is invalid.");
+		return Result;
+	}
+
+	FAssetPackagePayloadReader Reader(Document, AbsoluteOffset, Node.Size);
+	FAssetPropertyDecodeContext Context{ Document };
+
+	Result.Name = Node.Name;
+	Result.TypeName = Node.PropertyType.ToString();
+
+	const int64 ValueEnd = AbsoluteOffset + Node.Size;
+	if (Node.PropertyType.Name == TEXT("BoolProperty"))
 	{
 		return DecodeBool(Document, Node, AbsoluteOffset);
 	}
-
-	if (Node.TypeName == TEXT("Int8Property"))
+	else if (!DecodeValueFromReader(Context, Reader, Node.PropertyType, ValueEnd, Result, 0))
 	{
-		return DecodeIntegral<int8>(Document, AbsoluteOffset, Node.Size);
+		return Result;
 	}
-
-	if (Node.TypeName == TEXT("Int16Property"))
-	{
-		return DecodeIntegral<int16>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("IntProperty"))
-	{
-		return DecodeIntegral<int32>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("Int64Property"))
-	{
-		return DecodeIntegral<int64>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("UInt16Property"))
-	{
-		return DecodeIntegral<uint16>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("UInt32Property"))
-	{
-		return DecodeIntegral<uint32>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("UInt64Property"))
-	{
-		return DecodeIntegral<uint64>(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("FloatProperty"))
-	{
-		return DecodeFloat(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("DoubleProperty"))
-	{
-		return DecodeDouble(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("NameProperty"))
-	{
-		return DecodeName(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName == TEXT("StrProperty"))
-	{
-		return DecodeString(Document, AbsoluteOffset, Node.Size);
-	}
-
-	if (Node.TypeName.StartsWith(TEXT("StructProperty(Guid")))
-	{
-		return DecodeGuid(Document, AbsoluteOffset, Node.Size);
-	}
-
-	FAssetDecodedPropertyValue Result;
-
-	Result.Error = FString::Printf(TEXT("Unsupported type: %s"), *Node.TypeName);
 
 	return Result;
 }

@@ -7,6 +7,7 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
+#include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -384,6 +385,7 @@ namespace
 			Node->Kind = EAssetSerializationTraceKind::Property;
 			Node->Name = Tag.ResolvedName;
 			Node->TypeName = Tag.Type.ToString();
+			Node->PropertyType = Tag.Type;
 			Node->Offset = Tag.ValueOffset - Export.SerialOffset;
 			Node->Size = Tag.Size;
 			Node->Parent = OutTrace.Root;

@@ -550,7 +550,7 @@ void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, con
 		{
 			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *Accumulator.OldNode, OldData.Export.SerialOffset);
 
-			if (OldDecoded.bSuccess)
+			if (OldDecoded.IsSuccess())
 			{
 				PropertyEntry.bHasOldDecodedValue = true;
 				PropertyEntry.OldDecodedValue = OldDecoded.Value;
@@ -562,7 +562,7 @@ void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, con
 		{
 			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *Accumulator.NewNode, NewData.Export.SerialOffset);
 
-			if (NewDecoded.bSuccess)
+			if (NewDecoded.IsSuccess())
 			{
 				PropertyEntry.bHasNewDecodedValue = true;
 				PropertyEntry.NewDecodedValue = NewDecoded.Value;
@@ -640,7 +640,7 @@ static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPr
 		Entry.OldDecodedValue = TEXT("<not serialized; likely default>");
 
 		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-		if (NewDecoded.bSuccess)
+		if (NewDecoded.IsSuccess())
 		{
 			Entry.bHasOldDecodedValue = true;
 			Entry.NewDecodedValue = NewDecoded.Value;
@@ -661,7 +661,7 @@ static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPr
 		Entry.NewDecodedValue = TEXT("<not serialized; likely default>");
 
 		const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-		if (OldDecoded.bSuccess)
+		if (OldDecoded.IsSuccess())
 		{
 			Entry.bHasOldDecodedValue = true;
 			Entry.OldDecodedValue = OldDecoded.Value;
@@ -690,14 +690,14 @@ static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPr
 	Entry.NewSize = NewData.Node->Size;
 
 	const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-	if (OldDecoded.bSuccess)
+	if (OldDecoded.IsSuccess())
 	{
 		Entry.bHasOldDecodedValue = true;
 		Entry.OldDecodedValue = OldDecoded.Value;
 		Entry.OldValue = OldDecoded.Value;
 	}
 	const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-	if (NewDecoded.bSuccess)
+	if (NewDecoded.IsSuccess())
 	{
 		Entry.bHasNewDecodedValue = true;
 		Entry.NewDecodedValue = NewDecoded.Value;

@@ -7,13 +7,28 @@
 struct FAssetPackageDocument;
 struct FAssetSerializationTraceNode;
 
+enum class EAssetPropertyDecodeStatus : uint8
+{
+	Success,
+	Unsupported,
+	InvalidData
+};
+
 struct FAssetDecodedPropertyValue
 {
-	bool bSuccess = false;
+	EAssetPropertyDecodeStatus Status = EAssetPropertyDecodeStatus::Unsupported;
 
+	FString Name;
+	FString TypeName;
 	FString Value;
-
 	FString Error;
+
+	int64 RelativeOffset = 0;
+	int64 Size = 0;
+
+	TArray<FAssetDecodedPropertyValue> Children;
+
+	bool IsSuccess() const { return Status == EAssetPropertyDecodeStatus::Success; }
 };
 
 class FAssetPropertyValueDecoder

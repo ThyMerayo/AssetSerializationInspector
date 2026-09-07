@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 
 #include "AssetSerializationTraceArchive.h"
+#include "Serialization/AssetSerializedPropertyTag.h"
 
 enum class EAssetSerializationTraceKind : uint8
 {
@@ -24,6 +25,8 @@ struct FAssetSerializationTraceNode
 
 	FString Name;
 	FString TypeName;
+
+	FAssetSerializedPropertyType PropertyType;
 
 	int64 Offset = 0;
 	int64 Size = 0;
