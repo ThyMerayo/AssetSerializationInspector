@@ -6,6 +6,7 @@
 #include "Misc/SecureHash.h"
 
 #include "Diff/AssetByteDiff.h"
+#include "Diff/AssetDecodedValueDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -622,6 +623,60 @@ static bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, cons
 	return FMemory::Memcmp(OldData.Document.FileData.GetData() + OldAbsoluteOffset, NewData.Document.FileData.GetData() + NewAbsoluteOffset, OldData.Node->Size) == 0;
 }
 
+static void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent)
+{
+	for (const FAssetDecodedValueDiff& Child : ValueDiff.Children)
+	{
+		if (Child.State == EAssetDecodedValueDiffState::Unchanged)
+		{
+			continue;
+		}
+
+		FAssetPackageDiffEntry Entry;
+		Entry.Kind = EAssetPackageDiffKind::Property;
+		Entry.Key = Child.Name;
+		Entry.DisplayName = FText::FromString(Child.Name);
+		Entry.TypeName = Child.TypeName;
+
+		switch (Child.State)
+		{
+			case EAssetDecodedValueDiffState::Added:
+				Entry.State = EAssetPackageDiffState::Added;
+				break;
+
+			case EAssetDecodedValueDiffState::Removed:
+				Entry.State = EAssetPackageDiffState::Removed;
+				break;
+
+			case EAssetDecodedValueDiffState::Modified:
+				Entry.State = EAssetPackageDiffState::Modified;
+				break;
+
+			case EAssetDecodedValueDiffState::Unchanged:
+				Entry.State = EAssetPackageDiffState::Unchanged;
+				break;
+		}
+
+		if (Child.bHasOldValue)
+		{
+			Entry.bHasOldDecodedValue = true;
+			Entry.OldDecodedValue = Child.OldValue;
+			Entry.OldValue = Child.OldValue;
+		}
+
+		if (Child.bHasNewValue)
+		{
+			Entry.bHasNewDecodedValue = true;
+			Entry.NewDecodedValue = Child.NewValue;
+			Entry.NewValue = Child.NewValue;
+		}
+
+		AppendDecodedValueDiffChildren(Child, Entry);
+
+		Parent.Children.Add(MoveTemp(Entry));
+	}
+}
+
 static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData, const FAssetSerializedPropertyIdentity& Identity, FAssetPackageDiffEntry& PayloadEntry)
 {
 	FAssetPackageDiffEntry Entry;
@@ -702,6 +757,14 @@ static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPr
 		Entry.bHasNewDecodedValue = true;
 		Entry.NewDecodedValue = NewDecoded.Value;
 		Entry.NewValue = NewDecoded.Value;
+	}
+
+	const FAssetDecodedPropertyValue* OldPtr = OldDecoded.IsSuccess() ? &OldDecoded : nullptr;
+	const FAssetDecodedPropertyValue* NewPtr = NewDecoded.IsSuccess() ? &NewDecoded : nullptr;
+	if (OldPtr != nullptr || NewPtr != nullptr)
+	{
+		const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);
+		AppendDecodedValueDiffChildren(ValueDiff, Entry);
 	}
 
 	PayloadEntry.Children.Add(MoveTemp(Entry));

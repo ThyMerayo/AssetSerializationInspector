@@ -14,9 +14,19 @@ enum class EAssetPropertyDecodeStatus : uint8
 	InvalidData
 };
 
+enum class EAssetDecodedValueKind : uint8
+{
+	Scalar,
+	Struct,
+	Array,
+	Set,
+	Map
+};
+
 struct FAssetDecodedPropertyValue
 {
 	EAssetPropertyDecodeStatus Status = EAssetPropertyDecodeStatus::Unsupported;
+	EAssetDecodedValueKind Kind = EAssetDecodedValueKind::Scalar;
 
 	FString Name;
 	FString TypeName;

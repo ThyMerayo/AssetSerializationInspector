@@ -15,6 +15,7 @@ static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Docume
 	if (Node.bHasInlineBoolValue)
 	{
 		Result.Status = EAssetPropertyDecodeStatus::Success;
+		Result.Kind = EAssetDecodedValueKind::Scalar;
 		Result.Value = Node.bInlineBoolValue ? TEXT("true") : TEXT("false");
 		return Result;
 	}
@@ -28,6 +29,7 @@ static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Docume
 		const uint8 Value = Document.FileData[AbsoluteOffset];
 
 		Result.Status = EAssetPropertyDecodeStatus::Success;
+		Result.Kind = EAssetDecodedValueKind::Scalar;
 		Result.Value = Value != 0 ? TEXT("true") : TEXT("false");
 		return Result;
 	}
@@ -61,6 +63,7 @@ template <typename TValue> static bool DecodePrimitiveFromReader(FAssetPackagePa
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
 	OutValue.Value = LexToString(Value);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -98,6 +101,7 @@ static bool DecodeTaggedStruct(const FAssetPropertyDecodeContext& Context, FAsse
 		if (Tag.IsTerminator())
 		{
 			OutValue.Status = EAssetPropertyDecodeStatus::Success;
+			OutValue.Kind = EAssetDecodedValueKind::Struct;
 			OutValue.Value = FString::Printf(TEXT("%d fields"), OutValue.Children.Num());
 			OutValue.RelativeOffset = Start;
 			OutValue.Size = Reader.Tell() - Start;
@@ -120,6 +124,7 @@ static bool DecodeTaggedStruct(const FAssetPropertyDecodeContext& Context, FAsse
 		if (Tag.Type.Name == TEXT("BoolProperty"))
 		{
 			Child.Status = EAssetPropertyDecodeStatus::Success;
+			Child.Kind = EAssetDecodedValueKind::Scalar;
 			Child.Value = Tag.bBoolValue ? TEXT("true") : TEXT("false");
 		}
 		else
@@ -159,6 +164,7 @@ static bool DecodePodStructFromReader(
 	Reader << Value;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	OutValue.Value = Formatter(Value);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -181,6 +187,7 @@ static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	Reader << Value;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	OutValue.Value = Value.ToString(EGuidFormats::DigitsWithHyphens);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -191,7 +198,7 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 {
 	const int64 Start = Reader.Tell();
 
-	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) > ValueEnd)
+	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) + 3 * 49 > ValueEnd)
 	{
 		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 		OutValue.Error = TEXT("Not enough space in reader for decoding FTransform");
@@ -211,6 +218,7 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 	Reader << Scale3D;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	OutValue.Value = FString::Printf(TEXT("Rotation: %s\nTranslation: %s\nScale3D: %s"), *Rotation.ToString(), *Translation.ToString(), *Scale3D.ToString());
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -232,6 +240,7 @@ static bool DecodeColorFromReader(const FAssetPropertyDecodeContext& Context, FA
 	Reader << Value;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	OutValue.Value = FString::Printf(TEXT("R=%u G=%u B=%u A=%u"), static_cast<uint32>(Value.R), static_cast<uint32>(Value.G), static_cast<uint32>(Value.B), static_cast<uint32>(Value.A));
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -373,6 +382,7 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Array;
 	OutValue.Value = FString::Printf(TEXT("%d elements"), Count);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -408,6 +418,7 @@ static bool DecodeNameFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	Reference.Number = Number;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
 	OutValue.Value = Context.Document.ResolveNameReference(Reference);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
@@ -428,6 +439,7 @@ static bool DecodeStringFromReader(FAssetPackagePayloadReader& Reader, const int
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
 	OutValue.Value = MoveTemp(Value);
 	OutValue.RelativeOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;

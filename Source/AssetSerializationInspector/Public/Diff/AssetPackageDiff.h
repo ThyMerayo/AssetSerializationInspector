@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+struct FAssetDecodedValueDiff;
 struct FAssetPackageDocument;
 struct FAssetPackageExportEntry;
 struct FAssetPackageTraceCollection;
