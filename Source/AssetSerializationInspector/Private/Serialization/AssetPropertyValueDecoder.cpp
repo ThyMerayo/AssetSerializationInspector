@@ -198,22 +198,17 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 {
 	const int64 Start = Reader.Tell();
 
-	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) + 3 * 49 > ValueEnd)
+	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) > ValueEnd)
 	{
 		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 		OutValue.Error = TEXT("Not enough space in reader for decoding FTransform");
 		return false;
 	}
 
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FQuat Rotation;
 	Reader << Rotation;
-
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FVector Translation;
 	Reader << Translation;
-
-	Reader.Seek(Reader.Tell() + 6 * 8 + 1); // Not sure what this block is
 	FVector Scale3D;
 	Reader << Scale3D;
 
@@ -281,7 +276,7 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 
 	if (StructName == TEXT("Transform"))
 	{
-		return DecodeTransformFromReader(Context, Reader, ValueEnd, OutValue);
+		return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, 0);
 	}
 
 	if (StructName == TEXT("Color"))

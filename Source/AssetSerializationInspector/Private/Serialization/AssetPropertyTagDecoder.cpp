@@ -281,7 +281,6 @@ bool FAssetPropertyTagDecoder::ReadTag(const FAssetPackageDocument& Document, FA
 	if (Reader.IsError())
 	{
 		OutError = NSLOCTEXT("AssetPropertyTagDecoder", "PropertyNameReadFailed", "Could not read property name.");
-
 		return false;
 	}
 
@@ -291,7 +290,6 @@ bool FAssetPropertyTagDecoder::ReadTag(const FAssetPackageDocument& Document, FA
 	{
 		OutTag.ValueOffset = Reader.Tell();
 		OutTag.TagSize = Reader.Tell() - OutTag.TagOffset;
-
 		return true;
 	}
 
@@ -305,7 +303,6 @@ bool FAssetPropertyTagDecoder::ReadTag(const FAssetPackageDocument& Document, FA
 	{
 		OutTag.ValueOffset = Reader.Tell();
 		OutTag.TagSize = OutTag.ValueOffset - OutTag.TagOffset;
-
 		return true;
 	}
 
