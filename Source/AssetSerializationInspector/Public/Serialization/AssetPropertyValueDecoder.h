@@ -32,6 +32,7 @@ struct FAssetDecodedPropertyValue
 	FString TypeName;
 	FString Value;
 	FString Error;
+	FString SemanticKey;
 
 	int64 RelativeOffset = 0;
 	int64 Size = 0;

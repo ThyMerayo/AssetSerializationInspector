@@ -79,23 +79,166 @@ static void CompareNamedChildren(const FAssetDecodedPropertyValue& OldValue, con
 	}
 }
 
+static bool AreDecodedValuesEquivalent(const FAssetDecodedPropertyValue& A, const FAssetDecodedPropertyValue& B)
+{
+	if (A.Kind != B.Kind)
+	{
+		return false;
+	}
+
+	if (A.TypeName != B.TypeName)
+	{
+		return false;
+	}
+
+	if (!A.SemanticKey.IsEmpty() && !B.SemanticKey.IsEmpty())
+	{
+		return A.TypeName == B.TypeName && A.SemanticKey == B.SemanticKey;
+	}
+
+	if (A.Kind == EAssetDecodedValueKind::Scalar)
+	{
+		return A.Value == B.Value;
+	}
+
+	if (A.Children.Num() != B.Children.Num())
+	{
+		return false;
+	}
+
+	for (int32 Index = 0; Index < A.Children.Num(); ++Index)
+	{
+		if (!AreDecodedValuesEquivalent(A.Children[Index], B.Children[Index]))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool AreSameArrayElement(const FAssetDecodedPropertyValue& A, const FAssetDecodedPropertyValue& B)
+{
+	if (A.TypeName != B.TypeName)
+	{
+		return false;
+	}
+
+	if (!A.SemanticKey.IsEmpty() && !B.SemanticKey.IsEmpty())
+	{
+		return A.SemanticKey == B.SemanticKey;
+	}
+
+	/*
+	 * For scalar arrays, value equality is the only
+	 * identity information we have.
+	 */
+	return AreDecodedValuesEquivalent(A, B);
+}
+
+static TArray<int32> BuildLcsTable(const TArray<FAssetDecodedPropertyValue>& OldValues, const TArray<FAssetDecodedPropertyValue>& NewValues)
+{
+	const int32 OldCount = OldValues.Num();
+	const int32 NewCount = NewValues.Num();
+
+	TArray<int32> Table;
+	Table.SetNumZeroed((OldCount + 1) * (NewCount + 1));
+
+	auto At = [NewCount, &Table](const int32 OldIndex, const int32 NewIndex) -> int32& { return Table[OldIndex * (NewCount + 1) + NewIndex]; };
+
+	for (int32 OldIndex = OldCount - 1; OldIndex >= 0; --OldIndex)
+	{
+		for (int32 NewIndex = NewCount - 1; NewIndex >= 0; --NewIndex)
+		{
+			if (AreSameArrayElement(OldValues[OldIndex], NewValues[NewIndex]))
+			{
+				At(OldIndex, NewIndex) = 1 + At(OldIndex + 1, NewIndex + 1);
+			}
+			else
+			{
+				At(OldIndex, NewIndex) = FMath::Max(At(OldIndex + 1, NewIndex), At(OldIndex, NewIndex + 1));
+			}
+		}
+	}
+
+	return Table;
+}
+
+static void CompareArrayChildrenByIndex(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
+{
+	const TArray<FAssetDecodedPropertyValue>& OldChildren = OldValue.Children;
+	const TArray<FAssetDecodedPropertyValue>& NewChildren = NewValue.Children;
+
+	const int32 MinCount = FMath::Min(OldChildren.Num(), NewChildren.Num());
+
+	for (int Index = 0; Index < MinCount; ++Index)
+	{
+		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[Index], &NewChildren[Index]);
+		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		OutDiff.Children.Add(MoveTemp(ChildDiff));
+	}
+	for (int Index = MinCount; Index < OldChildren.Num(); ++Index)
+	{
+		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[Index], nullptr);
+		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		OutDiff.Children.Add(MoveTemp(ChildDiff));
+	}
+	for (int Index = MinCount; Index < NewChildren.Num(); ++Index)
+	{
+		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(nullptr, &NewChildren[Index]);
+		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		OutDiff.Children.Add(MoveTemp(ChildDiff));
+	}
+}
+
 static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
 {
-	const int32 CommonCount = FMath::Min(OldValue.Children.Num(), NewValue.Children.Num());
+	static constexpr int64 MaximumLcsCells = 4000000;
+	const int64 CellCount = static_cast<int64>(OldValue.Children.Num() + 1) * static_cast<int64>(NewValue.Children.Num() + 1);
 
-	for (int32 Index = 0; Index < CommonCount; ++Index)
+	if (CellCount > MaximumLcsCells)
 	{
-		OutDiff.Children.Add(FAssetDecodedValueDiffer::Compare(&OldValue.Children[Index], &NewValue.Children[Index]));
+		CompareArrayChildrenByIndex(OldValue, NewValue, OutDiff);
+		return;
 	}
 
-	for (int32 Index = CommonCount; Index < OldValue.Children.Num(); ++Index)
-	{
-		OutDiff.Children.Add(FAssetDecodedValueDiffer::Compare(&OldValue.Children[Index], nullptr));
-	}
+	const TArray<FAssetDecodedPropertyValue>& OldChildren = OldValue.Children;
+	const TArray<FAssetDecodedPropertyValue>& NewChildren = NewValue.Children;
+	const int32 OldCount = OldChildren.Num();
+	const int32 NewCount = NewChildren.Num();
+	const TArray<int32> Table = BuildLcsTable(OldChildren, NewChildren);
+	auto At = [NewCount, &Table](const int32 OldIndex, const int32 NewIndex) { return Table[OldIndex * (NewCount + 1) + NewIndex]; };
 
-	for (int32 Index = CommonCount; Index < NewValue.Children.Num(); ++Index)
+	int32 OldIndex = 0;
+	int32 NewIndex = 0;
+
+	while (OldIndex < OldCount || NewIndex < NewCount)
 	{
-		OutDiff.Children.Add(FAssetDecodedValueDiffer::Compare(nullptr, &NewValue.Children[Index]));
+		if (OldIndex < OldCount && NewIndex < NewCount && AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex]))
+		{
+			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], &NewChildren[NewIndex]);
+			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
+			OutDiff.Children.Add(MoveTemp(ChildDiff));
+			++OldIndex;
+			++NewIndex;
+			continue;
+		}
+
+		const bool bPreferRemove = OldIndex < OldCount && (NewIndex >= NewCount || At(OldIndex + 1, NewIndex) >= At(OldIndex, NewIndex + 1));
+		if (bPreferRemove)
+		{
+			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], nullptr);
+			ChildDiff.Name = FString::Printf(TEXT("[%d]"), OldIndex);
+			OutDiff.Children.Add(MoveTemp(ChildDiff));
+			++OldIndex;
+		}
+		else
+		{
+			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(nullptr, &NewChildren[NewIndex]);
+			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
+			OutDiff.Children.Add(MoveTemp(ChildDiff));
+			++NewIndex;
+		}
 	}
 }
 
@@ -104,11 +247,50 @@ static void CompareChildren(const FAssetDecodedPropertyValue& OldValue, const FA
 	if (OldValue.Kind == EAssetDecodedValueKind::Array && NewValue.Kind == EAssetDecodedValueKind::Array)
 	{
 		CompareArrayChildren(OldValue, NewValue, OutDiff);
+	}
+	else
+	{
+		CompareNamedChildren(OldValue, NewValue, OutDiff);
+	}
+}
 
-		return;
+static void CollapseArrayReplacements(TArray<FAssetDecodedValueDiff>& Children)
+{
+	for (int32 Index = 0; Index + 1 < Children.Num(); ++Index)
+	{
+		FAssetDecodedValueDiff& First = Children[Index];
+		FAssetDecodedValueDiff& Second = Children[Index + 1];
+
+		if (First.State == EAssetDecodedValueDiffState::Removed && Second.State == EAssetDecodedValueDiffState::Added && First.TypeName == Second.TypeName)
+		{
+			FAssetDecodedValueDiff Replacement;
+			Replacement.State = EAssetDecodedValueDiffState::Modified;
+			Replacement.Name = Second.Name;
+			Replacement.TypeName = Second.TypeName;
+			Replacement.bHasOldValue = First.bHasOldValue;
+			Replacement.OldValue = First.OldValue;
+			Replacement.bHasNewValue = Second.bHasNewValue;
+			Replacement.NewValue = Second.NewValue;
+			Replacement.OldOffset = First.OldOffset;
+			Replacement.OldSize = First.OldSize;
+			Replacement.NewOffset = Second.NewOffset;
+			Replacement.NewSize = Second.NewSize;
+			Children[Index] = MoveTemp(Replacement);
+			Children.RemoveAt(Index + 1);
+
+			--Index;
+		}
+	}
+}
+
+static bool CanTreatAsReplacement(const FAssetDecodedValueDiff& Removed, const FAssetDecodedValueDiff& Added)
+{
+	if (Removed.TypeName != Added.TypeName)
+	{
+		return false;
 	}
 
-	CompareNamedChildren(OldValue, NewValue, OutDiff);
+	return true;
 }
 
 FAssetDecodedValueDiff FAssetDecodedValueDiffer::Compare(const FAssetDecodedPropertyValue* OldValue, const FAssetDecodedPropertyValue* NewValue)
@@ -175,6 +357,8 @@ FAssetDecodedValueDiff FAssetDecodedValueDiffer::Compare(const FAssetDecodedProp
 
 	const bool bLeafChanged = !AreLeafValuesEqual(*OldValue, *NewValue);
 	bool bChildChanged = false;
+
+	CollapseArrayReplacements(Result.Children);
 
 	for (const FAssetDecodedValueDiff& Child : Result.Children)
 	{

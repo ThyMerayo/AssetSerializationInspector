@@ -382,6 +382,18 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 			OutValue.Error = FString::Printf(TEXT("Could not decode array element %d."), Index);
 			return false;
 		}
+		else
+		{
+			switch (Element.Kind)
+			{
+				case EAssetDecodedValueKind::Scalar:
+					OutValue.SemanticKey = Element.Value;
+					break;
+				case EAssetDecodedValueKind::Struct:
+					OutValue.SemanticKey = InnerType.Parameters[0].Name;
+					break;
+			}
+		}
 
 		OutValue.Children.Add(MoveTemp(Element));
 	}
