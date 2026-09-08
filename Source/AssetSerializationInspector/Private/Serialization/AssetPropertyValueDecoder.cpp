@@ -301,6 +301,21 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 		return DecodePodStructFromReader<FIntVector>(Context, Reader, ValueEnd, OutValue, [](const FIntVector& Value) { return FString::Printf(TEXT("X=%d Y=%d Z=%d"), Value.X, Value.Y, Value.Z); });
 	}
 
+	if (StructName == TEXT("EdGraphPinType"))
+	{
+		const int64 Start = Reader.Tell();
+
+		FEdGraphPinType Value{};
+		Value.Serialize(Reader);
+
+		OutValue.Status = EAssetPropertyDecodeStatus::Success;
+		OutValue.Kind = EAssetDecodedValueKind::Struct;
+		OutValue.Value = TEXT("EdGraphPinType value");
+		OutValue.RelativeOffset = Start;
+		OutValue.Size = Reader.Tell() - Start;
+		return true;
+	}
+
 	return false;
 }
 
@@ -320,12 +335,7 @@ static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, F
 		return true;
 	}
 
-	// TODO: Not working currently, needs to be fixed
-	// return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, Depth);
-
-	OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
-	OutValue.Error = TEXT("Generic StructProperty is not supported yet.");
-	return false;
+	return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, Depth);
 }
 
 static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,

@@ -54,6 +54,21 @@ FArchive& FAssetPackagePayloadReader::operator<<(FName& Value)
 	return *this;
 }
 
+// AssetPackagePayloadReader.cpp
+FArchive& FAssetPackagePayloadReader::operator<<(UObject*& Value)
+{
+	int32 RawPackageIndex = 0;
+	*this << RawPackageIndex; // uses your existing int32 Serialize path
+
+	// We're offline and have no linker to resolve this into a real object,
+	// but we still need to consume the bytes correctly. Discard for now —
+	// FAssetPackageIndexReference{ RawPackageIndex } would let you describe
+	// it via Document.DescribePackageIndexDetailed() if you want it later.
+	Value = nullptr;
+
+	return *this;
+}
+
 bool FAssetPackagePayloadReader::ReadNameReference(FAssetPackageNameReference& OutReference)
 {
 	int32 NameIndex = INDEX_NONE;

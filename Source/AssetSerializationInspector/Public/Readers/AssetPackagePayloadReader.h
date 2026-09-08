@@ -14,6 +14,7 @@ public:
 	FAssetPackagePayloadReader(const FAssetPackageDocument& InDocument, int64 InOffset, int64 InSize);
 
 	virtual FArchive& operator<<(FName& Value) override;
+	virtual FArchive& operator<<(UObject*& Value) override;
 
 	bool ReadNameReference(FAssetPackageNameReference& OutReference);
 	bool ReadResolvedName(FString& OutName, FAssetPackageNameReference* OutReference = nullptr);

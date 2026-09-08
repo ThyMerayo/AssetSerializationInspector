@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Serialization/Archive.h"
+#include "Serialization/ArchiveUObject.h"
 
 /**
  * Read-only archive over a verified subsection of a file buffer.
@@ -11,7 +11,7 @@
  * Tell() returns an absolute file offset, making parser errors and tree nodes
  * easier to relate to the hex display.
  */
-class FAssetPackageMemoryReader : public FArchive
+class FAssetPackageMemoryReader : public FArchiveUObject
 {
 public:
 	FAssetPackageMemoryReader(const TArray64<uint8>& InFileData, int64 InStartOffset, int64 InSize);
