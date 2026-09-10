@@ -20,13 +20,35 @@ enum class EAssetDecodedValueKind : uint8
 	Struct,
 	Array,
 	Set,
-	Map
+	Map,
+	MapEntry
+};
+
+enum class EAssetDecodedContainerOperation : uint8
+{
+	None,
+
+	Add,
+	Remove,
+	AddOrModify,
+	Replace,
+	Modify,
+	Shadow
+};
+
+enum class EAssetDecodedContainerSerializationMode : uint8
+{
+	Unknown,
+	Full,
+	Delta
 };
 
 struct FAssetDecodedPropertyValue
 {
 	EAssetPropertyDecodeStatus Status = EAssetPropertyDecodeStatus::Unsupported;
 	EAssetDecodedValueKind Kind = EAssetDecodedValueKind::Scalar;
+	EAssetDecodedContainerOperation ContainerOperation = EAssetDecodedContainerOperation::None;
+	EAssetDecodedContainerSerializationMode ContainerMode = EAssetDecodedContainerSerializationMode::Unknown;
 
 	FString Name;
 	FString TypeName;
@@ -34,7 +56,7 @@ struct FAssetDecodedPropertyValue
 	FString Error;
 	FString SemanticKey;
 
-	int64 RelativeOffset = 0;
+	int64 AbsoluteOffset = 0;
 	int64 Size = 0;
 
 	TArray<FAssetDecodedPropertyValue> Children;
@@ -46,4 +68,6 @@ class FAssetPropertyValueDecoder
 {
 public:
 	static FAssetDecodedPropertyValue Decode(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, int64 ExportSerialOffset);
+
+	static FString BuildSemanticValueKey(const FAssetDecodedPropertyValue& Value);
 };

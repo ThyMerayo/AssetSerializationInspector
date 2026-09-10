@@ -175,18 +175,24 @@ static void CompareArrayChildrenByIndex(const FAssetDecodedPropertyValue& OldVal
 	{
 		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[Index], &NewChildren[Index]);
 		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		ChildDiff.OldArrayIndex = Index;
+		ChildDiff.NewArrayIndex = Index;
 		OutDiff.Children.Add(MoveTemp(ChildDiff));
 	}
 	for (int Index = MinCount; Index < OldChildren.Num(); ++Index)
 	{
 		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[Index], nullptr);
 		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		ChildDiff.OldArrayIndex = Index;
+		ChildDiff.NewArrayIndex = INDEX_NONE;
 		OutDiff.Children.Add(MoveTemp(ChildDiff));
 	}
 	for (int Index = MinCount; Index < NewChildren.Num(); ++Index)
 	{
 		FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(nullptr, &NewChildren[Index]);
 		ChildDiff.Name = FString::Printf(TEXT("[%d]"), Index);
+		ChildDiff.OldArrayIndex = INDEX_NONE;
+		ChildDiff.NewArrayIndex = Index;
 		OutDiff.Children.Add(MoveTemp(ChildDiff));
 	}
 }
@@ -218,6 +224,8 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 		{
 			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], &NewChildren[NewIndex]);
 			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
+			ChildDiff.OldArrayIndex = OldIndex;
+			ChildDiff.NewArrayIndex = NewIndex;
 			OutDiff.Children.Add(MoveTemp(ChildDiff));
 			++OldIndex;
 			++NewIndex;
@@ -229,6 +237,8 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 		{
 			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], nullptr);
 			ChildDiff.Name = FString::Printf(TEXT("[%d]"), OldIndex);
+			ChildDiff.OldArrayIndex = OldIndex;
+			ChildDiff.NewArrayIndex = INDEX_NONE;
 			OutDiff.Children.Add(MoveTemp(ChildDiff));
 			++OldIndex;
 		}
@@ -236,9 +246,192 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 		{
 			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(nullptr, &NewChildren[NewIndex]);
 			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
+			ChildDiff.OldArrayIndex = INDEX_NONE;
+			ChildDiff.NewArrayIndex = NewIndex;
 			OutDiff.Children.Add(MoveTemp(ChildDiff));
 			++NewIndex;
 		}
+	}
+}
+
+using FDecodedSetMap = TMap<FString, const FAssetDecodedPropertyValue*>;
+
+static FDecodedSetMap BuildSetMap(const FAssetDecodedPropertyValue& Value)
+{
+	FDecodedSetMap Result;
+
+	for (const FAssetDecodedPropertyValue& Child : Value.Children)
+	{
+		Result.Add(FAssetPropertyValueDecoder::BuildSemanticValueKey(Child), &Child);
+	}
+
+	return Result;
+}
+
+struct FDecodedSetOperationKey
+{
+	EAssetDecodedContainerOperation Operation = EAssetDecodedContainerOperation::None;
+
+	FString SemanticKey;
+
+	bool operator==(const FDecodedSetOperationKey& Other) const { return Operation == Other.Operation && SemanticKey == Other.SemanticKey; }
+};
+uint32 GetTypeHash(const FDecodedSetOperationKey& Key)
+{
+	return HashCombine(GetTypeHash(static_cast<uint8>(Key.Operation)), GetTypeHash(Key.SemanticKey));
+}
+
+using FDecodedSetOperationMap = TMap<FDecodedSetOperationKey, const FAssetDecodedPropertyValue*>;
+
+static FDecodedSetOperationMap BuildSetOperationMap(const FAssetDecodedPropertyValue& Set)
+{
+	FDecodedSetOperationMap Result;
+
+	for (const FAssetDecodedPropertyValue& Element : Set.Children)
+	{
+		FDecodedSetOperationKey Key;
+		Key.Operation = Element.ContainerOperation;
+		Key.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Element);
+		Result.Add(MoveTemp(Key), &Element);
+	}
+
+	return Result;
+}
+
+static void CompareSetChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
+{
+	const FDecodedSetOperationMap OldElements = BuildSetOperationMap(OldValue);
+	const FDecodedSetOperationMap NewElements = BuildSetOperationMap(NewValue);
+
+	TSet<FDecodedSetOperationKey> Keys;
+
+	for (const auto& Pair : OldElements)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const auto& Pair : NewElements)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const FDecodedSetOperationKey& Key : Keys)
+	{
+		const FAssetDecodedPropertyValue* const* OldFound = OldElements.Find(Key);
+		const FAssetDecodedPropertyValue* const* NewFound = NewElements.Find(Key);
+		const FAssetDecodedPropertyValue* OldElement = OldFound != nullptr ? *OldFound : nullptr;
+		const FAssetDecodedPropertyValue* NewElement = NewFound != nullptr ? *NewFound : nullptr;
+		FAssetDecodedValueDiff ElementDiff = FAssetDecodedValueDiffer::Compare(OldElement, NewElement);
+		ElementDiff.Name = OldElement != nullptr ? OldElement->Value : NewElement->Value;
+		OutDiff.Children.Add(MoveTemp(ElementDiff));
+	}
+}
+
+struct FDecodedMapOperationKey
+{
+	EAssetDecodedContainerOperation Operation = EAssetDecodedContainerOperation::None;
+
+	FString SemanticKey;
+
+	bool operator==(const FDecodedMapOperationKey& Other) const { return Operation == Other.Operation && SemanticKey == Other.SemanticKey; }
+};
+uint32 GetTypeHash(const FDecodedMapOperationKey& Key)
+{
+	return HashCombine(GetTypeHash(static_cast<uint8>(Key.Operation)), GetTypeHash(Key.SemanticKey));
+}
+
+using FDecodedMapEntryMap = TMap<FString, const FAssetDecodedPropertyValue*>;
+
+static FDecodedMapEntryMap BuildFullMap(const FAssetDecodedPropertyValue& Map)
+{
+	FDecodedMapEntryMap Result;
+
+	for (const FAssetDecodedPropertyValue& Entry : Map.Children)
+	{
+		if (Entry.Kind != EAssetDecodedValueKind::MapEntry)
+		{
+			continue;
+		}
+
+		Result.Add(Entry.SemanticKey, &Entry);
+	}
+
+	return Result;
+}
+
+static const FAssetDecodedPropertyValue* GetMapEntryKey(const FAssetDecodedPropertyValue& Entry)
+{
+	return Entry.Children.IsValidIndex(0) ? &Entry.Children[0] : nullptr;
+}
+
+static const FAssetDecodedPropertyValue* GetMapEntryValue(const FAssetDecodedPropertyValue& Entry)
+{
+	return Entry.Children.IsValidIndex(1) ? &Entry.Children[1] : nullptr;
+}
+
+static FDecodedMapEntryMap BuildMapEntryMap(const FAssetDecodedPropertyValue& Map)
+{
+	FDecodedMapEntryMap Result;
+
+	for (const FAssetDecodedPropertyValue& Entry : Map.Children)
+	{
+		const FAssetDecodedPropertyValue* Key = GetMapEntryKey(Entry);
+		if (Key == nullptr)
+		{
+			continue;
+		}
+
+		Result.Add(FAssetPropertyValueDecoder::BuildSemanticValueKey(*Key), &Entry);
+	}
+
+	return Result;
+}
+
+static void CompareMapChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
+{
+	const FDecodedMapEntryMap OldEntries = BuildFullMap(OldValue);
+	const FDecodedMapEntryMap NewEntries = BuildFullMap(NewValue);
+
+	TSet<FString> Keys;
+
+	for (const auto& Pair : OldEntries)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const auto& Pair : NewEntries)
+	{
+		Keys.Add(Pair.Key);
+	}
+
+	for (const FString& Key : Keys)
+	{
+		const FAssetDecodedPropertyValue* const* OldFound = OldEntries.Find(Key);
+		const FAssetDecodedPropertyValue* const* NewFound = NewEntries.Find(Key);
+		const FAssetDecodedPropertyValue* OldEntry = OldFound != nullptr ? *OldFound : nullptr;
+		const FAssetDecodedPropertyValue* NewEntry = NewFound != nullptr ? *NewFound : nullptr;
+
+		if (OldEntry == nullptr)
+		{
+			FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(nullptr, NewEntry);
+			Diff.Name = FString::Printf(TEXT("[%s]"), *Key);
+			OutDiff.Children.Add(MoveTemp(Diff));
+			continue;
+		}
+
+		if (NewEntry == nullptr)
+		{
+			FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(OldEntry, nullptr);
+			Diff.Name = FString::Printf(TEXT("[%s]"), *Key);
+			OutDiff.Children.Add(MoveTemp(Diff));
+			continue;
+		}
+
+		const FAssetDecodedPropertyValue* OldMapValue = GetMapEntryValue(*OldEntry);
+		const FAssetDecodedPropertyValue* NewMapValue = GetMapEntryValue(*NewEntry);
+		FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(OldMapValue, NewMapValue);
+		Diff.Name = FString::Printf(TEXT("[%s]"), *Key);
+		OutDiff.Children.Add(MoveTemp(Diff));
 	}
 }
 
@@ -248,9 +441,61 @@ static void CompareChildren(const FAssetDecodedPropertyValue& OldValue, const FA
 	{
 		CompareArrayChildren(OldValue, NewValue, OutDiff);
 	}
+	else if (OldValue.Kind == EAssetDecodedValueKind::Set && NewValue.Kind == EAssetDecodedValueKind::Set)
+	{
+		CompareSetChildren(OldValue, NewValue, OutDiff);
+	}
+	else if (OldValue.Kind == EAssetDecodedValueKind::Map && NewValue.Kind == EAssetDecodedValueKind::Map)
+	{
+		CompareMapChildren(OldValue, NewValue, OutDiff);
+	}
 	else
 	{
 		CompareNamedChildren(OldValue, NewValue, OutDiff);
+	}
+}
+
+static void DetectArrayMoves(TArray<FAssetDecodedValueDiff>& Children)
+{
+	for (int32 RemovedIndex = 0; RemovedIndex < Children.Num(); ++RemovedIndex)
+	{
+		FAssetDecodedValueDiff& Removed = Children[RemovedIndex];
+		if (Removed.State != EAssetDecodedValueDiffState::Removed)
+		{
+			continue;
+		}
+
+		for (int32 AddedIndex = 0; AddedIndex < Children.Num(); ++AddedIndex)
+		{
+			if (RemovedIndex == AddedIndex)
+			{
+				continue;
+			}
+
+			FAssetDecodedValueDiff& Added = Children[AddedIndex];
+			if (Added.State != EAssetDecodedValueDiffState::Added)
+			{
+				continue;
+			}
+
+			if (Removed.SemanticKey.IsEmpty() || Added.SemanticKey.IsEmpty() || Removed.SemanticKey != Added.SemanticKey)
+			{
+				continue;
+			}
+
+			Removed.State = EAssetDecodedValueDiffState::Moved;
+			Removed.NewArrayIndex = Added.NewArrayIndex;
+			Removed.NewOffset = Added.NewOffset;
+			Removed.NewSize = Added.NewSize;
+			Children.RemoveAt(AddedIndex);
+
+			if (AddedIndex < RemovedIndex)
+			{
+				--RemovedIndex;
+			}
+
+			break;
+		}
 	}
 }
 
@@ -343,14 +588,20 @@ FAssetDecodedValueDiff FAssetDecodedValueDiffer::Compare(const FAssetDecodedProp
 
 	if (OldValue != nullptr)
 	{
-		Result.OldOffset = OldValue->RelativeOffset;
+		Result.OldOffset = OldValue->AbsoluteOffset;
 		Result.OldSize = OldValue->Size;
+		Result.SemanticKey = OldValue->SemanticKey;
 	}
 
 	if (NewValue != nullptr)
 	{
-		Result.NewOffset = NewValue->RelativeOffset;
+		Result.NewOffset = NewValue->AbsoluteOffset;
 		Result.NewSize = NewValue->Size;
+
+		if (Result.SemanticKey.IsEmpty())
+		{
+			Result.SemanticKey = NewValue->SemanticKey;
+		}
 	}
 
 	CompareChildren(*OldValue, *NewValue, Result);

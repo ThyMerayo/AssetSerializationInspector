@@ -11,7 +11,8 @@ enum class EAssetDecodedValueDiffState : uint8
 	Unchanged,
 	Added,
 	Removed,
-	Modified
+	Modified,
+	Moved
 };
 
 struct FAssetDecodedValueDiff
@@ -24,6 +25,8 @@ struct FAssetDecodedValueDiff
 	FString OldValue;
 	FString NewValue;
 
+	FString SemanticKey;
+
 	bool bHasOldValue = false;
 	bool bHasNewValue = false;
 
@@ -32,6 +35,9 @@ struct FAssetDecodedValueDiff
 
 	int64 OldSize = 0;
 	int64 NewSize = 0;
+
+	int32 OldArrayIndex = INDEX_NONE;
+	int32 NewArrayIndex = INDEX_NONE;
 
 	TArray<FAssetDecodedValueDiff> Children;
 };
