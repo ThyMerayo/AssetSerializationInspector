@@ -6,6 +6,7 @@
 #include "Widgets/SCompoundWidget.h"
 
 #include "Diff/AssetPackageDiff.h"
+#include "Save/AssetSaveAnalyzer.h"
 #include "Trace/AssetSerializationTrace.h"
 
 class SCheckBox;
@@ -56,6 +57,7 @@ struct FAssetSerializationDiffSession
 	FAssetSerializationDiffSide New;
 
 	TOptional<FAssetPackageDiffResult> DiffResult;
+	TOptional<FAssetSaveAnalysis> Analysis;
 };
 
 /**
@@ -89,6 +91,12 @@ public:
 private:
 	TSharedRef<SWidget> BuildDetailsPanel(bool bOldSide);
 	TSharedRef<SWidget> BuildSelectableDetailRow(const FText& Label, TAttribute<FText> Value);
+	TSharedRef<SWidget> BuildSaveAnalysisWidget();
+	TSharedRef<SWidget> BuildSaveAnalysisSummary(const FAssetSaveAnalysis& Analysis);
+	TSharedRef<SWidget> BuildAnalysisStat(const FText& Label, const FText& Value);
+	TSharedRef<SWidget> BuildSaveAnalysisSection(const FText& Title, const TArray<FAssetSaveExplanationEntry>& Entries);
+	TSharedRef<SWidget> BuildSaveAnalysisEntry(const FAssetSaveExplanationEntry& Entry, const int32 Depth);
+	TSharedRef<SWidget> BuildSaveAnalysisEntries(const TArray<FAssetSaveExplanationEntry>& Entries, const int32 Depth);
 
 	// File selection
 	FReply HandleBrowseOldClicked();
@@ -111,6 +119,11 @@ private:
 	const FAssetSerializationTrace* FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const;
 	bool BuildTracesForSide(FAssetSerializationDiffSide& Side);
 
+	// Analysis
+	void UpdateSaveAnalysisLayout();
+	void NavigateToDiffEntry(const FString& Key);
+	FDiffTreeNodePtr FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const;
+
 	// Dynamic UI
 	FText GetStatusText() const;
 	FText GetSummaryText() const;
@@ -129,6 +142,9 @@ private:
 	int64 GetSelectedChangedByteCount() const;
 	FText GetComparisonTitle() const;
 	FText GetChangeClassificationText() const;
+	FText GetSaveAnalysisResultText(EAssetSaveResultKind ResultKind) const;
+	FText GetExplanationPrefix(const EAssetSaveChangeClassification Classification) const;
+	FText GetConfidenceText(const EAssetExplanationConfidence Confidence) const;
 
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
@@ -147,6 +163,7 @@ private:
 	TSharedPtr<SEditableTextBox> NewFilenameTextBox;
 
 	TSharedPtr<STreeView<FDiffTreeNodePtr>> DiffTreeView;
+	TSharedPtr<SBox> SaveAnalysisBox;
 
 	TSharedPtr<FAssetSerializationDiffSession> DiffSession;
 

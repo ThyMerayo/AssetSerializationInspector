@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 
 #include "Diff/AssetPackageDiff.h"
+#include "Save/AssetSaveAnalyzer.h"
 
 class UPackage;
 class FObjectPreSaveContext;
@@ -42,6 +43,7 @@ struct FObservedAssetSave
 	TSharedPtr<FAssetPackageDocument> After;
 
 	FAssetPackageDiffResult Diff;
+	FAssetSaveAnalysis Analysis;
 
 	TSharedPtr<FAssetPackageTraceCollection> BeforeFields;
 	TSharedPtr<FAssetPackageTraceCollection> AfterFields;

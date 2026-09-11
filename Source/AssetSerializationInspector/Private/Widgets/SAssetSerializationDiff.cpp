@@ -24,6 +24,7 @@
 #include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/STreeView.h"
 
+#include "Diff/AssetByteDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Widgets/SSelectableRichText.h"
@@ -129,9 +130,7 @@ public:
 			return SNew(SHorizontalBox)
 
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SExpanderArrow, SharedThis(this)).IndentAmount(16.0f)]
-
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2.0f, 0.0f, 6.0f, 0.0f)[SNew(STextBlock).Text(GetStateSymbol()).ToolTipText(GetStateText())]
-
 				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName)];
 		}
 
@@ -272,7 +271,6 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
-
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 
 			// Tree
@@ -293,6 +291,12 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 			+ SSplitter::Slot().Value(0.50f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(true)]]
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]
+
+		// TODO: This needs to be made dynamic, so the Analysis data is loaded after it is ready
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
+				.AreaTitle(LOCTEXT("SaveAnalysis", "Save Analysis"))
+				.InitiallyCollapsed(false)
+				.BodyContent()[SAssignNew(SaveAnalysisBox, SBox)[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 
@@ -363,6 +367,152 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSelectableDetailRow(const FTex
 		+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(SEditableText).Text(Value).IsReadOnly(true)];
 }
 
+void SAssetSerializationDiff::UpdateSaveAnalysisLayout()
+{
+	if (SaveAnalysisBox.IsValid())
+	{
+		TSharedRef<SWidget> NewWidget = BuildSaveAnalysisWidget();
+		SaveAnalysisBox->SetContent(NewWidget);
+		SaveAnalysisBox->Invalidate(EInvalidateWidgetReason::Layout);
+	}
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisWidget()
+{
+	if (!DiffSession.IsValid() || !DiffSession->Analysis.IsSet())
+	{
+		return SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."));
+	}
+
+	const FAssetSaveAnalysis& Analysis = DiffSession->Analysis.GetValue();
+
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 8.0f)[BuildSaveAnalysisSummary(Analysis)]
+		+ SVerticalBox::Slot().AutoHeight()[BuildSaveAnalysisSection(LOCTEXT("MeaningfulChangesSection", "Meaningful Changes"), Analysis.SemanticChanges)]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("LayoutChangesSection", "Layout / Serialization"), Analysis.LayoutChanges)]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("UnexplainedChangesSection", "Unexplained"), Analysis.UnexplainedChanges)];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisSummary(const FAssetSaveAnalysis& Analysis)
+{
+	return SNew(SBorder).Padding(8.0f)[SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(GetSaveAnalysisResultText(Analysis.ResultKind)).Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f, 0.0f, 0.0f)[SNew(SHorizontalBox)
+
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 16.0f, 0.0f)[BuildAnalysisStat(LOCTEXT("PropertyChangesStat", "Properties"), FText::AsNumber(Analysis.PropertyChangeCount))]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 16.0f, 0.0f)[BuildAnalysisStat(LOCTEXT("ChangedBytesStat", "Changed bytes"), FText::AsNumber(Analysis.TotalChangedBytes))]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 16.0f, 0.0f)[BuildAnalysisStat(LOCTEXT("ExplainedBytesStat", "Explained"), FText::AsNumber(Analysis.ExplainedChangedBytes))]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 16.0f, 0.0f)[BuildAnalysisStat(LOCTEXT("UnexplainedBytesStat", "Unexplained"), FText::AsNumber(Analysis.UnexplainedChangedBytes))]
+			+ SHorizontalBox::Slot().AutoWidth()[BuildAnalysisStat(LOCTEXT("RelocationsStat", "Relocations"), FText::AsNumber(Analysis.RelocationCount))]]];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildAnalysisStat(const FText& Label, const FText& Value)
+{
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(Label)] + SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(Value).Font(FAppStyle::GetFontStyle("BoldFont"))];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisSection(const FText& Title, const TArray<FAssetSaveExplanationEntry>& Entries)
+{
+	return SNew(SExpandableArea).AreaTitle(Title).InitiallyCollapsed(false).BodyContent()[BuildSaveAnalysisEntries(Entries, 0)];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisEntries(const TArray<FAssetSaveExplanationEntry>& Entries, const int32 Depth)
+{
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+
+	if (Entries.IsEmpty())
+	{
+		Box->AddSlot().AutoHeight().Padding(8.0f, 4.0f)[SNew(STextBlock).Text(LOCTEXT("NoAnalysisEntries", "None"))];
+		return Box;
+	}
+
+	for (const FAssetSaveExplanationEntry& Entry : Entries)
+	{
+		Box->AddSlot().AutoHeight().Padding(8.0f + static_cast<float>(Depth) * 16.0f, 3.0f)[BuildSaveAnalysisEntry(Entry, Depth)];
+	}
+
+	return Box;
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisEntry(const FAssetSaveExplanationEntry& Entry, const int32 Depth)
+{
+	TSharedRef<SVerticalBox> Content = SNew(SVerticalBox);
+
+	Content->AddSlot().AutoHeight()[SNew(SButton)
+			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+			.ContentPadding(4.0f)
+			.OnClicked_Lambda([this, Key = Entry.Key]() {
+				NavigateToDiffEntry(Key);
+
+				return FReply::Handled();
+			})[SNew(SHorizontalBox)
+
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(STextBlock).Text(GetExplanationPrefix(Entry.Classification))]
+				+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(Entry.Title).Font(FAppStyle::GetFontStyle("BoldFont"))]
+				+ SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Text(GetConfidenceText(Entry.Confidence))]]];
+
+	if (!Entry.Description.IsEmpty())
+	{
+		Content->AddSlot().AutoHeight().Padding(20.0f, 2.0f, 0.0f, 2.0f)[SNew(STextBlock).Text(Entry.Description).AutoWrapText(true)];
+	}
+
+	if (!Entry.CauseDescription.IsEmpty())
+	{
+		Content->AddSlot().AutoHeight().Padding(
+			20.0f, 2.0f, 0.0f, 2.0f)[SNew(STextBlock).Text(FText::Format(LOCTEXT("LikelyCauseFormat", "Likely cause: {0}"), Entry.CauseDescription)).AutoWrapText(true)];
+	}
+
+	if (!Entry.Children.IsEmpty())
+	{
+		Content->AddSlot().AutoHeight()[BuildSaveAnalysisEntries(Entry.Children, Depth + 1)];
+	}
+
+	return Content;
+}
+
+void SAssetSerializationDiff::NavigateToDiffEntry(const FString& Key)
+{
+	FDiffTreeNodePtr Node = FindDiffTreeNodeByKey(RootDiffNodes, Key);
+
+	if (!Node.IsValid() || !DiffTreeView.IsValid())
+	{
+		return;
+	}
+
+	ExpandDiffAncestors(Node);
+	DiffTreeView->SetSelection(Node, ESelectInfo::Direct);
+	DiffTreeView->RequestScrollIntoView(Node);
+}
+
+SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const
+{
+	for (const FDiffTreeNodePtr& Node : Nodes)
+	{
+		if (!Node.IsValid())
+		{
+			continue;
+		}
+
+		if (Node->Diff.Key == Key)
+		{
+			return Node;
+		}
+
+		FDiffTreeNodePtr Found = FindDiffTreeNodeByKey(Node->Children, Key);
+
+		if (Found.IsValid())
+		{
+			return Found;
+		}
+	}
+
+	return nullptr;
+}
+
 bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& OutFilename)
 {
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
@@ -375,7 +525,6 @@ bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
 	TArray<FString> SelectedFiles;
-
 	const bool bSelected = DesktopPlatform->OpenFileDialog(
 		ParentWindowHandle, DialogTitle.ToString(), FPaths::ProjectContentDir(), TEXT(""), TEXT("Unreal Asset (*.uasset)|*.uasset"), EFileDialogFlags::None, SelectedFiles);
 
@@ -974,6 +1123,77 @@ FText SAssetSerializationDiff::GetSelectedNewHexPlainText() const
 	return NewHexPreview.Plain;
 }
 
+FText SAssetSerializationDiff::GetSaveAnalysisResultText(const EAssetSaveResultKind ResultKind) const
+{
+	switch (ResultKind)
+	{
+		case EAssetSaveResultKind::Identical:
+			return LOCTEXT("SaveResultIdentical", "Result: Byte-identical");
+
+		case EAssetSaveResultKind::LayoutOnly:
+			return LOCTEXT("SaveResultLayoutOnly", "Result: Layout-only changes");
+
+		case EAssetSaveResultKind::MetadataOnly:
+			return LOCTEXT("SaveResultMetadataOnly", "Result: Metadata-only changes");
+
+		case EAssetSaveResultKind::SemanticChanges:
+			return LOCTEXT("SaveResultSemantic", "Result: Semantic property changes");
+
+		case EAssetSaveResultKind::SemanticAndNativeChanges:
+			return LOCTEXT("SaveResultSemanticNative", "Result: Semantic and native/undecoded changes");
+
+		case EAssetSaveResultKind::NativeOnlyChanges:
+			return LOCTEXT("SaveResultNativeOnly", "Result: Native / undecoded changes");
+
+		default:
+			return LOCTEXT("SaveResultUnknown", "Result: Unknown changes");
+	}
+}
+
+FText SAssetSerializationDiff::GetExplanationPrefix(const EAssetSaveChangeClassification Classification) const
+{
+	switch (Classification)
+	{
+		case EAssetSaveChangeClassification::PropertyValueChanged:
+		case EAssetSaveChangeClassification::ContainerChanged:
+			return FText::FromString(TEXT("~"));
+
+		case EAssetSaveChangeClassification::PropertyBecameSerialized:
+			return FText::FromString(TEXT("+"));
+
+		case EAssetSaveChangeClassification::PropertyBecameOmitted:
+			return FText::FromString(TEXT("-"));
+
+		case EAssetSaveChangeClassification::ExportRelocated:
+			return FText::FromString(TEXT(">"));
+
+		case EAssetSaveChangeClassification::NativeOrUndecodedChanged:
+			return FText::FromString(TEXT("?"));
+
+		default:
+			return FText::FromString(TEXT("•"));
+	}
+}
+
+FText SAssetSerializationDiff::GetConfidenceText(const EAssetExplanationConfidence Confidence) const
+{
+	switch (Confidence)
+	{
+		case EAssetExplanationConfidence::Certain:
+			return LOCTEXT("ConfidenceCertain", "Certain");
+
+		case EAssetExplanationConfidence::High:
+			return LOCTEXT("ConfidenceHigh", "High confidence");
+
+		case EAssetExplanationConfidence::Inferred:
+			return LOCTEXT("ConfidenceInferred", "Inferred");
+
+		case EAssetExplanationConfidence::Unknown:
+		default:
+			return FText::GetEmpty();
+	}
+}
+
 bool SAssetSerializationDiff::IsByteDifferent(const int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const
 {
 	for (const FAssetByteDiffSpan& Span : Spans)
@@ -1175,6 +1395,8 @@ void SAssetSerializationDiff::LoadSessionIntoUI()
 	SelectFirstMeaningfulDifference();
 	StatusText =
 		DiffSession->DiffResult->bFilesIdentical ? LOCTEXT("ObservedFilesIdentical", "Saved file is byte-identical.") : LOCTEXT("ObservedSaveLoaded", "Displaying changes produced by the save.");
+
+	UpdateSaveAnalysisLayout();
 }
 
 void SAssetSerializationDiff::SelectFirstMeaningfulDifference()

@@ -235,6 +235,7 @@ static TSharedRef<FAssetSerializationDiffSession> MakeDiffSession(const FObserve
 	Session->New.Document = Save.After;
 	Session->New.Traces = Save.AfterFields;
 	Session->DiffResult = Save.Diff;
+	Session->Analysis = Save.Analysis;
 
 	return Session;
 }
