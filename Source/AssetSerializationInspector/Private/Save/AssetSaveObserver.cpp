@@ -9,6 +9,7 @@
 #include "UObject/Package.h"
 
 #include "AssetSerializationInspectorSettings.h"
+#include "Save/AssetSaveHistoryManager.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 
 FAssetSaveObserver& FAssetSaveObserver::Get()
@@ -160,6 +161,7 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 	}
 
 	TSharedPtr<FObservedAssetSave> Save = MakeShared<FObservedAssetSave>();
+	Save->SaveId = NextSaveId++;
 	Save->PackageName = PackageName;
 
 	FText Error;
@@ -193,6 +195,7 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 	Save->ChangeKind = ClassifySave(Save->Diff);
 	ObservedSaves.Add(PackageName, Save);
 	RecentSaves.Insert(Save, 0);
+	FAssetSaveHistoryManager::Get().RecordSave(Save);
 
 	if (RecentSaves.Num() > MaxRecentSaves)
 	{

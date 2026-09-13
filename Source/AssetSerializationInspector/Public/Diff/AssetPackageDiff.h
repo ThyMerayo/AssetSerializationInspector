@@ -62,10 +62,10 @@ enum class EAssetSerializedPropertyPresence : uint8
 struct FAssetPackageDiffEntry
 {
 	EAssetPackageDiffKind Kind = EAssetPackageDiffKind::File;
-
 	EAssetPackageDiffState State = EAssetPackageDiffState::Unchanged;
 
 	FString Key;
+	FString SemanticPath;
 	FText DisplayName;
 
 	FString OldValue;
@@ -97,7 +97,6 @@ struct FAssetPackageDiffEntry
 	int64 ChangedByteCount = 0;
 
 	TArray<FAssetByteDiffSpan> ChangedSpans;
-
 	TArray<FAssetPackageDiffEntry> Children;
 };
 

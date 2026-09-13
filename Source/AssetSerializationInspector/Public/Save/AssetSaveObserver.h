@@ -32,8 +32,12 @@ struct FAssetSaveSnapshot
 	bool bHadPreviousFile = false;
 };
 
+using FObservedSaveId = uint64;
+
 struct FObservedAssetSave
 {
+	FObservedSaveId SaveId = 0;
+
 	FName PackageName;
 
 	FString BeforeFilename;
@@ -79,6 +83,8 @@ private:
 	FString MakeSnapshotFilename(const FString& SourceFilename) const;
 
 private:
+	FObservedSaveId NextSaveId = 1;
+
 	FOnObservedAssetSave ObservedAssetSaveEvent;
 
 	TMap<FName, FAssetSaveSnapshot> PendingSaves;

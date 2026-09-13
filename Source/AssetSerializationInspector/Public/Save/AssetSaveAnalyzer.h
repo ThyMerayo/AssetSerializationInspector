@@ -50,6 +50,7 @@ struct FAssetSaveExplanationEntry
 	EAssetExplanationConfidence CauseConfidence = EAssetExplanationConfidence::Unknown;
 
 	FString Key;
+	FString SemanticPath;
 
 	FText Title;
 	FText Description;
@@ -62,6 +63,12 @@ struct FAssetSaveExplanationEntry
 
 	int64 OldSize = 0;
 	int64 NewSize = 0;
+
+	FString OldValue;
+	FString NewValue;
+
+	bool bHasOldValue = false;
+	bool bHasNewValue = false;
 
 	TArray<FAssetSaveExplanationEntry> Children;
 };

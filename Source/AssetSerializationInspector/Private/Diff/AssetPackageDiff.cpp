@@ -276,6 +276,7 @@ namespace
 			Entry.Kind = EAssetPackageDiffKind::Export;
 			Entry.Key = Key;
 			Entry.DisplayName = FText::FromString(Key);
+			Entry.SemanticPath = FString::Printf(TEXT("Export:%s"), *Entry.Key);
 
 			if (!OldFound)
 			{
@@ -441,6 +442,16 @@ FAssetPackageDiffResult FAssetPackageDiff::Compare(const FAssetPackageDocument& 
 	return Result;
 }
 
+static FString AppendSemanticPath(const FString& ParentPath, const FString& Segment)
+{
+	if (ParentPath.IsEmpty())
+	{
+		return Segment;
+	}
+
+	return FString::Printf(TEXT("%s/%s"), *ParentPath, *Segment);
+}
+
 void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry)
 {
 	FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
@@ -588,6 +599,8 @@ void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, con
 			PropertyEntry.bHasNewDecodedValue = true;
 		}
 
+		PropertyEntry.SemanticPath = AppendSemanticPath(PayloadEntry.SemanticPath, PropertyEntry.Key);
+
 		PayloadEntry.Children.Add(MoveTemp(PropertyEntry));
 	}
 }
@@ -635,6 +648,7 @@ static void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDi
 		FAssetPackageDiffEntry Entry;
 		Entry.Kind = EAssetPackageDiffKind::Property;
 		Entry.Key = Child.Name;
+		Entry.SemanticPath = Child.Name;
 		Entry.DisplayName = FText::FromString(Child.Name);
 		Entry.TypeName = Child.TypeName;
 

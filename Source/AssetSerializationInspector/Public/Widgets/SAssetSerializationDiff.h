@@ -3,10 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/SCompoundWidget.h"
 
 #include "Diff/AssetPackageDiff.h"
 #include "Save/AssetSaveAnalyzer.h"
+#include "Save/RepeatedSaveAnalyzer.h"
 #include "Trace/AssetSerializationTrace.h"
 
 class SCheckBox;
@@ -51,6 +53,8 @@ struct FAssetSerializationDiffSide
 	TSharedPtr<FAssetPackageTraceCollection> Traces;
 };
 
+using FObservedSaveId = uint64;
+
 struct FAssetSerializationDiffSession
 {
 	FAssetSerializationDiffSide Old;
@@ -58,6 +62,9 @@ struct FAssetSerializationDiffSession
 
 	TOptional<FAssetPackageDiffResult> DiffResult;
 	TOptional<FAssetSaveAnalysis> Analysis;
+
+	FObservedSaveId ObservedSaveId = 0;
+	FName PackageName;
 };
 
 /**
@@ -70,6 +77,9 @@ struct FAssetSerializationDiffSession
 struct FAssetPackageDiffTreeNode
 {
 	FAssetPackageDiffEntry Diff;
+
+	FString Key;
+	FString SemanticPath;
 
 	TWeakPtr<FAssetPackageDiffTreeNode> Parent;
 	TArray<TSharedPtr<FAssetPackageDiffTreeNode>> Children;
@@ -97,6 +107,9 @@ private:
 	TSharedRef<SWidget> BuildSaveAnalysisSection(const FText& Title, const TArray<FAssetSaveExplanationEntry>& Entries);
 	TSharedRef<SWidget> BuildSaveAnalysisEntry(const FAssetSaveExplanationEntry& Entry, const int32 Depth);
 	TSharedRef<SWidget> BuildSaveAnalysisEntries(const TArray<FAssetSaveExplanationEntry>& Entries, const int32 Depth);
+	TSharedRef<SWidget> BuildRepeatedSaveAnalysisWidget(FName PackageName);
+	TSharedRef<SWidget> BuildRepeatedSavePatternWidget(const FRepeatedSavePattern& Pattern);
+	TSharedRef<SWidget> BuildObservedValueTimeline(const FRepeatedSavePattern& Pattern);
 
 	// File selection
 	FReply HandleBrowseOldClicked();
@@ -124,6 +137,12 @@ private:
 	void NavigateToDiffEntry(const FString& Key);
 	FDiffTreeNodePtr FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const;
 
+	// History
+	FString MakeCompactHistoryValue(const FString& Value) const;
+	void OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath);
+	void NavigateToSemanticPath(const FString& SemanticPath);
+	FDiffTreeNodePtr FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const;
+
 	// Dynamic UI
 	FText GetStatusText() const;
 	FText GetSummaryText() const;
@@ -145,6 +164,9 @@ private:
 	FText GetSaveAnalysisResultText(EAssetSaveResultKind ResultKind) const;
 	FText GetExplanationPrefix(const EAssetSaveChangeClassification Classification) const;
 	FText GetConfidenceText(const EAssetExplanationConfidence Confidence) const;
+	FText BuildObservedValueText(const FObservedPropertySample& Sample) const;
+	FText BuildObservedValueFullText(const FObservedPropertySample& Sample) const;
+	FText GetObservedPatternText(const EObservedValuePattern Pattern) const;
 
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
@@ -164,6 +186,7 @@ private:
 
 	TSharedPtr<STreeView<FDiffTreeNodePtr>> DiffTreeView;
 	TSharedPtr<SBox> SaveAnalysisBox;
+	TSharedPtr<SBox> RepeatedSaveAnalysisBox;
 
 	TSharedPtr<FAssetSerializationDiffSession> DiffSession;
 

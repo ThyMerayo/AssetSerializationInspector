@@ -4,6 +4,16 @@
 
 #include "Diff/AssetPackageDiff.h"
 
+static FString MakeSemanticPath(const FString& ParentPath, const FAssetPackageDiffEntry& Entry)
+{
+	if (ParentPath.IsEmpty())
+	{
+		return Entry.Key;
+	}
+
+	return ParentPath + TEXT("/") + Entry.Key;
+}
+
 static int32 CountChangedChildren(const FAssetPackageDiffEntry& Entry)
 {
 	int32 Count = 0;
@@ -33,6 +43,12 @@ static void AnalyzeProperty(const FAssetPackageDiffEntry& Entry, FAssetSaveAnaly
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
+	Explanation.bHasOldValue = Entry.bHasOldDecodedValue;
+	Explanation.bHasNewValue = Entry.bHasNewDecodedValue;
+	Explanation.OldValue = Entry.OldValue;
+	Explanation.NewValue = Entry.NewValue;
+
+	Explanation.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
 
 	if (Entry.OldPresence == EAssetSerializedPropertyPresence::NotSerialized && Entry.NewPresence == EAssetSerializedPropertyPresence::Present)
 	{
@@ -89,6 +105,7 @@ static FAssetSaveExplanationEntry BuildPropertyExplanation(const FAssetPackageDi
 	Result.NewOffset = Entry.NewOffset;
 	Result.OldSize = Entry.OldSize;
 	Result.NewSize = Entry.NewSize;
+	Result.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
 
 	// classification logic...
 
@@ -146,6 +163,7 @@ static void AnalyzeExport(const FAssetPackageDiffEntry& Entry, FAssetSaveAnalysi
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
+	Explanation.SemanticPath = FString::Printf(TEXT("Export:%s"), *Entry.Key);
 
 	OutAnalysis.RelocationCount++;
 	OutAnalysis.LayoutChanges.Add(MoveTemp(Explanation));
@@ -170,6 +188,7 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
+	Explanation.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
 
 	OutAnalysis.UnexplainedChanges.Add(MoveTemp(Explanation));
 }

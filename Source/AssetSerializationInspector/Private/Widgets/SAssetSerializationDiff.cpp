@@ -27,6 +27,7 @@
 #include "Diff/AssetByteDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Save/AssetSaveHistoryManager.h"
 #include "Widgets/SSelectableRichText.h"
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationDiff"
@@ -292,11 +293,15 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(true)]]
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]
 
-		// TODO: This needs to be made dynamic, so the Analysis data is loaded after it is ready
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
 				.AreaTitle(LOCTEXT("SaveAnalysis", "Save Analysis"))
 				.InitiallyCollapsed(false)
 				.BodyContent()[SAssignNew(SaveAnalysisBox, SBox)[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
+				.AreaTitle(LOCTEXT("RepeatedSaveAnalysis", "Repeated Save Analysis"))
+				.InitiallyCollapsed(false)
+				.BodyContent()[SAssignNew(RepeatedSaveAnalysisBox, SBox)[SNew(STextBlock).Text(LOCTEXT("NoRepeatedSaveAnalysis", "No repeated save analysis is available."))]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 
@@ -374,6 +379,13 @@ void SAssetSerializationDiff::UpdateSaveAnalysisLayout()
 		TSharedRef<SWidget> NewWidget = BuildSaveAnalysisWidget();
 		SaveAnalysisBox->SetContent(NewWidget);
 		SaveAnalysisBox->Invalidate(EInvalidateWidgetReason::Layout);
+	}
+
+	if (RepeatedSaveAnalysisBox.IsValid())
+	{
+		TSharedRef<SWidget> NewWidget = BuildRepeatedSaveAnalysisWidget(DiffSession->PackageName);
+		RepeatedSaveAnalysisBox->SetContent(NewWidget);
+		RepeatedSaveAnalysisBox->Invalidate(EInvalidateWidgetReason::Layout);
 	}
 }
 
@@ -474,6 +486,76 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisEntry(const FAsset
 	return Content;
 }
 
+TSharedRef<SWidget> SAssetSerializationDiff::BuildRepeatedSaveAnalysisWidget(const FName PackageName)
+{
+	const FAssetSaveHistory* History = FAssetSaveHistoryManager::Get().FindHistory(PackageName);
+
+	if (History == nullptr || History->Entries.Num() < 2)
+	{
+		return SNew(STextBlock).Text(LOCTEXT("NotEnoughSaveHistory", "Save the monitored asset at least twice to analyze repeated behavior."));
+	}
+
+	const TArray<FRepeatedSavePattern> Patterns = FRepeatedSaveAnalyzer::Analyze(*History);
+
+	TSharedRef<SVerticalBox> Content = SNew(SVerticalBox);
+
+	Content->AddSlot().AutoHeight().Padding(0.0f, 0.0f, 0.0f,
+		8.0f)[SNew(STextBlock).Text(FText::Format(LOCTEXT("ObservedSaveCount", "{0} saves observed"), FText::AsNumber(History->Entries.Num()))).Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))];
+
+	for (const FRepeatedSavePattern& Pattern : Patterns)
+	{
+		if (Pattern.ChangeCount == 0)
+		{
+			continue;
+		}
+
+		Content->AddSlot().AutoHeight().Padding(0.0f, 2.0f)[BuildRepeatedSavePatternWidget(Pattern)];
+	}
+
+	return Content;
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildRepeatedSavePatternWidget(const FRepeatedSavePattern& Pattern)
+{
+	return SNew(SExpandableArea)
+		.AreaTitle(Pattern.DisplayName)
+		.InitiallyCollapsed(true)
+		.HeaderContent()[SNew(SHorizontalBox)
+
+			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(Pattern.DisplayName).Font(FAppStyle::GetFontStyle("BoldFont"))]
+
+			+ SHorizontalBox::Slot().AutoWidth().Padding(
+				8.0f, 0.0f)[SNew(STextBlock).Text(FText::Format(LOCTEXT("PatternFrequency", "{0} / {1} saves"), FText::AsNumber(Pattern.ChangeCount), FText::AsNumber(Pattern.ObservationCount)))]
+
+			+ SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Text(GetObservedPatternText(Pattern.ValuePattern))]]
+		.BodyContent()[BuildObservedValueTimeline(Pattern)];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildObservedValueTimeline(const FRepeatedSavePattern& Pattern)
+{
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+
+	for (const FObservedPropertySample& Sample : Pattern.Samples)
+	{
+		Box->AddSlot().AutoHeight().Padding(8.0f, 2.0f)[SNew(SButton)
+				.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+				.OnClicked_Lambda([this, SaveId = Sample.SaveId, Path = Pattern.SemanticPath]() {
+					OpenHistorySave(SaveId, Path);
+
+					return FReply::Handled();
+				})[SNew(SHorizontalBox)
+
+					+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)[SNew(STextBlock).Text(FText::FromString(Sample.Timestamp.ToString(TEXT("%H:%M:%S"))))]
+
+					+ SHorizontalBox::Slot().AutoWidth().Padding(
+						0.0f, 0.0f, 12.0f, 0.0f)[SNew(STextBlock).Text(Sample.bChanged ? LOCTEXT("ObservedChanged", "Changed") : LOCTEXT("ObservedUnchanged", "Unchanged"))]
+
+					+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(BuildObservedValueText(Sample)).ToolTipText(BuildObservedValueFullText(Sample))]]];
+	}
+
+	return Box;
+}
+
 void SAssetSerializationDiff::NavigateToDiffEntry(const FString& Key)
 {
 	FDiffTreeNodePtr Node = FindDiffTreeNodeByKey(RootDiffNodes, Key);
@@ -504,6 +586,74 @@ SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeN
 
 		FDiffTreeNodePtr Found = FindDiffTreeNodeByKey(Node->Children, Key);
 
+		if (Found.IsValid())
+		{
+			return Found;
+		}
+	}
+
+	return nullptr;
+}
+
+FString SAssetSerializationDiff::MakeCompactHistoryValue(const FString& Value) const
+{
+	constexpr int32 MaximumLength = 80;
+
+	if (Value.Len() <= MaximumLength)
+	{
+		return Value;
+	}
+
+	return Value.Left(MaximumLength - 3) + TEXT("...");
+}
+
+inline void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath)
+{
+	const TSharedPtr<const FObservedAssetSave> Save = FAssetSaveHistoryManager::Get().FindSave(SaveId);
+	if (!Save.IsValid())
+	{
+		return;
+	}
+
+	TSharedRef<FAssetSerializationDiffSession> Session = MakeDiffSession(*Save);
+	SetSession(Session);
+
+	NavigateToSemanticPath(SemanticPath);
+}
+
+inline void SAssetSerializationDiff::NavigateToSemanticPath(const FString& SemanticPath)
+{
+	if (SemanticPath.IsEmpty() || !DiffTreeView.IsValid())
+	{
+		return;
+	}
+
+	const FDiffTreeNodePtr Node = FindDiffTreeNodeBySemanticPath(RootDiffNodes, SemanticPath);
+	if (!Node.IsValid())
+	{
+		return;
+	}
+
+	ExpandDiffAncestors(Node);
+	DiffTreeView->SetSelection(Node, ESelectInfo::Direct);
+	DiffTreeView->RequestScrollIntoView(Node);
+}
+
+inline SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const
+{
+	for (const FDiffTreeNodePtr& Node : Nodes)
+	{
+		if (!Node.IsValid())
+		{
+			continue;
+		}
+
+		if (Node->Diff.SemanticPath == SemanticPath)
+		{
+			return Node;
+		}
+
+		const FDiffTreeNodePtr Found = FindDiffTreeNodeBySemanticPath(Node->Children, SemanticPath);
 		if (Found.IsValid())
 		{
 			return Found;
@@ -1189,6 +1339,67 @@ FText SAssetSerializationDiff::GetConfidenceText(const EAssetExplanationConfiden
 			return LOCTEXT("ConfidenceInferred", "Inferred");
 
 		case EAssetExplanationConfidence::Unknown:
+		default:
+			return FText::GetEmpty();
+	}
+}
+
+FText SAssetSerializationDiff::BuildObservedValueText(const FObservedPropertySample& Sample) const
+{
+	if (Sample.bChanged)
+	{
+		const FString Old = Sample.bHasOldValue ? MakeCompactHistoryValue(Sample.OldValue) : TEXT("<not serialized>");
+		const FString New = Sample.bHasNewValue ? MakeCompactHistoryValue(Sample.NewValue) : TEXT("<not serialized>");
+		return FText::FromString(Old + TEXT(" -> ") + New);
+	}
+
+	if (Sample.bHasNewValue)
+	{
+		return FText::FromString(MakeCompactHistoryValue(Sample.NewValue));
+	}
+
+	return LOCTEXT("ObservedNoValue", "<no decoded value>");
+}
+
+FText SAssetSerializationDiff::BuildObservedValueFullText(const FObservedPropertySample& Sample) const
+{
+	if (Sample.bChanged)
+	{
+		const FString Old = Sample.bHasOldValue ? Sample.OldValue : TEXT("<not serialized>");
+		const FString New = Sample.bHasNewValue ? Sample.NewValue : TEXT("<not serialized>");
+		return FText::FromString(Old + TEXT(" -> ") + New);
+	}
+
+	if (Sample.bHasNewValue)
+	{
+		return FText::FromString(Sample.NewValue);
+	}
+
+	return LOCTEXT("ObservedNoValueFull", "<no decoded value>");
+}
+
+FText SAssetSerializationDiff::GetObservedPatternText(const EObservedValuePattern Pattern) const
+{
+	switch (Pattern)
+	{
+		case EObservedValuePattern::Stable:
+			return LOCTEXT("PatternStable", "Stable");
+
+		case EObservedValuePattern::ChangedOnce:
+			return LOCTEXT("PatternChangedOnce", "Changed once");
+
+		case EObservedValuePattern::Recurring:
+			return LOCTEXT("PatternRecurring", "Recurring");
+
+		case EObservedValuePattern::ChangedEverySave:
+			return LOCTEXT("PatternEverySave", "Changed every save");
+
+		case EObservedValuePattern::ContinuouslyChanging:
+			return LOCTEXT("PatternContinuous", "Continuously changing");
+
+		case EObservedValuePattern::Alternating:
+			return LOCTEXT("PatternAlternating", "Alternating");
+
 		default:
 			return FText::GetEmpty();
 	}
