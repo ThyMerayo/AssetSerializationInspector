@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SCompoundWidget.h"
 
 #include "Diff/AssetPackageDiff.h"
@@ -186,7 +187,9 @@ private:
 
 	TSharedPtr<STreeView<FDiffTreeNodePtr>> DiffTreeView;
 	TSharedPtr<SBox> SaveAnalysisBox;
+	TSharedPtr<SScrollBox> SaveAnalysisScrollBox;
 	TSharedPtr<SBox> RepeatedSaveAnalysisBox;
+	TSharedPtr<SScrollBox> RepeatedSaveAnalysisScrollBox;
 
 	TSharedPtr<FAssetSerializationDiffSession> DiffSession;
 

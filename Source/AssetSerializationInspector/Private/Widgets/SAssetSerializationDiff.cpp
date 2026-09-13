@@ -14,7 +14,6 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
-#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
@@ -272,7 +271,7 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
-		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
+		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SBox).MinDesiredHeight(400.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 
 			// Tree
 			+ SSplitter::Slot().Value(0.50f)[SNew(SBorder)
@@ -291,17 +290,21 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 			// Details
 			+ SSplitter::Slot().Value(0.50f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(true)]]
-				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]
+				+ SSplitter::Slot().Value(0.50f)[SNew(SBorder).BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder")).Padding(8.0f)[BuildDetailsPanel(false)]]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
 				.AreaTitle(LOCTEXT("SaveAnalysis", "Save Analysis"))
 				.InitiallyCollapsed(false)
-				.BodyContent()[SAssignNew(SaveAnalysisBox, SBox)[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]
+				.BodyContent()[SAssignNew(SaveAnalysisBox, SBox)
+						.MaxDesiredHeight(
+							260.0f)[SAssignNew(SaveAnalysisScrollBox, SScrollBox) + SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
 				.AreaTitle(LOCTEXT("RepeatedSaveAnalysis", "Repeated Save Analysis"))
 				.InitiallyCollapsed(false)
-				.BodyContent()[SAssignNew(RepeatedSaveAnalysisBox, SBox)[SNew(STextBlock).Text(LOCTEXT("NoRepeatedSaveAnalysis", "No repeated save analysis is available."))]]]
+				.BodyContent()[SAssignNew(RepeatedSaveAnalysisBox, SBox)
+						.MaxDesiredHeight(260.0f)[SAssignNew(RepeatedSaveAnalysisScrollBox, SScrollBox)
+							+ SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoRepeatedSaveAnalysis", "No repeated save analysis is available."))]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 
@@ -376,16 +379,14 @@ void SAssetSerializationDiff::UpdateSaveAnalysisLayout()
 {
 	if (SaveAnalysisBox.IsValid())
 	{
-		TSharedRef<SWidget> NewWidget = BuildSaveAnalysisWidget();
-		SaveAnalysisBox->SetContent(NewWidget);
-		SaveAnalysisBox->Invalidate(EInvalidateWidgetReason::Layout);
+		SaveAnalysisScrollBox->ClearChildren();
+		SaveAnalysisScrollBox->AddSlot()[BuildSaveAnalysisWidget()];
 	}
 
 	if (RepeatedSaveAnalysisBox.IsValid())
 	{
-		TSharedRef<SWidget> NewWidget = BuildRepeatedSaveAnalysisWidget(DiffSession->PackageName);
-		RepeatedSaveAnalysisBox->SetContent(NewWidget);
-		RepeatedSaveAnalysisBox->Invalidate(EInvalidateWidgetReason::Layout);
+		RepeatedSaveAnalysisScrollBox->ClearChildren();
+		RepeatedSaveAnalysisScrollBox->AddSlot()[BuildRepeatedSaveAnalysisWidget(DiffSession->PackageName)];
 	}
 }
 
