@@ -15,21 +15,6 @@
 
 namespace
 {
-	struct FAssetSerializedPropertyTag_OLD
-	{
-		FAssetPackageNameReference Name;
-		FAssetPackageNameReference Type;
-
-		int32 Size = 0;
-		int32 ArrayIndex = 0;
-
-		int64 TagOffset = 0;
-		int64 ValueOffset = 0;
-
-		FString ResolvedName;
-		FString ResolvedType;
-	};
-
 	struct FAssetSerializationControl
 	{
 		uint32 RawExtensions = 0;
@@ -56,134 +41,6 @@ namespace
 		//
 	};
 	ENUM_CLASS_FLAGS(EAssetClassSerializationControlExtension);
-
-	bool ReadPropertyTag(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyTag_OLD& OutTag, FText& OutError)
-	{
-		OutTag = {};
-		OutTag.TagOffset = Reader.Tell();
-
-		if (!ReadPackageNameReference(Reader, OutTag.Name, Document.NameMap.Num(), OutError))
-		{
-			return false;
-		}
-
-		OutTag.ResolvedName = Document.ResolveNameReference(OutTag.Name);
-
-		// "None" terminates the tagged-property list.
-		if (OutTag.ResolvedName == TEXT("None"))
-		{
-			OutTag.ValueOffset = Reader.Tell();
-			return true;
-		}
-
-		if (!ReadPackageNameReference(Reader, OutTag.Type, Document.NameMap.Num(), OutError))
-		{
-			return false;
-		}
-
-		OutTag.ResolvedType = Document.ResolveNameReference(OutTag.Type);
-
-		if (!ReadInt<int32>(Reader, OutTag.Size))
-		{
-			OutError = LOCTEXT("PropertyTagSizeFailed", "Could not read property tag size.");
-			return false;
-		}
-
-		if (!ReadInt<int32>(Reader, OutTag.ArrayIndex))
-		{
-			OutError = LOCTEXT("PropertyTagArrayIndexFailed", "Could not read property tag array index.");
-			return false;
-		}
-
-		if (OutTag.Size < 0)
-		{
-			OutError = FText::Format(LOCTEXT("InvalidPropertyTagSize", "Property '{0}' declares an invalid size of {1}."), FText::FromString(OutTag.ResolvedName), FText::AsNumber(OutTag.Size));
-			return false;
-		}
-
-		/*
-		 * IMPORTANT:
-		 * Type-specific tag metadata comes here.
-		 *
-		 * We will decode that next.
-		 */
-
-		OutTag.ValueOffset = Reader.Tell();
-
-		return true;
-	}
-
-	bool DecodeExport_OLD(const FAssetPackageDocument& Document, const int32 ExportIndex, FAssetSerializationTrace& OutTrace)
-	{
-		if (!Document.ExportMap.IsValidIndex(ExportIndex))
-		{
-			return false;
-		}
-
-		const FAssetPackageExportEntry& Export = Document.ExportMap[ExportIndex];
-		FAssetPackagePayloadReader Reader(Document, Export.SerialOffset, Export.SerialSize);
-
-		OutTrace.ObjectPath = Document.ResolveExportPath(ExportIndex);
-		OutTrace.PayloadOffset = Export.SerialOffset;
-		OutTrace.PayloadSize = Export.SerialSize;
-		OutTrace.Root = MakeShared<FAssetSerializationTraceNode>();
-		OutTrace.Root->Kind = EAssetSerializationTraceKind::Object;
-		OutTrace.Root->Name = OutTrace.ObjectPath;
-		OutTrace.Root->Offset = 0;
-		OutTrace.Root->Size = Export.SerialSize;
-
-		const int64 ExportEnd = Export.SerialOffset + Export.SerialSize;
-		while (!Reader.IsError() && Reader.Tell() < ExportEnd)
-		{
-			FAssetSerializedPropertyTag_OLD Tag;
-			FText Error;
-
-			if (!ReadPropertyTag(Document, Reader, Tag, Error))
-			{
-				break;
-			}
-
-			if (Tag.ResolvedName == TEXT("None"))
-			{
-				break;
-			}
-
-			const int64 ValueStart = Tag.ValueOffset;
-			if (!Document.IsValidRange(ValueStart, Tag.Size))
-			{
-				break;
-			}
-
-			TSharedPtr<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
-			Node->Kind = EAssetSerializationTraceKind::Property;
-			Node->Name = Tag.ResolvedName;
-			Node->TypeName = Tag.ResolvedType;
-			Node->Offset = ValueStart - Export.SerialOffset;
-			Node->Size = Tag.Size;
-			Node->Parent = OutTrace.Root;
-			OutTrace.Root->Children.Add(Node);
-			Reader.Seek(ValueStart + Tag.Size);
-		}
-
-		const int64 Current = Reader.Tell();
-		if (Current < ExportEnd)
-		{
-			TSharedPtr<FAssetSerializationTraceNode> Unknown = MakeShared<FAssetSerializationTraceNode>();
-			Unknown->Kind = EAssetSerializationTraceKind::Native;
-			Unknown->Name = TEXT("<native / undecoded>");
-			Unknown->Offset = Current - Export.SerialOffset;
-			Unknown->Size = ExportEnd - Current;
-			Unknown->Parent = OutTrace.Root;
-
-			OutTrace.Root->Children.Add(Unknown);
-		}
-
-		/*
-		 * We may have successfully decoded some leading tagged properties
-		 * followed by native/custom data.
-		 */
-		return !OutTrace.Root->Children.IsEmpty();
-	}
 
 	void AddUnknownRange(FAssetSerializationTrace& Trace, const int64 RelativeOffset, const int64 Size, const FString& Reason)
 	{
@@ -308,9 +165,8 @@ namespace
 		FAssetSerializationControl SerializationControl;
 		FText Error;
 
-		const bool bHasClassSerializationControl = Reader.UEVer() >= EUnrealEngineObjectUE5Version::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION;
-
-		if (!ReadSerializationControl(Reader, bHasClassSerializationControl, SerializationControl, Error))
+		const bool bIsClassDefaultObject = Document.IsExportClassDefaultObject(Export);
+		if (!ReadSerializationControl(Reader, bIsClassDefaultObject, SerializationControl, Error))
 		{
 			AddUnknownRange(OutTrace, Export.ScriptSerializationStartOffset, ScriptSize, Error.ToString());
 			return true;

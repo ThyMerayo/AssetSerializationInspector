@@ -249,14 +249,14 @@ bool FAssetPackageDocument::IsCoreUObjectClassImport(const int32 ImportIndex) co
 
 	const FString ObjectName = ResolveNameReference(Import.ObjectName);
 
-	if (ObjectName != TEXT("Class"))
+	if (ObjectName != TEXT("Class") && ObjectName != TEXT("BlueprintGeneratedClass") && ObjectName != TEXT("WidgetBlueprintGeneratedClass"))
 	{
 		return false;
 	}
 
 	const FString Path = ResolveImportPath(ImportIndex);
 
-	return Path == TEXT("/Script/CoreUObject.Class");
+	return Path == TEXT("/Script/CoreUObject.Class") || Path == TEXT("/Script/Engine.BlueprintGeneratedClass") || Path == TEXT("/Script/Blueprint.WidgetBlueprintGeneratedClass");
 }
 
 bool FAssetPackageDocument::IsExportUClass(const int32 ExportIndex) const
@@ -274,4 +274,9 @@ bool FAssetPackageDocument::IsExportUClass(const int32 ExportIndex) const
 	}
 
 	return IsCoreUObjectClassImport(Export.ClassIndex.GetArrayIndex());
+}
+
+bool FAssetPackageDocument::IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const
+{
+	return (Export.ObjectFlags & RF_ClassDefaultObject) != 0;
 }

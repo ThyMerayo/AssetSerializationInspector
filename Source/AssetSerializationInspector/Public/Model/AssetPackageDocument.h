@@ -178,6 +178,7 @@ struct FAssetPackageDocument
 	bool IsValidExportPayload(const FAssetPackageExportEntry& Export) const;
 	bool IsCoreUObjectClassImport(const int32 ImportIndex) const;
 	bool IsExportUClass(const int32 ExportIndex) const;
+	bool IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const;
 
 private:
 	FString ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
