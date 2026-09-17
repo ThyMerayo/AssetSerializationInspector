@@ -134,19 +134,12 @@ struct FPropertyDiffData
 	const FAssetSerializationTrace* Trace;
 };
 
-class FAssetPackageDiff
+namespace AssetPackageDiff
 {
-public:
-	static FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces = nullptr,
+	FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces = nullptr,
 		const FAssetPackageTraceCollection* NewTraces = nullptr);
 
-	static void BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry);
-	static void BuildSemanticPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, FAssetPackageDiffEntry& PayloadEntry);
+	FString BuildTracePath(const FAssetSerializationTraceNode* Node);
 
-	static FString BuildTracePath(const FAssetSerializationTraceNode* Node);
-
-	static void AddRelevantTraceBoundaries(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 SpanOffset, const int64 SpanSize, TArray<int64>& InOutBoundaries);
-	static TArray<FAssetAttributedByteDiffSpan> SplitChangedSpanByFields(const FAssetByteDiffSpan& Span, const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace);
-
-	static void AddOrMergeChangedSpan(TArray<FAssetByteDiffSpan>& Spans, const int64 Offset, const int64 Size);
-};
+	FString AppendSemanticPath(const FString& ParentPath, const FString& Segment);
+}; // namespace AssetPackageDiff

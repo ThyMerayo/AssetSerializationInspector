@@ -4,16 +4,6 @@
 
 #include "Diff/AssetPackageDiff.h"
 
-static FString MakeSemanticPath(const FString& ParentPath, const FAssetPackageDiffEntry& Entry)
-{
-	if (ParentPath.IsEmpty())
-	{
-		return Entry.Key;
-	}
-
-	return ParentPath + TEXT("/") + Entry.Key;
-}
-
 static int32 CountChangedChildren(const FAssetPackageDiffEntry& Entry)
 {
 	int32 Count = 0;
@@ -48,7 +38,7 @@ static void AnalyzeProperty(const FAssetPackageDiffEntry& Entry, FAssetSaveAnaly
 	Explanation.OldValue = Entry.OldValue;
 	Explanation.NewValue = Entry.NewValue;
 
-	Explanation.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
+	Explanation.SemanticPath = Entry.SemanticPath;
 
 	if (Entry.OldPresence == EAssetSerializedPropertyPresence::NotSerialized && Entry.NewPresence == EAssetSerializedPropertyPresence::Present)
 	{
@@ -105,7 +95,7 @@ static FAssetSaveExplanationEntry BuildPropertyExplanation(const FAssetPackageDi
 	Result.NewOffset = Entry.NewOffset;
 	Result.OldSize = Entry.OldSize;
 	Result.NewSize = Entry.NewSize;
-	Result.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
+	Result.SemanticPath = AssetPackageDiff::AppendSemanticPath(Entry.OldFieldPath, Entry.Key);
 
 	// classification logic...
 
@@ -163,7 +153,7 @@ static void AnalyzeExport(const FAssetPackageDiffEntry& Entry, FAssetSaveAnalysi
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
-	Explanation.SemanticPath = FString::Printf(TEXT("Export:%s"), *Entry.Key);
+	Explanation.SemanticPath = Entry.Key; // FString::Printf(TEXT("Export:%s"), *Entry.Key);
 
 	OutAnalysis.RelocationCount++;
 	OutAnalysis.LayoutChanges.Add(MoveTemp(Explanation));
@@ -188,7 +178,7 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
-	Explanation.SemanticPath = MakeSemanticPath(Entry.OldFieldPath, Entry);
+	Explanation.SemanticPath = AssetPackageDiff::AppendSemanticPath(Entry.OldFieldPath, Entry.Key);
 
 	OutAnalysis.UnexplainedChanges.Add(MoveTemp(Explanation));
 }

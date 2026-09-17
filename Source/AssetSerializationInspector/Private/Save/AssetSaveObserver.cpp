@@ -186,7 +186,7 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 
 	if (Save->Before.IsValid() && Save->After.IsValid())
 	{
-		Save->Diff = FAssetPackageDiff::Compare(*Save->Before, *Save->After, Save->BeforeFields.Get(), Save->AfterFields.Get());
+		Save->Diff = AssetPackageDiff::Compare(*Save->Before, *Save->After, Save->BeforeFields.Get(), Save->AfterFields.Get());
 		Save->Analysis = FAssetSaveAnalyzer::Analyze(Save->Diff, *Save->Before, *Save->After);
 	}
 

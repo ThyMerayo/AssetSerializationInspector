@@ -608,7 +608,7 @@ FString SAssetSerializationDiff::MakeCompactHistoryValue(const FString& Value) c
 	return Value.Left(MaximumLength - 3) + TEXT("...");
 }
 
-inline void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath)
+void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath)
 {
 	const TSharedPtr<const FObservedAssetSave> Save = FAssetSaveHistoryManager::Get().FindSave(SaveId);
 	if (!Save.IsValid())
@@ -622,7 +622,7 @@ inline void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveI
 	NavigateToSemanticPath(SemanticPath);
 }
 
-inline void SAssetSerializationDiff::NavigateToSemanticPath(const FString& SemanticPath)
+void SAssetSerializationDiff::NavigateToSemanticPath(const FString& SemanticPath)
 {
 	if (SemanticPath.IsEmpty() || !DiffTreeView.IsValid())
 	{
@@ -640,7 +640,7 @@ inline void SAssetSerializationDiff::NavigateToSemanticPath(const FString& Seman
 	DiffTreeView->RequestScrollIntoView(Node);
 }
 
-inline SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const
+SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const
 {
 	for (const FDiffTreeNodePtr& Node : Nodes)
 	{
@@ -762,7 +762,7 @@ FReply SAssetSerializationDiff::HandleCompareClicked()
 	BuildTracesForSide(DiffSession->Old);
 	BuildTracesForSide(DiffSession->New);
 
-	DiffSession->DiffResult = FAssetPackageDiff::Compare(*DiffSession->Old.Document.Get(), *DiffSession->New.Document.Get(), DiffSession->Old.Traces.Get(), DiffSession->New.Traces.Get());
+	DiffSession->DiffResult = AssetPackageDiff::Compare(*DiffSession->Old.Document.Get(), *DiffSession->New.Document.Get(), DiffSession->Old.Traces.Get(), DiffSession->New.Traces.Get());
 
 	RebuildDiffTree();
 
@@ -929,14 +929,14 @@ void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
 		{
 			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(OldTrace->Root, Span.Offset, Span.Size);
 
-			Span.OldFieldPath = FAssetPackageDiff::BuildTracePath(Node);
+			Span.OldFieldPath = AssetPackageDiff::BuildTracePath(Node);
 		}
 
 		if (NewTrace != nullptr && NewTrace->Root.IsValid())
 		{
 			const FAssetSerializationTraceNode* Node = AssetSerializationTrace::FindDeepestTraceNode(NewTrace->Root, Span.Offset, Span.Size);
 
-			Span.NewFieldPath = FAssetPackageDiff::BuildTracePath(Node);
+			Span.NewFieldPath = AssetPackageDiff::BuildTracePath(Node);
 		}
 	}
 }

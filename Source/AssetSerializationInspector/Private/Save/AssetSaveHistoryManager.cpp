@@ -16,7 +16,7 @@ static void CollectPropertyStates(const FAssetPackageDiffEntry& Entry, const FSt
 
 	if (!Entry.Key.IsEmpty())
 	{
-		Path = ParentPath.IsEmpty() ? Entry.Key : ParentPath + TEXT("/") + Entry.Key;
+		Path = ParentPath.IsEmpty() ? Entry.Key : AssetPackageDiff::AppendSemanticPath(ParentPath, Entry.Key);
 	}
 
 	if (Entry.Kind == EAssetPackageDiffKind::Property)

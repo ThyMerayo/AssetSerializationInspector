@@ -247,6 +247,278 @@ namespace
 		return Traces->FindExportTrace(ExportIndex);
 	}
 
+	struct FAssetSerializedPropertyIdentity
+	{
+		FString Path;
+		FString TypeName;
+		int32 ArrayIndex = 0;
+
+		bool operator==(const FAssetSerializedPropertyIdentity& Other) const { return Path == Other.Path && TypeName == Other.TypeName && ArrayIndex == Other.ArrayIndex; }
+	};
+
+	uint32 GetTypeHash(const FAssetSerializedPropertyIdentity& Identity)
+	{
+		uint32 Hash = GetTypeHash(Identity.Path);
+		Hash = HashCombine(Hash, GetTypeHash(Identity.TypeName));
+		Hash = HashCombine(Hash, static_cast<uint32>(Identity.ArrayIndex));
+
+		return Hash;
+	}
+
+	FAssetSerializedPropertyIdentity MakePropertyIdentity(const FAssetSerializationTraceNode& Node)
+	{
+		FAssetSerializedPropertyIdentity Result;
+		Result.Path = AssetPackageDiff::BuildTracePath(&Node);
+		Result.TypeName = Node.TypeName;
+		Result.ArrayIndex = Node.ArrayIndex;
+
+		return Result;
+	}
+
+	using FPropertyNodeMap = TMap<FAssetSerializedPropertyIdentity, const FAssetSerializationTraceNode*>;
+
+	FPropertyNodeMap BuildPropertyNodeMap(const FAssetSerializationTrace* Trace)
+	{
+		FPropertyNodeMap Result;
+
+		if (Trace == nullptr || !Trace->Root.IsValid())
+		{
+			return Result;
+		}
+
+		TFunction<void(const TSharedPtr<FAssetSerializationTraceNode>&)> Visit;
+		Visit = [&](const TSharedPtr<FAssetSerializationTraceNode>& Node) {
+			if (!Node.IsValid())
+			{
+				return;
+			}
+
+			if (Node->Kind == EAssetSerializationTraceKind::Property)
+			{
+				Result.Add(MakePropertyIdentity(*Node), Node.Get());
+			}
+
+			for (const auto& Child : Node->Children)
+			{
+				Visit(Child);
+			}
+		};
+
+		Visit(Trace->Root);
+
+		return Result;
+	}
+
+	struct FPropertyDiffNodeData
+	{
+		const FAssetPackageDocument& Document;
+		const FAssetPackageExportEntry& Export;
+		const FAssetSerializationTraceNode* Node;
+	};
+
+	bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData)
+	{
+		if (OldData.Node->Size != NewData.Node->Size)
+		{
+			return false;
+		}
+
+		if (OldData.Node->Size == 0)
+		{
+			// Important for inline BoolProperty.
+			return OldData.Node->bHasInlineBoolValue == NewData.Node->bHasInlineBoolValue && OldData.Node->bInlineBoolValue == NewData.Node->bInlineBoolValue;
+		}
+
+		const int64 OldAbsoluteOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
+		const int64 NewAbsoluteOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
+
+		if (!OldData.Document.IsValidRange(OldAbsoluteOffset, OldData.Node->Size) || !NewData.Document.IsValidRange(NewAbsoluteOffset, NewData.Node->Size))
+		{
+			return false;
+		}
+
+		return FMemory::Memcmp(OldData.Document.FileData.GetData() + OldAbsoluteOffset, NewData.Document.FileData.GetData() + NewAbsoluteOffset, OldData.Node->Size) == 0;
+	}
+
+	void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent)
+	{
+		for (const FAssetDecodedValueDiff& Child : ValueDiff.Children)
+		{
+			if (Child.State == EAssetDecodedValueDiffState::Unchanged)
+			{
+				continue;
+			}
+
+			FAssetPackageDiffEntry Entry;
+			Entry.Kind = EAssetPackageDiffKind::Property;
+			Entry.Key = Child.Name;
+			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(Parent.SemanticPath, Child.Name);
+			Entry.DisplayName = FText::FromString(Child.Name);
+			Entry.TypeName = Child.TypeName;
+
+			switch (Child.State)
+			{
+				case EAssetDecodedValueDiffState::Added:
+					Entry.State = EAssetPackageDiffState::Added;
+					break;
+
+				case EAssetDecodedValueDiffState::Removed:
+					Entry.State = EAssetPackageDiffState::Removed;
+					break;
+
+				case EAssetDecodedValueDiffState::Modified:
+					Entry.State = EAssetPackageDiffState::Modified;
+					break;
+
+				case EAssetDecodedValueDiffState::Unchanged:
+					Entry.State = EAssetPackageDiffState::Unchanged;
+					break;
+			}
+
+			if (Child.bHasOldValue)
+			{
+				Entry.bHasOldDecodedValue = true;
+				Entry.OldDecodedValue = Child.OldValue;
+				Entry.OldValue = Child.OldValue;
+			}
+
+			if (Child.bHasNewValue)
+			{
+				Entry.bHasNewDecodedValue = true;
+				Entry.NewDecodedValue = Child.NewValue;
+				Entry.NewValue = Child.NewValue;
+			}
+
+			AppendDecodedValueDiffChildren(Child, Entry);
+
+			Parent.Children.Add(MoveTemp(Entry));
+		}
+	}
+
+	void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData, const FAssetSerializedPropertyIdentity& Identity, FAssetPackageDiffEntry& PayloadEntry)
+	{
+		FAssetPackageDiffEntry Entry;
+
+		Entry.Kind = EAssetPackageDiffKind::Property;
+		Entry.Key = Identity.Path;
+		Entry.DisplayName = FText::FromString(Identity.Path);
+		Entry.TypeName = Identity.TypeName;
+
+		if (OldData.Node == nullptr && NewData.Node != nullptr)
+		{
+			Entry.State = EAssetPackageDiffState::Modified;
+			Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
+			Entry.NewPresence = EAssetSerializedPropertyPresence::Present;
+			Entry.bHasOldDecodedValue = true;
+			Entry.OldDecodedValue = TEXT("<not serialized; likely default>");
+
+			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
+			if (NewDecoded.IsSuccess())
+			{
+				Entry.bHasOldDecodedValue = true;
+				Entry.NewDecodedValue = NewDecoded.Value;
+				Entry.NewValue = NewDecoded.Value;
+			}
+
+			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
+			PayloadEntry.Children.Add(MoveTemp(Entry));
+
+			return;
+		}
+
+		if (OldData.Node != nullptr && NewData.Node == nullptr)
+		{
+			Entry.State = EAssetPackageDiffState::Modified;
+			Entry.OldPresence = EAssetSerializedPropertyPresence::Present;
+			Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
+			Entry.bHasNewDecodedValue = true;
+			Entry.NewDecodedValue = TEXT("<not serialized; likely default>");
+
+			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
+			if (OldDecoded.IsSuccess())
+			{
+				Entry.bHasOldDecodedValue = true;
+				Entry.OldDecodedValue = OldDecoded.Value;
+				Entry.OldValue = OldDecoded.Value;
+			}
+
+			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
+			PayloadEntry.Children.Add(MoveTemp(Entry));
+
+			return;
+		}
+
+		if (OldData.Node == nullptr || NewData.Node == nullptr)
+		{
+			return;
+		}
+
+		if (ArePropertyBytesIdentical(OldData, NewData))
+		{
+			return;
+		}
+
+		Entry.State = EAssetPackageDiffState::Modified;
+		Entry.OldOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
+		Entry.NewOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
+		Entry.OldSize = OldData.Node->Size;
+		Entry.NewSize = NewData.Node->Size;
+		Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
+
+		const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
+		if (OldDecoded.IsSuccess())
+		{
+			Entry.bHasOldDecodedValue = true;
+			Entry.OldDecodedValue = OldDecoded.Value;
+			Entry.OldValue = OldDecoded.Value;
+		}
+		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
+		if (NewDecoded.IsSuccess())
+		{
+			Entry.bHasNewDecodedValue = true;
+			Entry.NewDecodedValue = NewDecoded.Value;
+			Entry.NewValue = NewDecoded.Value;
+		}
+
+		const FAssetDecodedPropertyValue* OldPtr = OldDecoded.IsSuccess() ? &OldDecoded : nullptr;
+		const FAssetDecodedPropertyValue* NewPtr = NewDecoded.IsSuccess() ? &NewDecoded : nullptr;
+		if (OldPtr != nullptr || NewPtr != nullptr)
+		{
+			const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);
+			AppendDecodedValueDiffChildren(ValueDiff, Entry);
+		}
+
+		PayloadEntry.Children.Add(MoveTemp(Entry));
+	}
+
+	void BuildSemanticPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, FAssetPackageDiffEntry& PayloadEntry)
+	{
+		const FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
+		const FPropertyNodeMap NewProperties = BuildPropertyNodeMap(NewData.Trace);
+
+		TSet<FAssetSerializedPropertyIdentity> Keys;
+
+		for (const auto& Pair : OldProperties)
+		{
+			Keys.Add(Pair.Key);
+		}
+
+		for (const auto& Pair : NewProperties)
+		{
+			Keys.Add(Pair.Key);
+		}
+
+		for (const FAssetSerializedPropertyIdentity& Key : Keys)
+		{
+			const FAssetSerializationTraceNode* const* OldFound = OldProperties.Find(Key);
+			const FAssetSerializationTraceNode* const* NewFound = NewProperties.Find(Key);
+			const FAssetSerializationTraceNode* OldNode = OldFound != nullptr ? *OldFound : nullptr;
+			const FAssetSerializationTraceNode* NewNode = NewFound != nullptr ? *NewFound : nullptr;
+
+			BuildOnePropertyDiff({ OldData.Document, OldData.Export, OldNode }, { NewData.Document, NewData.Export, NewNode }, Key, PayloadEntry);
+		}
+	}
+
 	void CompareExports(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces,
 		const FAssetPackageTraceCollection* NewTraces, FAssetPackageDiffResult& Result)
 	{
@@ -276,7 +548,7 @@ namespace
 			Entry.Kind = EAssetPackageDiffKind::Export;
 			Entry.Key = Key;
 			Entry.DisplayName = FText::FromString(Key);
-			Entry.SemanticPath = FString::Printf(TEXT("Export:%s"), *Entry.Key);
+			Entry.SemanticPath = Entry.Key; // FString::Printf(TEXT("Export:%s"), *Entry.Key);
 
 			if (!OldFound)
 			{
@@ -322,6 +594,7 @@ namespace
 				Payload.NewValue = NewPayloadHash;
 				Payload.OldExportIndex = A.Index;
 				Payload.NewExportIndex = B.Index;
+				Payload.SemanticPath = Entry.SemanticPath;
 
 				if (OldPayloadHash != NewPayloadHash || A.SerialSize != B.SerialSize)
 				{
@@ -334,8 +607,7 @@ namespace
 
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
-					// 					FAssetPackageDiff::BuildPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload.ChangedSpans, Payload);
-					FAssetPackageDiff::BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
+					BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
 				{
@@ -355,589 +627,93 @@ namespace
 		Result.Entries.Add(MoveTemp(Root));
 	}
 
-	struct FAssetSerializedPropertyIdentity
+	void AddRelevantTraceBoundaries(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 SpanOffset, const int64 SpanSize, TArray<int64>& InOutBoundaries)
 	{
-		FString Path;
-		FString TypeName;
-		int32 ArrayIndex = 0;
+		if (!Root.IsValid())
+		{
+			return;
+		}
 
-		bool operator==(const FAssetSerializedPropertyIdentity& Other) const { return Path == Other.Path && TypeName == Other.TypeName && ArrayIndex == Other.ArrayIndex; }
-	};
+		TArray<const FAssetSerializationTraceNode*> Nodes;
+		AssetSerializationTrace::FindDeepestOverlappingFieldNodes(Root, SpanOffset, SpanSize, Nodes);
 
-	uint32 GetTypeHash(const FAssetSerializedPropertyIdentity& Identity)
-	{
-		uint32 Hash = GetTypeHash(Identity.Path);
-		Hash = HashCombine(Hash, GetTypeHash(Identity.TypeName));
-		Hash = HashCombine(Hash, static_cast<uint32>(Identity.ArrayIndex));
+		const int64 SpanEnd = SpanOffset + SpanSize;
 
-		return Hash;
+		for (const FAssetSerializationTraceNode* Node : Nodes)
+		{
+			const int64 Start = FMath::Max(Node->Offset, SpanOffset);
+			const int64 End = FMath::Min(Node->Offset + Node->Size, SpanEnd);
+
+			if (Start < End)
+			{
+				InOutBoundaries.Add(Start);
+				InOutBoundaries.Add(End);
+			}
+		}
 	}
 
-	FAssetSerializedPropertyIdentity MakePropertyIdentity(const FAssetSerializationTraceNode& Node)
+} // namespace
+
+namespace AssetPackageDiff
+{
+	FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces /*= nullptr*/,
+		const FAssetPackageTraceCollection* NewTraces /*= nullptr*/)
 	{
-		FAssetSerializedPropertyIdentity Result;
-		Result.Path = FAssetPackageDiff::BuildTracePath(&Node);
-		Result.TypeName = Node.TypeName;
-		Result.ArrayIndex = Node.ArrayIndex;
+		FAssetPackageDiffResult Result;
 
-		return Result;
-	}
+		Result.OldFilename = OldDocument.Filename;
+		Result.NewFilename = NewDocument.Filename;
+		Result.OldFileHash = HashDocument(OldDocument);
+		Result.NewFileHash = HashDocument(NewDocument);
+		Result.bFilesIdentical = OldDocument.GetFileSize() == NewDocument.GetFileSize() && Result.OldFileHash == Result.NewFileHash;
 
-	using FPropertyNodeMap = TMap<FAssetSerializedPropertyIdentity, const FAssetSerializationTraceNode*>;
-
-	FPropertyNodeMap BuildPropertyNodeMap(const FAssetSerializationTrace* Trace)
-	{
-		FPropertyNodeMap Result;
-
-		if (Trace == nullptr || !Trace->Root.IsValid())
+		if (Result.bFilesIdentical)
 		{
 			return Result;
 		}
 
-		TFunction<void(const TSharedPtr<FAssetSerializationTraceNode>&)> Visit;
-		Visit = [&](const TSharedPtr<FAssetSerializationTraceNode>& Node) {
-			if (!Node.IsValid())
-			{
-				return;
-			}
-
-			if (Node->Kind == EAssetSerializationTraceKind::Property)
-			{
-				Result.Add(MakePropertyIdentity(*Node), Node.Get());
-			}
-
-			for (const auto& Child : Node->Children)
-			{
-				Visit(Child);
-			}
-		};
-
-		Visit(Trace->Root);
+		CompareSummary(OldDocument, NewDocument, Result);
+		CompareNames(OldDocument, NewDocument, Result);
+		CompareImports(OldDocument, NewDocument, Result);
+		CompareExports(OldDocument, NewDocument, OldTraces, NewTraces, Result);
 
 		return Result;
 	}
-} // namespace
 
-FAssetPackageDiffResult FAssetPackageDiff::Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces /*= nullptr*/,
-	const FAssetPackageTraceCollection* NewTraces /*= nullptr*/)
-{
-	FAssetPackageDiffResult Result;
-
-	Result.OldFilename = OldDocument.Filename;
-	Result.NewFilename = NewDocument.Filename;
-	Result.OldFileHash = HashDocument(OldDocument);
-	Result.NewFileHash = HashDocument(NewDocument);
-	Result.bFilesIdentical = OldDocument.GetFileSize() == NewDocument.GetFileSize() && Result.OldFileHash == Result.NewFileHash;
-
-	if (Result.bFilesIdentical)
+	FString BuildTracePath(const FAssetSerializationTraceNode* Node)
 	{
-		return Result;
-	}
-
-	CompareSummary(OldDocument, NewDocument, Result);
-	CompareNames(OldDocument, NewDocument, Result);
-	CompareImports(OldDocument, NewDocument, Result);
-	CompareExports(OldDocument, NewDocument, OldTraces, NewTraces, Result);
-
-	return Result;
-}
-
-static FString AppendSemanticPath(const FString& ParentPath, const FString& Segment)
-{
-	if (ParentPath.IsEmpty())
-	{
-		return Segment;
-	}
-
-	return FString::Printf(TEXT("%s/%s"), *ParentPath, *Segment);
-}
-
-void FAssetPackageDiff::BuildPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, const TArray<FAssetByteDiffSpan>& ChangedSpans, FAssetPackageDiffEntry& PayloadEntry)
-{
-	FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
-	FPropertyNodeMap NewProperties = BuildPropertyNodeMap(NewData.Trace);
-	TSet<FAssetSerializedPropertyIdentity> PropertyKeys;
-	for (const auto& Pair : OldProperties)
-	{
-		PropertyKeys.Add(Pair.Key);
-	}
-	for (const auto& Pair : NewProperties)
-	{
-		PropertyKeys.Add(Pair.Key);
-	}
-
-	TMap<FPropertyDiffKey, FPropertyDiffAccumulator> Accumulators;
-
-	for (const FAssetByteDiffSpan& Span : ChangedSpans)
-	{
-		const TArray<FAssetAttributedByteDiffSpan> Fragments = SplitChangedSpanByFields(Span, OldData.Trace, NewData.Trace);
-
-		for (const FAssetAttributedByteDiffSpan& Fragment : Fragments)
+		if (Node == nullptr)
 		{
-			const FString OldPath = BuildTracePath(Fragment.OldNode);
-			const FString NewPath = BuildTracePath(Fragment.NewNode);
-
-			FPropertyDiffKey Key;
-			Key.OldPath = OldPath;
-			Key.NewPath = NewPath;
-
-			FPropertyDiffAccumulator& Accumulator = Accumulators.FindOrAdd(Key);
-			Accumulator.OldNode = Fragment.OldNode;
-			Accumulator.NewNode = Fragment.NewNode;
-			Accumulator.ChangedByteCount += Fragment.Size;
-
-			FAssetByteDiffSpan SplitSpan;
-			SplitSpan.Offset = Fragment.Offset;
-			SplitSpan.Size = Fragment.Size;
-
-			AddOrMergeChangedSpan(Accumulator.Spans, Fragment.Offset, Fragment.Size);
+			return FString();
 		}
-	}
 
-	struct FSortedPropertyAccumulator
-	{
-		FPropertyDiffKey Key;
-		FPropertyDiffAccumulator Value;
+		TArray<FString> Parts;
 
-		int64 GetFirstOffset() const { return Value.Spans.IsEmpty() ? MAX_int64 : Value.Spans[0].Offset; }
-	};
+		const FAssetSerializationTraceNode* Current = Node;
 
-	TArray<FSortedPropertyAccumulator> Sorted;
-	for (TPair<FPropertyDiffKey, FPropertyDiffAccumulator>& Pair : Accumulators)
-	{
-		Sorted.Emplace(Pair.Key, Pair.Value);
-	}
-	Sorted.Sort([](const FSortedPropertyAccumulator& A, const FSortedPropertyAccumulator& B) { return A.GetFirstOffset() < B.GetFirstOffset(); });
-
-	for (FSortedPropertyAccumulator& Pair : Sorted)
-	{
-		const FPropertyDiffKey& Key = Pair.Key;
-		FPropertyDiffAccumulator& Accumulator = Pair.Value;
-
-		FAssetPackageDiffEntry PropertyEntry;
-
-		const bool bOldKnown = Accumulator.OldNode != nullptr;
-		const bool bNewKnown = Accumulator.NewNode != nullptr;
-
-		PropertyEntry.OldFieldPath = Key.OldPath;
-		PropertyEntry.NewFieldPath = Key.NewPath;
-
-		if (!bOldKnown && !bNewKnown)
+		while (Current != nullptr && Current->Kind != EAssetSerializationTraceKind::Object)
 		{
-			PropertyEntry.Kind = EAssetPackageDiffKind::UnknownPayloadRange;
-			PropertyEntry.Key = TEXT("<native / undecoded>");
-			PropertyEntry.DisplayName = NSLOCTEXT("AssetPackageDiff", "UndecodedPayloadRange", "<native / undecoded>");
-		}
-		else
-		{
-			PropertyEntry.Kind = EAssetPackageDiffKind::Property;
-			const FString DisplayPath = !Key.NewPath.IsEmpty() ? Key.NewPath : Key.OldPath;
-			PropertyEntry.Key = DisplayPath;
-
-			if (Key.OldPath == Key.NewPath)
+			if (!Current->Name.IsEmpty())
 			{
-				PropertyEntry.DisplayName = FText::FromString(Key.NewPath);
+				Parts.Add(Current->Name);
 			}
-			else
-			{
-				PropertyEntry.DisplayName = FText::Format(NSLOCTEXT("AssetPackageDiff", "FieldOwnershipChanged", "{0} -> {1}"),
-					FText::FromString(Key.OldPath.IsEmpty() ? TEXT("<unknown>") : Key.OldPath), FText::FromString(Key.NewPath.IsEmpty() ? TEXT("<unknown>") : Key.NewPath));
-			}
+
+			const TSharedPtr<FAssetSerializationTraceNode> Parent = Current->Parent.Pin();
+			Current = Parent.Get();
 		}
 
-		PropertyEntry.State = EAssetPackageDiffState::Modified;
-		PropertyEntry.ChangedByteCount = Accumulator.ChangedByteCount;
-		PropertyEntry.ChangedSpans = MoveTemp(Accumulator.Spans);
+		Algo::Reverse(Parts);
 
-		if (bNewKnown)
+		return FString::Join(Parts, TEXT("."));
+	}
+
+	FString AppendSemanticPath(const FString& ParentPath, const FString& Segment)
+	{
+		if (ParentPath.IsEmpty())
 		{
-			PropertyEntry.TypeName = Accumulator.NewNode->TypeName;
-		}
-		else if (bOldKnown)
-		{
-			PropertyEntry.TypeName = Accumulator.OldNode->TypeName;
+			return Segment;
 		}
 
-		if (bOldKnown)
-		{
-			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *Accumulator.OldNode, OldData.Export.SerialOffset);
-
-			if (OldDecoded.IsSuccess())
-			{
-				PropertyEntry.bHasOldDecodedValue = true;
-				PropertyEntry.OldDecodedValue = OldDecoded.Value;
-				PropertyEntry.OldValue = OldDecoded.Value;
-			}
-		}
-
-		if (bNewKnown)
-		{
-			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *Accumulator.NewNode, NewData.Export.SerialOffset);
-
-			if (NewDecoded.IsSuccess())
-			{
-				PropertyEntry.bHasNewDecodedValue = true;
-				PropertyEntry.NewDecodedValue = NewDecoded.Value;
-				PropertyEntry.NewValue = NewDecoded.Value;
-			}
-		}
-
-		// Defaul detection
-		if (!bOldKnown && bNewKnown)
-		{
-			PropertyEntry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
-			PropertyEntry.NewPresence = EAssetSerializedPropertyPresence::Present;
-			PropertyEntry.OldDecodedValue = TEXT("<not serialized; likely default>");
-			PropertyEntry.bHasOldDecodedValue = true;
-		}
-
-		if (bOldKnown && !bNewKnown)
-		{
-			PropertyEntry.OldPresence = EAssetSerializedPropertyPresence::Present;
-			PropertyEntry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
-			PropertyEntry.NewDecodedValue = TEXT("<not serialized; likely default>");
-			PropertyEntry.bHasNewDecodedValue = true;
-		}
-
-		PropertyEntry.SemanticPath = AppendSemanticPath(PayloadEntry.SemanticPath, PropertyEntry.Key);
-
-		PayloadEntry.Children.Add(MoveTemp(PropertyEntry));
+		return FString::Printf(TEXT("%s/%s"), *ParentPath, *Segment);
 	}
-}
-
-struct FPropertyDiffNodeData
-{
-	const FAssetPackageDocument& Document;
-	const FAssetPackageExportEntry& Export;
-	const FAssetSerializationTraceNode* Node;
-};
-
-static bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData)
-{
-	if (OldData.Node->Size != NewData.Node->Size)
-	{
-		return false;
-	}
-
-	if (OldData.Node->Size == 0)
-	{
-		// Important for inline BoolProperty.
-		return OldData.Node->bHasInlineBoolValue == NewData.Node->bHasInlineBoolValue && OldData.Node->bInlineBoolValue == NewData.Node->bInlineBoolValue;
-	}
-
-	const int64 OldAbsoluteOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
-	const int64 NewAbsoluteOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
-
-	if (!OldData.Document.IsValidRange(OldAbsoluteOffset, OldData.Node->Size) || !NewData.Document.IsValidRange(NewAbsoluteOffset, NewData.Node->Size))
-	{
-		return false;
-	}
-
-	return FMemory::Memcmp(OldData.Document.FileData.GetData() + OldAbsoluteOffset, NewData.Document.FileData.GetData() + NewAbsoluteOffset, OldData.Node->Size) == 0;
-}
-
-static void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent)
-{
-	for (const FAssetDecodedValueDiff& Child : ValueDiff.Children)
-	{
-		if (Child.State == EAssetDecodedValueDiffState::Unchanged)
-		{
-			continue;
-		}
-
-		FAssetPackageDiffEntry Entry;
-		Entry.Kind = EAssetPackageDiffKind::Property;
-		Entry.Key = Child.Name;
-		Entry.SemanticPath = Child.Name;
-		Entry.DisplayName = FText::FromString(Child.Name);
-		Entry.TypeName = Child.TypeName;
-
-		switch (Child.State)
-		{
-			case EAssetDecodedValueDiffState::Added:
-				Entry.State = EAssetPackageDiffState::Added;
-				break;
-
-			case EAssetDecodedValueDiffState::Removed:
-				Entry.State = EAssetPackageDiffState::Removed;
-				break;
-
-			case EAssetDecodedValueDiffState::Modified:
-				Entry.State = EAssetPackageDiffState::Modified;
-				break;
-
-			case EAssetDecodedValueDiffState::Unchanged:
-				Entry.State = EAssetPackageDiffState::Unchanged;
-				break;
-		}
-
-		if (Child.bHasOldValue)
-		{
-			Entry.bHasOldDecodedValue = true;
-			Entry.OldDecodedValue = Child.OldValue;
-			Entry.OldValue = Child.OldValue;
-		}
-
-		if (Child.bHasNewValue)
-		{
-			Entry.bHasNewDecodedValue = true;
-			Entry.NewDecodedValue = Child.NewValue;
-			Entry.NewValue = Child.NewValue;
-		}
-
-		AppendDecodedValueDiffChildren(Child, Entry);
-
-		Parent.Children.Add(MoveTemp(Entry));
-	}
-}
-
-static void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData, const FAssetSerializedPropertyIdentity& Identity, FAssetPackageDiffEntry& PayloadEntry)
-{
-	FAssetPackageDiffEntry Entry;
-
-	Entry.Kind = EAssetPackageDiffKind::Property;
-	Entry.Key = Identity.Path;
-	Entry.DisplayName = FText::FromString(Identity.Path);
-	Entry.TypeName = Identity.TypeName;
-
-	if (OldData.Node == nullptr && NewData.Node != nullptr)
-	{
-		Entry.State = EAssetPackageDiffState::Modified;
-		Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
-		Entry.NewPresence = EAssetSerializedPropertyPresence::Present;
-		Entry.bHasOldDecodedValue = true;
-		Entry.OldDecodedValue = TEXT("<not serialized; likely default>");
-
-		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-		if (NewDecoded.IsSuccess())
-		{
-			Entry.bHasOldDecodedValue = true;
-			Entry.NewDecodedValue = NewDecoded.Value;
-			Entry.NewValue = NewDecoded.Value;
-		}
-
-		PayloadEntry.Children.Add(MoveTemp(Entry));
-
-		return;
-	}
-
-	if (OldData.Node != nullptr && NewData.Node == nullptr)
-	{
-		Entry.State = EAssetPackageDiffState::Modified;
-		Entry.OldPresence = EAssetSerializedPropertyPresence::Present;
-		Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
-		Entry.bHasNewDecodedValue = true;
-		Entry.NewDecodedValue = TEXT("<not serialized; likely default>");
-
-		const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-		if (OldDecoded.IsSuccess())
-		{
-			Entry.bHasOldDecodedValue = true;
-			Entry.OldDecodedValue = OldDecoded.Value;
-			Entry.OldValue = OldDecoded.Value;
-		}
-
-		PayloadEntry.Children.Add(MoveTemp(Entry));
-
-		return;
-	}
-
-	if (OldData.Node == nullptr || NewData.Node == nullptr)
-	{
-		return;
-	}
-
-	if (ArePropertyBytesIdentical(OldData, NewData))
-	{
-		return;
-	}
-
-	Entry.State = EAssetPackageDiffState::Modified;
-	Entry.OldOffset = OldData.Export.SerialOffset + OldData.Node->Offset;
-	Entry.NewOffset = NewData.Export.SerialOffset + NewData.Node->Offset;
-	Entry.OldSize = OldData.Node->Size;
-	Entry.NewSize = NewData.Node->Size;
-
-	const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-	if (OldDecoded.IsSuccess())
-	{
-		Entry.bHasOldDecodedValue = true;
-		Entry.OldDecodedValue = OldDecoded.Value;
-		Entry.OldValue = OldDecoded.Value;
-	}
-	const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-	if (NewDecoded.IsSuccess())
-	{
-		Entry.bHasNewDecodedValue = true;
-		Entry.NewDecodedValue = NewDecoded.Value;
-		Entry.NewValue = NewDecoded.Value;
-	}
-
-	const FAssetDecodedPropertyValue* OldPtr = OldDecoded.IsSuccess() ? &OldDecoded : nullptr;
-	const FAssetDecodedPropertyValue* NewPtr = NewDecoded.IsSuccess() ? &NewDecoded : nullptr;
-	if (OldPtr != nullptr || NewPtr != nullptr)
-	{
-		const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);
-		AppendDecodedValueDiffChildren(ValueDiff, Entry);
-	}
-
-	PayloadEntry.Children.Add(MoveTemp(Entry));
-}
-
-void FAssetPackageDiff::BuildSemanticPropertyDiffs(const FPropertyDiffData& OldData, const FPropertyDiffData& NewData, FAssetPackageDiffEntry& PayloadEntry)
-{
-	const FPropertyNodeMap OldProperties = BuildPropertyNodeMap(OldData.Trace);
-	const FPropertyNodeMap NewProperties = BuildPropertyNodeMap(NewData.Trace);
-
-	TSet<FAssetSerializedPropertyIdentity> Keys;
-
-	for (const auto& Pair : OldProperties)
-	{
-		Keys.Add(Pair.Key);
-	}
-
-	for (const auto& Pair : NewProperties)
-	{
-		Keys.Add(Pair.Key);
-	}
-
-	for (const FAssetSerializedPropertyIdentity& Key : Keys)
-	{
-		const FAssetSerializationTraceNode* const* OldFound = OldProperties.Find(Key);
-		const FAssetSerializationTraceNode* const* NewFound = NewProperties.Find(Key);
-		const FAssetSerializationTraceNode* OldNode = OldFound != nullptr ? *OldFound : nullptr;
-		const FAssetSerializationTraceNode* NewNode = NewFound != nullptr ? *NewFound : nullptr;
-
-		BuildOnePropertyDiff({ OldData.Document, OldData.Export, OldNode }, { NewData.Document, NewData.Export, NewNode }, Key, PayloadEntry);
-	}
-}
-
-FString FAssetPackageDiff::BuildTracePath(const FAssetSerializationTraceNode* Node)
-{
-	if (Node == nullptr)
-	{
-		return FString();
-	}
-
-	TArray<FString> Parts;
-
-	const FAssetSerializationTraceNode* Current = Node;
-
-	while (Current != nullptr)
-	{
-		if (!Current->Name.IsEmpty())
-		{
-			Parts.Add(Current->Name);
-		}
-
-		const TSharedPtr<FAssetSerializationTraceNode> Parent = Current->Parent.Pin();
-
-		Current = Parent.Get();
-	}
-
-	Algo::Reverse(Parts);
-
-	return FString::Join(Parts, TEXT("."));
-}
-
-void FAssetPackageDiff::AddRelevantTraceBoundaries(const TSharedPtr<FAssetSerializationTraceNode>& Root, const int64 SpanOffset, const int64 SpanSize, TArray<int64>& InOutBoundaries)
-{
-	if (!Root.IsValid())
-	{
-		return;
-	}
-
-	TArray<const FAssetSerializationTraceNode*> Nodes;
-	AssetSerializationTrace::FindDeepestOverlappingFieldNodes(Root, SpanOffset, SpanSize, Nodes);
-
-	const int64 SpanEnd = SpanOffset + SpanSize;
-
-	for (const FAssetSerializationTraceNode* Node : Nodes)
-	{
-		const int64 Start = FMath::Max(Node->Offset, SpanOffset);
-		const int64 End = FMath::Min(Node->Offset + Node->Size, SpanEnd);
-
-		if (Start < End)
-		{
-			InOutBoundaries.Add(Start);
-			InOutBoundaries.Add(End);
-		}
-	}
-}
-
-TArray<FAssetAttributedByteDiffSpan> FAssetPackageDiff::SplitChangedSpanByFields(const FAssetByteDiffSpan& Span, const FAssetSerializationTrace* OldTrace, const FAssetSerializationTrace* NewTrace)
-{
-	TArray<int64> Boundaries;
-	Boundaries.Add(Span.Offset);
-	Boundaries.Add(Span.Offset + Span.Size);
-
-	if (OldTrace != nullptr)
-	{
-		AddRelevantTraceBoundaries(OldTrace->Root, Span.Offset, Span.Size, Boundaries);
-	}
-
-	if (NewTrace != nullptr)
-	{
-		AddRelevantTraceBoundaries(NewTrace->Root, Span.Offset, Span.Size, Boundaries);
-	}
-
-	Boundaries.Sort();
-	Boundaries.SetNum(Algo::Unique(Boundaries));
-
-	TArray<FAssetAttributedByteDiffSpan> Result;
-
-	for (int32 Index = 0; Index + 1 < Boundaries.Num(); ++Index)
-	{
-		const int64 Start = Boundaries[Index];
-		const int64 End = Boundaries[Index + 1];
-
-		if (End <= Start)
-		{
-			continue;
-		}
-
-		FAssetAttributedByteDiffSpan Fragment;
-
-		Fragment.Offset = Start;
-		Fragment.Size = End - Start;
-
-		if (OldTrace != nullptr && OldTrace->Root.IsValid())
-		{
-			Fragment.OldNode = AssetSerializationTrace::FindDeepestFieldTraceNode(OldTrace->Root, Fragment.Offset, Fragment.Size);
-		}
-
-		if (NewTrace != nullptr && NewTrace->Root.IsValid())
-		{
-			Fragment.NewNode = AssetSerializationTrace::FindDeepestFieldTraceNode(NewTrace->Root, Fragment.Offset, Fragment.Size);
-		}
-
-		Result.Add(MoveTemp(Fragment));
-	}
-
-	return Result;
-}
-
-void FAssetPackageDiff::AddOrMergeChangedSpan(TArray<FAssetByteDiffSpan>& Spans, const int64 Offset, const int64 Size)
-{
-	if (Size <= 0)
-	{
-		return;
-	}
-
-	if (!Spans.IsEmpty())
-	{
-		FAssetByteDiffSpan& Previous = Spans.Last();
-
-		if (Previous.Offset + Previous.Size == Offset)
-		{
-			Previous.Size += Size;
-			return;
-		}
-	}
-
-	FAssetByteDiffSpan Span;
-	Span.Offset = Offset;
-	Span.Size = Size;
-
-	Spans.Add(Span);
-}
+} // namespace AssetPackageDiff
