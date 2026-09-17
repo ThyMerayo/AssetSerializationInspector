@@ -194,6 +194,7 @@ static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	return true;
 }
 
+// Currently not used, left in case there are scenarios in which using the DecodeTagStruct does not work for FTransform
 static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	const int64 Start = Reader.Tell();
@@ -387,18 +388,8 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 			OutValue.Error = FString::Printf(TEXT("Could not decode array element %d."), Index);
 			return false;
 		}
-		else
-		{
-			switch (Element.Kind)
-			{
-				case EAssetDecodedValueKind::Scalar:
-					OutValue.SemanticKey = Element.Value;
-					break;
-				case EAssetDecodedValueKind::Struct:
-					OutValue.SemanticKey = InnerType.Parameters[0].Name;
-					break;
-			}
-		}
+
+		Element.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Element);
 
 		OutValue.Children.Add(MoveTemp(Element));
 	}
@@ -773,7 +764,6 @@ static bool DecodeMapFromReader(const FAssetPropertyDecodeContext& Context, FAss
 		{
 			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 			OutValue.Error = FString::Printf(TEXT("Could not decode MapProperty entry %d."), Index);
-
 			return false;
 		}
 

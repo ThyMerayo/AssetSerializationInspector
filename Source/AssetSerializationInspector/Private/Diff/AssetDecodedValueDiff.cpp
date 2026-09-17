@@ -220,7 +220,10 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 
 	while (OldIndex < OldCount || NewIndex < NewCount)
 	{
-		if (OldIndex < OldCount && NewIndex < NewCount && AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex]))
+		if (OldIndex < OldCount && NewIndex < NewCount
+			&& (AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex])
+				// Cover the case of arrays of structs. Not a genuine LCS match, but same position, same type
+				|| (OldChildren[OldIndex].TypeName == NewChildren[NewIndex].TypeName && !AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex]))))
 		{
 			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], &NewChildren[NewIndex]);
 			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
