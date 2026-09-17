@@ -433,7 +433,7 @@ The intent is to make it possible to move from "the file changed" to a specific 
 
 ### Inspecting an asset file
 
-Open the Asset Serialization Inspector window and select a `.uasset`.
+Open the Asset Serialization Inspector window (Window -> Asset Serialization Inspector) and select a `.uasset`.
 
 The package tree exposes decoded regions and allows navigating between related Name Map, Import Map, and Export Map entries.
 
