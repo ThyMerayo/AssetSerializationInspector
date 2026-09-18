@@ -220,10 +220,23 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 
 	while (OldIndex < OldCount || NewIndex < NewCount)
 	{
-		if (OldIndex < OldCount && NewIndex < NewCount
-			&& (AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex])
-				// Cover the case of arrays of structs. Not a genuine LCS match, but same position, same type
-				|| (OldChildren[OldIndex].TypeName == NewChildren[NewIndex].TypeName && !AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex]))))
+		bool bTakeBoth = false;
+
+		if (OldIndex < OldCount && NewIndex < NewCount)
+		{
+			const bool bExactMatch = AreSameArrayElement(OldChildren[OldIndex], NewChildren[NewIndex]);
+
+			/*
+			 * Cover arrays of structs (or scalars) that share a type but have no exact semantic-key match. This is only safe when it doesn't
+			 * throw away a better LCS alignment further along the sequence -  otherwise a mid-array insertion/removal cascades into false
+			 * "modified" entries for every following element.
+			 */
+			const bool bPositionalFallback = !bExactMatch && OldChildren[OldIndex].TypeName == NewChildren[NewIndex].TypeName && At(OldIndex, NewIndex) == At(OldIndex + 1, NewIndex + 1);
+
+			bTakeBoth = bExactMatch || bPositionalFallback;
+		}
+
+		if (bTakeBoth)
 		{
 			FAssetDecodedValueDiff ChildDiff = FAssetDecodedValueDiffer::Compare(&OldChildren[OldIndex], &NewChildren[NewIndex]);
 			ChildDiff.Name = FString::Printf(TEXT("[%d]"), NewIndex);
