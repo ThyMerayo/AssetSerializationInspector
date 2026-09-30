@@ -786,6 +786,88 @@ static bool DecodeMapFromReader(const FAssetPropertyDecodeContext& Context, FAss
 	return true;
 }
 
+static bool DecodePackageIndexFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	int32 RawIndex = 0;
+	if (!ReadBounded(Reader, ValueEnd, RawIndex))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding an object reference");
+		return false;
+	}
+
+	FString Path;
+	if (!Context.Document.ResolvePackageIndexPath(FAssetPackageIndexReference{ RawIndex }, Path))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = FString::Printf(TEXT("Object reference %d does not point into the import or export map."), RawIndex);
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
+	OutValue.Value = MoveTemp(Path);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	/*
+	 * FLinkerLoad::operator<<(FSoftObjectPath&) reads an index into the header table only when the
+	 * table is non-empty; otherwise the path is written inline, which is not decoded here.
+	 */
+	if (Context.Document.PackageSummary.SoftObjectPathsCount <= 0)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = TEXT("Inline soft object paths (no soft object path table) are not supported.");
+		return false;
+	}
+
+	int32 PathIndex = INDEX_NONE;
+	if (!ReadBounded(Reader, ValueEnd, PathIndex))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding a soft object path");
+		return false;
+	}
+
+	FString Path;
+	if (!Context.Document.ResolveSoftObjectPath(PathIndex, Path))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = FString::Printf(TEXT("Soft object path index %d is outside the soft object path table."), PathIndex);
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
+	OutValue.Value = MoveTemp(Path);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool DecodeByteFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
+	FAssetDecodedPropertyValue& OutValue)
+{
+	/*
+	 * A ByteProperty that carries an enum parameter is written as the enum value's FName
+	 * in tagged serialization; a plain ByteProperty is a single raw byte.
+	 */
+	if (!Type.Parameters.IsEmpty())
+	{
+		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	return DecodePrimitiveFromReader<uint8>(Reader, ValueEnd, OutValue);
+}
+
 static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
 	FAssetDecodedPropertyValue& OutValue, const int32 Depth)
 {
@@ -815,6 +897,57 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 	if (Type.Name == TEXT("IntProperty"))
 	{
 		return DecodePrimitiveFromReader<int32>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("Int8Property"))
+	{
+		return DecodePrimitiveFromReader<int8>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("Int16Property"))
+	{
+		return DecodePrimitiveFromReader<int16>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("Int64Property"))
+	{
+		return DecodePrimitiveFromReader<int64>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("UInt16Property"))
+	{
+		return DecodePrimitiveFromReader<uint16>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("UInt32Property"))
+	{
+		return DecodePrimitiveFromReader<uint32>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("UInt64Property"))
+	{
+		return DecodePrimitiveFromReader<uint64>(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("ByteProperty"))
+	{
+		return DecodeByteFromReader(Context, Reader, Type, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("EnumProperty"))
+	{
+		// Enum values are stored by name, regardless of the underlying integer type.
+		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("ObjectProperty") || Type.Name == TEXT("ClassProperty") || Type.Name == TEXT("WeakObjectProperty") || Type.Name == TEXT("InterfaceProperty"))
+	{
+		return DecodePackageIndexFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("SoftObjectProperty") || Type.Name == TEXT("SoftClassProperty"))
+	{
+		return DecodeSoftObjectPathFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (Type.Name == TEXT("FloatProperty"))

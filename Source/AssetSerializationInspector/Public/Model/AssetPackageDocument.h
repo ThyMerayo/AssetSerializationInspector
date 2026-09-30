@@ -180,7 +180,16 @@ struct FAssetPackageDocument
 	bool IsExportUClass(const int32 ExportIndex) const;
 	bool IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const;
 
+	/** Resolves an index into the package's soft object path table. Reads the table lazily on first use. */
+	bool ResolveSoftObjectPath(int32 Index, FString& OutPath) const;
+
+	/** Resolves a serialized FPackageIndex to a stable, index-free object path. Returns "None" for a null reference. */
+	bool ResolvePackageIndexPath(const FAssetPackageIndexReference& Reference, FString& OutPath) const;
+
 private:
+	mutable TArray<FString> SoftObjectPathTable;
+	mutable bool bSoftObjectPathTableLoaded = false;
+
 	FString ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const;
 	FString ResolveExportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedExports) const;
 };

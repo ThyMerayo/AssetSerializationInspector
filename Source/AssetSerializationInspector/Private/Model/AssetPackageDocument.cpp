@@ -2,6 +2,9 @@
 
 #include "Model/AssetPackageDocument.h"
 
+#include "Readers/AssetPackagePayloadReader.h"
+#include "Serialization/AssetSerializationPrimitives.h"
+
 int64 FAssetPackageDocument::GetFileSize() const
 {
 	return FileData.Num();
@@ -279,4 +282,91 @@ bool FAssetPackageDocument::IsExportUClass(const int32 ExportIndex) const
 bool FAssetPackageDocument::IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const
 {
 	return (Export.ObjectFlags & RF_ClassDefaultObject) != 0;
+}
+
+bool FAssetPackageDocument::ResolvePackageIndexPath(const FAssetPackageIndexReference& Reference, FString& OutPath) const
+{
+	switch (Reference.GetKind())
+	{
+		case EAssetPackageIndexKind::Null:
+			OutPath = TEXT("None");
+			return true;
+
+		case EAssetPackageIndexKind::Import:
+			if (!ImportMap.IsValidIndex(Reference.GetArrayIndex()))
+			{
+				return false;
+			}
+			OutPath = ResolveImportPath(Reference.GetArrayIndex());
+			return true;
+
+		case EAssetPackageIndexKind::Export:
+			if (!ExportMap.IsValidIndex(Reference.GetArrayIndex()))
+			{
+				return false;
+			}
+			OutPath = ResolveExportPath(Reference.GetArrayIndex());
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+bool FAssetPackageDocument::ResolveSoftObjectPath(const int32 Index, FString& OutPath) const
+{
+	if (!bSoftObjectPathTableLoaded)
+	{
+		bSoftObjectPathTableLoaded = true;
+		SoftObjectPathTable.Reset();
+
+		const int64 Offset = PackageSummary.SoftObjectPathsOffset;
+		const int32 Count = PackageSummary.SoftObjectPathsCount;
+
+		if (Count > 0 && IsValidRange(Offset, 0))
+		{
+			/*
+			 * Each entry is FTopLevelAssetPath (PackageName, AssetName as FNames) followed by
+			 * the SubPathString FString. The table has no size prefix, so read until the file ends.
+			 */
+			FAssetPackagePayloadReader Reader(*this, Offset, GetFileSize() - Offset);
+
+			for (int32 EntryIndex = 0; EntryIndex < Count; ++EntryIndex)
+			{
+				FName PackageName;
+				FName AssetName;
+				FString SubPath;
+				FText Error;
+
+				Reader << PackageName;
+				Reader << AssetName;
+
+				if (Reader.IsError() || !AssetSerializationPrimitives::ReadSerializedString(Reader, SubPath, Error))
+				{
+					SoftObjectPathTable.Reset();
+					break;
+				}
+
+				FString Path;
+				if (!PackageName.IsNone() || !AssetName.IsNone())
+				{
+					Path = FString::Printf(TEXT("%s.%s"), *PackageName.ToString(), *AssetName.ToString());
+					if (!SubPath.IsEmpty())
+					{
+						Path += TEXT(":") + SubPath;
+					}
+				}
+
+				SoftObjectPathTable.Add(Path.IsEmpty() ? FString(TEXT("None")) : Path);
+			}
+		}
+	}
+
+	if (!SoftObjectPathTable.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	OutPath = SoftObjectPathTable[Index];
+	return true;
 }
