@@ -235,4 +235,34 @@ bool FAssetPropertyValueDecoder_DecodesSoftObjectPaths::RunTest(const FString& P
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesMapReplaceMarker, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesMapReplaceMarker",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesMapReplaceMarker::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	// FMapProperty writes a KeysToRemove count of -1 (INDEX_NONE) when the map replaces its defaults, followed by every entry.
+	FAssetPackageDocument Document;
+	AppendValue<int32>(Document, -1);
+	AppendValue<int32>(Document, 2);
+	AppendValue<int32>(Document, 1);
+	AppendValue<int32>(Document, 10);
+	AppendValue<int32>(Document, 2);
+	AppendValue<int32>(Document, 20);
+
+	FAssetSerializedPropertyType MapType = MakeType(TEXT("MapProperty"));
+	MapType.Parameters.Add(MakeType(TEXT("IntProperty")));
+	MapType.Parameters.Add(MakeType(TEXT("IntProperty")));
+
+	const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, MapType);
+	TestTrue(TEXT("A replace-marker map decodes"), Result.IsSuccess());
+	TestEqual(TEXT("It is a complete map"), Result.ContainerMode, EAssetDecodedContainerSerializationMode::Full);
+	TestEqual(TEXT("Both entries are read"), Result.Children.Num(), 2);
+	TestEqual(TEXT("Entries replace the defaults"), Result.Children[0].ContainerOperation, EAssetDecodedContainerOperation::Replace);
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Document.FileData.Num()));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -838,6 +838,8 @@ static bool DecodeMapFromReader(const FAssetPropertyDecodeContext& Context, FAss
 		OutValue.ContainerMode = NumKeysToRemove > 0 ? EAssetDecodedContainerSerializationMode::Delta : EAssetDecodedContainerSerializationMode::Unknown;
 	}
 
+	// A removal count of -1 is the replace marker: no keys follow, and the entries that do are the whole map.
+	if (!bReplaceMap)
 	{
 		if (!IsValidContainerCount(Context, NumKeysToRemove))
 		{
