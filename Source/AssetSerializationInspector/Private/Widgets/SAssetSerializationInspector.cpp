@@ -1,7 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Widgets/SAssetSerializationInspector.h"
-
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "IDesktopPlatform.h"
@@ -23,6 +21,7 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Widgets/SAssetSerializationInspector.h"
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationInspector"
 

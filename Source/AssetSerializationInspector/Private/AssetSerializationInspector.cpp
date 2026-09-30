@@ -1,7 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "AssetSerializationInspector.h"
-
 #include "ContentBrowserMenuContexts.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "LevelEditor.h"
@@ -11,6 +9,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/Text/STextBlock.h"
 
+#include "AssetSerializationInspector.h"
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
 #include "Save/AssetSaveObserver.h"

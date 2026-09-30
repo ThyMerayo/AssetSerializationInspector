@@ -1,7 +1,6 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Save/AssetSaveHistoryManager.h"
-
 #include "Save/AssetSaveObserver.h"
 
 FAssetSaveHistoryManager& FAssetSaveHistoryManager::Get()

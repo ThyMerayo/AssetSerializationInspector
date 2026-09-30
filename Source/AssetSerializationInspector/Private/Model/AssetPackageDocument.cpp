@@ -1,7 +1,6 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Model/AssetPackageDocument.h"
-
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 

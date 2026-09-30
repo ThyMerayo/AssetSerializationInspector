@@ -1,7 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Readers/AssetPackageReader.h"
-
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Serialization/Archive.h"
@@ -10,6 +8,7 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageMemoryReader.h"
+#include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 
 #define LOCTEXT_NAMESPACE "AssetPackageReader"

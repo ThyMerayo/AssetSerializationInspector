@@ -1,7 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Widgets/SAssetSerializationDiff.h"
-
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -27,6 +25,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveHistoryManager.h"
+#include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SSelectableRichText.h"
 
 #define LOCTEXT_NAMESPACE "SAssetSerializationDiff"

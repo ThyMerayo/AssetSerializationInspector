@@ -1,7 +1,6 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Serialization/AssetPropertyValueDecoder.h"
-
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
@@ -853,8 +852,8 @@ static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Co
 	return true;
 }
 
-static bool DecodeByteFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
-	FAssetDecodedPropertyValue& OutValue)
+static bool DecodeByteFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	/*
 	 * A ByteProperty that carries an enum parameter is written as the enum value's FName

@@ -1,8 +1,8 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Trace/AssetSerializationTraceBuilder.h"
-
 #include "Serialization/Archive.h"
+
+#include "Trace/AssetSerializationTraceBuilder.h"
 
 FAssetSerializationTraceBuilder::FAssetSerializationTraceBuilder(FArchive& InArchive, const int64 InPayloadStart) : Archive(InArchive), PayloadStart(InPayloadStart) {}
 

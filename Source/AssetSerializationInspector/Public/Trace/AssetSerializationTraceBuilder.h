@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "Trace/AssetSerializationTrace.h"
 
 class FArchive;

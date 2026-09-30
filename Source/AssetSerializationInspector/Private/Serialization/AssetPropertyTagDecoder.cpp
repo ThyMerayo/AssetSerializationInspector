@@ -1,10 +1,9 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Serialization/AssetPropertyTagDecoder.h"
-
 #include "UObject/PropertyTypeName.h"
 
 #include "Readers/AssetPackagePayloadReader.h"
+#include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 
 constexpr int32 MaxPropertyTypeDepth = 16;

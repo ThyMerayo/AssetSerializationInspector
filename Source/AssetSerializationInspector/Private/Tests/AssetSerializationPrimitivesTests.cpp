@@ -47,8 +47,8 @@ namespace AssetSerializationPrimitivesTestUtils
 	}
 } // namespace AssetSerializationPrimitivesTestUtils
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSerializationPrimitives_ReadsAnsiString, "AssetSerializationInspector.Serialization.Primitives.ReadsAnsiString",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetSerializationPrimitives_ReadsAnsiString, "AssetSerializationInspector.Serialization.Primitives.ReadsAnsiString", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetSerializationPrimitives_ReadsAnsiString::RunTest(const FString& Parameters)
 {
@@ -69,8 +69,8 @@ bool FAssetSerializationPrimitives_ReadsAnsiString::RunTest(const FString& Param
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSerializationPrimitives_ReadsWideString, "AssetSerializationInspector.Serialization.Primitives.ReadsWideString",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetSerializationPrimitives_ReadsWideString, "AssetSerializationInspector.Serialization.Primitives.ReadsWideString", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetSerializationPrimitives_ReadsWideString::RunTest(const FString& Parameters)
 {

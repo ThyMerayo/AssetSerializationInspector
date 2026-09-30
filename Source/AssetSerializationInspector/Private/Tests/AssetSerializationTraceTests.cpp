@@ -8,8 +8,8 @@
 
 namespace AssetSerializationTraceTestUtils
 {
-	static TSharedRef<FAssetSerializationTraceNode> MakeNode(const FString& Name, const EAssetSerializationTraceKind Kind, const int64 Offset, const int64 Size,
-		const TSharedPtr<FAssetSerializationTraceNode>& Parent = nullptr)
+	static TSharedRef<FAssetSerializationTraceNode> MakeNode(
+		const FString& Name, const EAssetSerializationTraceKind Kind, const int64 Offset, const int64 Size, const TSharedPtr<FAssetSerializationTraceNode>& Parent = nullptr)
 	{
 		TSharedRef<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
 		Node->Name = Name;

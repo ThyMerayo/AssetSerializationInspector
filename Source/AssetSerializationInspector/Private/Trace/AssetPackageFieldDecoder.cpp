@@ -1,7 +1,5 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
-#include "Trace/AssetPackageFieldDecoder.h"
-
 #include "UObject/OverriddenPropertySet.h"
 #include "UObject/PropertyTag.h"
 
@@ -9,6 +7,7 @@
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
+#include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
 #define LOCTEXT_NAMESPACE "FAssetPackageFieldDecoder"
