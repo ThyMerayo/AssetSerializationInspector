@@ -40,9 +40,9 @@ namespace AssetTextPropertyDecoderTestUtils
 		FAssetPackageDocument Document;
 		Document.PackageSummary.SetFileVersions(VER_UE4_AUTOMATIC_VERSION, 0, 0);
 
-		FCustomVersionContainer Versions;
+		// FPackageFileSummary::SetCustomVersionContainer is not exported, so modify the container through its accessor.
+		FCustomVersionContainer& Versions = const_cast<FCustomVersionContainer&>(Document.PackageSummary.GetCustomVersionContainer());
 		Versions.SetVersion(FEditorObjectVersion::GUID, EditorObjectVersion, TEXT("Dev-Editor"));
-		Document.PackageSummary.SetCustomVersionContainer(Versions);
 
 		return Document;
 	}
@@ -71,8 +71,8 @@ bool FAssetTextPropertyDecoder_DecodesBaseHistory::RunTest(const FString& Parame
 	using namespace AssetTextPropertyDecoderTestUtils;
 
 	FAssetPackageDocument Document = MakeDocument();
-	AppendValue<uint32>(Document, 0);	// Flags
-	AppendValue<int8>(Document, 0);		// ETextHistoryType::Base
+	AppendValue<uint32>(Document, 0); // Flags
+	AppendValue<int8>(Document, 0);	  // ETextHistoryType::Base
 	AppendAnsiString(Document, TEXT("MyNamespace"));
 	AppendAnsiString(Document, TEXT("0123ABCD"));
 	AppendAnsiString(Document, TEXT("Hello"));
@@ -106,7 +106,7 @@ bool FAssetTextPropertyDecoder_DecodesNoneHistory::RunTest(const FString& Parame
 	FAssetPackageDocument Invariant = MakeDocument();
 	AppendValue<uint32>(Invariant, 0);
 	AppendValue<int8>(Invariant, -1);
-	AppendValue<uint32>(Invariant, 1);	// bHasCultureInvariantString
+	AppendValue<uint32>(Invariant, 1); // bHasCultureInvariantString
 	AppendAnsiString(Invariant, TEXT("Invariant"));
 
 	FAssetDecodedPropertyValue Result = DecodeText(Invariant);
@@ -146,9 +146,9 @@ bool FAssetTextPropertyDecoder_DecodesStringTableEntry::RunTest(const FString& P
 	Document.NameMap.Add(TableName);
 
 	AppendValue<uint32>(Document, 0);
-	AppendValue<int8>(Document, 11);	// ETextHistoryType::StringTableEntry
-	AppendValue<int32>(Document, 0);	// TableId name index
-	AppendValue<int32>(Document, 0);	// TableId number
+	AppendValue<int8>(Document, 11); // ETextHistoryType::StringTableEntry
+	AppendValue<int32>(Document, 0); // TableId name index
+	AppendValue<int32>(Document, 0); // TableId number
 	AppendAnsiString(Document, TEXT("StartGame"));
 
 	const FAssetDecodedPropertyValue Result = DecodeText(Document);
@@ -167,7 +167,7 @@ bool FAssetTextPropertyDecoder_RejectsUnsupportedAndTruncatedText::RunTest(const
 
 	FAssetPackageDocument Formatted = MakeDocument();
 	AppendValue<uint32>(Formatted, 0);
-	AppendValue<int8>(Formatted, 1);	// ETextHistoryType::NamedFormat
+	AppendValue<int8>(Formatted, 1); // ETextHistoryType::NamedFormat
 	AppendValue<int32>(Formatted, 0);
 	FAssetDecodedPropertyValue Result = DecodeText(Formatted);
 	TestEqual(TEXT("Formatted text is reported as unsupported"), Result.Status, EAssetPropertyDecodeStatus::Unsupported);
