@@ -22,7 +22,9 @@ Planned next steps:
 
 - [x] Final values for delta-serialized sets and maps, resolved through the archetype chain in package files (#4, top-level properties only)
 - [ ] Final values for containers nested in structs, and for newly serialized or removed containers
-- [ ] Default-value reconstruction for omitted properties (reuse `FAssetArchetypeResolver`)
+- [x] Default-value reconstruction for omitted top-level properties, shown in the diff from the archetype chain (#5)
+- [ ] Default values for properties omitted inside structs
+- [ ] Zero/empty default for Blueprint-declared properties omitted by their class default object
 - [ ] Live-reflection fallback for native defaults the package chain cannot provide
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
 - [ ] Real-asset fixture tests for the decoders and archetype resolution
