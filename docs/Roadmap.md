@@ -28,7 +28,8 @@ Planned next steps:
 - [ ] Live-reflection fallback for native defaults the package chain cannot provide
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
 - [ ] Real-asset fixture tests for the decoders and archetype resolution
-- [ ] Search and filtering for structural diff, Save Analysis, and repeated-save patterns
+- [x] Search and state filtering for the structural diff (#6)
+- [ ] Search and filtering for Save Analysis and repeated-save patterns (reuse `FAssetSearchQuery`)
 - [ ] No-op resave test mode
 - [ ] Exportable text/JSON analysis reports
 - [ ] Batch/project-wide save analysis
