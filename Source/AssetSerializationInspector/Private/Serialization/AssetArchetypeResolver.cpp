@@ -365,3 +365,31 @@ bool FAssetArchetypeResolver::ResolveFinalContainerValue(
 	OutFinal = MoveTemp(Result);
 	return true;
 }
+
+FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedProperty(const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex)
+{
+	FAssetOmittedPropertyDefault Result;
+	FAssetArchetypeValue Inherited;
+	FString Message;
+
+	Result.Status = ResolveInheritedValue(ExportIndex, PropertyName, ArrayIndex, Inherited, Message);
+
+	if (Result.Status == EAssetArchetypeValueStatus::Found)
+	{
+		Result.Summary = FAssetPropertyValueDecoder::FormatForDisplay(Inherited.Value);
+		Result.Note = FString::Printf(TEXT("Inherited from %s."), *Inherited.Source);
+		if (!Inherited.Note.IsEmpty())
+		{
+			Result.Note += TEXT(" ") + Inherited.Note;
+		}
+		Result.Value = MoveTemp(Inherited.Value);
+	}
+	else
+	{
+		// Nothing in the package chain stores the property, so the value is a native (C++) default.
+		// Live reflection on the class default object could supply it; see the class comment.
+		Result.Note = Message;
+	}
+
+	return Result;
+}

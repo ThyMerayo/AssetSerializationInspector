@@ -318,25 +318,6 @@ namespace
 		FAssetArchetypeResolver* ArchetypeResolver = nullptr;
 	};
 
-	FString FormatFinalValue(const FAssetDecodedPropertyValue& Final)
-	{
-		constexpr int32 MaximumShownElements = 8;
-
-		TArray<FString> Parts;
-		for (const FAssetDecodedPropertyValue& Child : Final.Children)
-		{
-			if (Parts.Num() == MaximumShownElements)
-			{
-				Parts.Add(TEXT("..."));
-				break;
-			}
-
-			Parts.Add(Child.Kind == EAssetDecodedValueKind::MapEntry && Child.Children.Num() == 2 ? FString::Printf(TEXT("%s=%s"), *Child.Children[0].Value, *Child.Children[1].Value) : Child.Value);
-		}
-
-		return FString::Printf(TEXT("%s: %s"), *Final.Value, *FString::Join(Parts, TEXT(", ")));
-	}
-
 	/** Reconstructs the final contents of a set or map that may have been stored as a delta against its archetype. */
 	void ResolveFinalValue(const FPropertyDiffNodeData& Data, const FAssetDecodedPropertyValue& Decoded, FString& OutFinalValue, FString& OutNote)
 	{
@@ -352,8 +333,41 @@ namespace
 			return;
 		}
 
-		OutFinalValue = FormatFinalValue(Final.Value);
+		OutFinalValue = FAssetPropertyValueDecoder::FormatForDisplay(Final.Value);
 		OutNote = Final.Note;
+	}
+
+	/**
+	 * Describes a property that one side of the comparison does not serialize, using the value its archetype chain provides.
+	 * Unreal omits properties that equal their defaults, so this is the value the asset actually has.
+	 */
+	void DescribeOmittedValue(const FPropertyDiffNodeData& OmittedData, const FAssetSerializationTraceNode& PresentNode, const FAssetDecodedPropertyValue* PresentDecoded, FString& OutDecodedValue,
+		FString& OutFinalValue, FString& OutNote)
+	{
+		OutDecodedValue = TEXT("<not serialized; likely default>");
+
+		if (OmittedData.ArchetypeResolver == nullptr)
+		{
+			return;
+		}
+
+		const FAssetOmittedPropertyDefault Default = OmittedData.ArchetypeResolver->DescribeOmittedProperty(OmittedData.Export.Index, PresentNode.Name, PresentNode.ArrayIndex);
+		OutNote = Default.Note;
+
+		if (Default.Status != EAssetArchetypeValueStatus::Found)
+		{
+			return;
+		}
+
+		OutDecodedValue = TEXT("<not serialized>");
+		OutFinalValue = FString::Printf(TEXT("inherited: %s"), *Default.Summary);
+
+		// Containers are stored as deltas, so their serialized form cannot be compared with the inherited value directly.
+		const bool bComparable = PresentDecoded != nullptr && PresentDecoded->Kind != EAssetDecodedValueKind::Set && PresentDecoded->Kind != EAssetDecodedValueKind::Map;
+		if (bComparable && FAssetPropertyValueDecoder::BuildSemanticValueKey(Default.Value) == FAssetPropertyValueDecoder::BuildSemanticValueKey(*PresentDecoded))
+		{
+			OutNote += TEXT(" Equal to the serialized value on the other side, so only the serialization changed.");
+		}
 	}
 
 	bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData)
@@ -449,16 +463,18 @@ namespace
 			Entry.State = EAssetPackageDiffState::Modified;
 			Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
 			Entry.NewPresence = EAssetSerializedPropertyPresence::Present;
-			Entry.bHasOldDecodedValue = true;
-			Entry.OldDecodedValue = TEXT("<not serialized; likely default>");
 
 			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
 			if (NewDecoded.IsSuccess())
 			{
-				Entry.bHasOldDecodedValue = true;
+				Entry.bHasNewDecodedValue = true;
 				Entry.NewDecodedValue = NewDecoded.Value;
 				Entry.NewValue = NewDecoded.Value;
+				ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
 			}
+
+			Entry.bHasOldDecodedValue = true;
+			DescribeOmittedValue(OldData, *NewData.Node, NewDecoded.IsSuccess() ? &NewDecoded : nullptr, Entry.OldDecodedValue, Entry.OldFinalValue, Entry.OldFinalValueNote);
 
 			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
 			PayloadEntry.Children.Add(MoveTemp(Entry));
@@ -471,8 +487,6 @@ namespace
 			Entry.State = EAssetPackageDiffState::Modified;
 			Entry.OldPresence = EAssetSerializedPropertyPresence::Present;
 			Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
-			Entry.bHasNewDecodedValue = true;
-			Entry.NewDecodedValue = TEXT("<not serialized; likely default>");
 
 			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
 			if (OldDecoded.IsSuccess())
@@ -480,7 +494,11 @@ namespace
 				Entry.bHasOldDecodedValue = true;
 				Entry.OldDecodedValue = OldDecoded.Value;
 				Entry.OldValue = OldDecoded.Value;
+				ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
 			}
+
+			Entry.bHasNewDecodedValue = true;
+			DescribeOmittedValue(NewData, *OldData.Node, OldDecoded.IsSuccess() ? &OldDecoded : nullptr, Entry.NewDecodedValue, Entry.NewFinalValue, Entry.NewFinalValueNote);
 
 			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
 			PayloadEntry.Children.Add(MoveTemp(Entry));

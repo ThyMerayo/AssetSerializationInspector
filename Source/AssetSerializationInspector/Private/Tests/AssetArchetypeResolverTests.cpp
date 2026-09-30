@@ -220,4 +220,40 @@ bool FAssetArchetypeResolver_ReportsEndOfChainAndNativeArchetypes::RunTest(const
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_DescribesOmittedProperties, "AssetSerializationInspector.Serialization.AssetArchetypeResolver.DescribesOmittedProperties",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetArchetypeResolver_DescribesOmittedProperties::RunTest(const FString& Parameters)
+{
+	using namespace AssetArchetypeResolverTestUtils;
+
+	const FAssetSerializedPropertyType IntType = MakeType(TEXT("IntProperty"));
+
+	FTestPackage Package;
+	// The parent stores Tags = 42; the child omits it, so it has the parent's value.
+	const int32 Parent = Package.AddExport(TEXT("Parent"), 0, IntType, { 42 });
+	const int32 Child = Package.AddExport(TEXT("Child"), Parent + 1, IntType, {});
+	// A separate chain whose root never stores the property.
+	const int32 Empty = Package.AddExport(TEXT("Empty"), 0, IntType, {});
+	const int32 EmptyChild = Package.AddExport(TEXT("EmptyChild"), Empty + 1, IntType, {});
+
+	FAssetArchetypeResolver Resolver(Package.Document, Package.Traces);
+
+	const FAssetOmittedPropertyDefault Inherited = Resolver.DescribeOmittedProperty(Child, TEXT("Tags"), 0);
+	TestEqual(TEXT("An omitted property takes the archetype's value"), Inherited.Status, EAssetArchetypeValueStatus::Found);
+	TestEqual(TEXT("The summary is the inherited value"), Inherited.Summary, FString(TEXT("42")));
+	TestEqual(TEXT("The value is available for comparison"), Inherited.Value.Value, FString(TEXT("42")));
+	TestTrue(TEXT("The note names the export it came from"), Inherited.Note.Contains(TEXT("Parent")));
+
+	const FAssetOmittedPropertyDefault Native = Resolver.DescribeOmittedProperty(EmptyChild, TEXT("Tags"), 0);
+	TestEqual(TEXT("A property no package stores comes from native defaults"), Native.Status, EAssetArchetypeValueStatus::NotSerializedInChain);
+	TestTrue(TEXT("The summary is empty"), Native.Summary.IsEmpty());
+	TestFalse(TEXT("The reason is reported"), Native.Note.IsEmpty());
+
+	const FAssetOmittedPropertyDefault Wrong = Resolver.DescribeOmittedProperty(Child, TEXT("Other"), 0);
+	TestNotEqual(TEXT("A different property name is not found on the chain"), Wrong.Status, EAssetArchetypeValueStatus::Found);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -35,6 +35,21 @@ struct FAssetArchetypeValue
 	FString Note;
 };
 
+/** What a property that an export does not serialize takes its value from. */
+struct FAssetOmittedPropertyDefault
+{
+	EAssetArchetypeValueStatus Status = EAssetArchetypeValueStatus::Unavailable;
+
+	/** The inherited value when Status is Found. */
+	FAssetDecodedPropertyValue Value;
+
+	/** A single-line display form of Value. */
+	FString Summary;
+
+	/** Where the value came from and any assumption behind it, or why it could not be determined. */
+	FString Note;
+};
+
 /**
  * Finds the value a property inherits from an export's archetype chain, entirely from package files.
  *
@@ -68,6 +83,13 @@ public:
 	 * @param OutMessage Explains why no value was found.
 	 */
 	EAssetArchetypeValueStatus ResolveInheritedValue(int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex, FAssetArchetypeValue& OutValue, FString& OutMessage);
+
+	/**
+	 * Describes the value a top-level property has on an export that does not serialize it. Unreal omits properties equal to
+	 * their defaults, so the value is whatever the archetype chain provides; the result says where that came from, or why it
+	 * could not be determined (for example a native default).
+	 */
+	FAssetOmittedPropertyDefault DescribeOmittedProperty(int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex);
 
 	/**
 	 * Reconstructs the final contents of a set or map stored on an export, by applying its serialized delta to the value
