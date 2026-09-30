@@ -2,8 +2,9 @@
 
 #pragma once
 
-#include "AssetSerializationInspectorStyle.h"
 #include "Framework/Commands/Commands.h"
+
+#include "AssetSerializationInspectorStyle.h"
 
 class FAssetSerializationInspectorCommands : public TCommands<FAssetSerializationInspectorCommands>
 {

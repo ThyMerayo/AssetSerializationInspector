@@ -114,8 +114,7 @@ bool FAssetPackageDocument_ResolveExportPathBuildsDottedPath::RunTest(const FStr
 
 	Document.ExportMap.Add(ClassExport);
 
-	TestEqual(TEXT("An export parented to the package should be prefixed with the package name"), Document.ResolveExportPath(0),
-		FString(TEXT("/Game/Blueprints/BP_Box.BP_Box_C")));
+	TestEqual(TEXT("An export parented to the package should be prefixed with the package name"), Document.ResolveExportPath(0), FString(TEXT("/Game/Blueprints/BP_Box.BP_Box_C")));
 
 	return true;
 }

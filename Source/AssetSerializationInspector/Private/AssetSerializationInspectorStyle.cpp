@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "AssetSerializationInspectorStyle.h"
+
 #include "Framework/Application/SlateApplication.h"
 #include "Interfaces/IPluginManager.h"
 #include "Slate/SlateGameResources.h"
