@@ -7,6 +7,8 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
+#include "UObject/EditorObjectVersion.h"
+#include "UObject/ObjectVersion.h"
 
 static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 AbsoluteOffset)
 {
@@ -593,6 +595,124 @@ static bool DecodeStringFromReader(FAssetPackagePayloadReader& Reader, const int
 	return true;
 }
 
+static FAssetDecodedPropertyValue MakeTextChild(const FString& Name, const FString& TypeName, const FString& Value, const int64 Offset, const int64 Size)
+{
+	FAssetDecodedPropertyValue Child;
+	Child.Status = EAssetPropertyDecodeStatus::Success;
+	Child.Kind = EAssetDecodedValueKind::Scalar;
+	Child.Name = Name;
+	Child.TypeName = TypeName;
+	Child.Value = Value;
+	Child.AbsoluteOffset = Offset;
+	Child.Size = Size;
+	return Child;
+}
+
+/*
+ * Mirrors FText::SerializeText: uint32 Flags, int8 HistoryType, then a history-specific payload.
+ * Only the history types that carry no arguments are decoded; formatted, numeric, date/time,
+ * transform and generator histories are reported as unsupported.
+ */
+static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	const auto Fail = [&OutValue](const FString& Error) {
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Error;
+		return false;
+	};
+
+	if (Reader.UEVer() < VER_UE4_FTEXT_HISTORY)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = TEXT("FText written before the text history format is not supported.");
+		return false;
+	}
+
+	uint32 Flags = 0;
+	int8 HistoryType = 0;
+	if (!ReadBounded(Reader, ValueEnd, Flags) || !ReadBounded(Reader, ValueEnd, HistoryType))
+	{
+		return Fail(TEXT("Not enough space in reader for decoding FText"));
+	}
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Children.Add(MakeTextChild(TEXT("Flags"), TEXT("UInt32Property"), LexToString(Flags), Start, sizeof(uint32)));
+
+	const auto ReadTextString = [&](const TCHAR* Name) {
+		const int64 StringStart = Reader.Tell();
+		FString Text;
+		FText Error;
+		if (!AssetSerializationPrimitives::ReadSerializedString(Reader, Text, Error) || Reader.Tell() > ValueEnd)
+		{
+			return false;
+		}
+		OutValue.Children.Add(MakeTextChild(Name, TEXT("StrProperty"), Text, StringStart, Reader.Tell() - StringStart));
+		return true;
+	};
+
+	if (HistoryType == -1)
+	{
+		// ETextHistoryType::None: optionally a culture-invariant string.
+		if (Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::CultureInvariantTextSerializationKeyStability)
+		{
+			uint32 bHasCultureInvariantString = 0;
+			if (!ReadBounded(Reader, ValueEnd, bHasCultureInvariantString))
+			{
+				return Fail(TEXT("Could not read FText culture-invariant flag"));
+			}
+
+			if (bHasCultureInvariantString != 0 && !ReadTextString(TEXT("CultureInvariantString")))
+			{
+				return Fail(TEXT("Could not decode FText culture-invariant string"));
+			}
+		}
+
+		OutValue.Value = OutValue.Children.Num() > 1 ? OutValue.Children.Last().Value : FString();
+	}
+	else if (HistoryType == 0)
+	{
+		// ETextHistoryType::Base: Namespace, Key, SourceString.
+		if (!ReadTextString(TEXT("Namespace")) || !ReadTextString(TEXT("Key")) || !ReadTextString(TEXT("SourceString")))
+		{
+			return Fail(TEXT("Could not decode FText base history"));
+		}
+
+		OutValue.Value = OutValue.Children.Last().Value;
+	}
+	else if (HistoryType == 11)
+	{
+		// ETextHistoryType::StringTableEntry: TableId (FName), Key.
+		FAssetDecodedPropertyValue TableId;
+		if (!DecodeNameFromReader(Context, Reader, ValueEnd, TableId))
+		{
+			return Fail(TEXT("Could not decode FText string table id"));
+		}
+
+		OutValue.Children.Add(MakeTextChild(TEXT("TableId"), TEXT("NameProperty"), TableId.Value, TableId.AbsoluteOffset, TableId.Size));
+
+		if (!ReadTextString(TEXT("Key")))
+		{
+			return Fail(TEXT("Could not decode FText string table key"));
+		}
+
+		OutValue.Value = FString::Printf(TEXT("%s:%s"), *OutValue.Children[1].Value, *OutValue.Children[2].Value);
+	}
+	else
+	{
+		OutValue.Children.Reset();
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = FString::Printf(TEXT("FText history type %d is not supported."), static_cast<int32>(HistoryType));
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool DecodeMapEntry(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& KeyType, const FAssetSerializedPropertyType& ValueType,
 	const int64 ValueEnd, const EAssetDecodedContainerOperation Operation, FAssetDecodedPropertyValue& OutEntry, const int32 Depth)
 {
@@ -835,6 +955,11 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 	if (Type.Name == TEXT("StrProperty"))
 	{
 		return DecodeStringFromReader(Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("TextProperty"))
+	{
+		return DecodeTextFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (Type.Name == TEXT("StructProperty"))
