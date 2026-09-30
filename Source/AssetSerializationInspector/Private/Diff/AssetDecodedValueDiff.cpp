@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Diff/AssetDecodedValueDiff.h"
+
 #include "Serialization/AssetPropertyValueDecoder.h"
 
 static bool AreLeafValuesEqual(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue)

@@ -1,11 +1,11 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
+#include "Widgets/SSelectableRichText.h"
+
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "InputCoreTypes.h"
 #include "Widgets/Text/SRichTextBlock.h"
-
-#include "Widgets/SSelectableRichText.h"
 
 void SSelectableRichText::Construct(const FArguments& InArgs)
 {

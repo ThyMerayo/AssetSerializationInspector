@@ -1,12 +1,12 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
+#include "AssetSerializationInspectorStyle.h"
+
 #include "Framework/Application/SlateApplication.h"
 #include "Interfaces/IPluginManager.h"
 #include "Slate/SlateGameResources.h"
 #include "Styling/SlateStyleMacros.h"
 #include "Styling/SlateStyleRegistry.h"
-
-#include "AssetSerializationInspectorStyle.h"
 
 #define RootToContentDir Style->RootToContentDir
 

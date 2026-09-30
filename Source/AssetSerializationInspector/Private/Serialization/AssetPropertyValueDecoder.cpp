@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Serialization/AssetPropertyValueDecoder.h"
+
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"

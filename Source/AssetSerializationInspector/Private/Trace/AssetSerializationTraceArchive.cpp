@@ -1,9 +1,9 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
+#include "Trace/AssetSerializationTraceArchive.h"
+
 #include "Serialization/ArchiveSerializedPropertyChain.h"
 #include "UObject/UnrealType.h"
-
-#include "Trace/AssetSerializationTraceArchive.h"
 
 FAssetSerializationTraceArchive::FAssetSerializationTraceArchive(FArchive& InInnerArchive, const int64 InBaseOffset /* = 0 */) : InnerArchive(InInnerArchive), BaseOffset(InBaseOffset)
 {

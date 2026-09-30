@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Save/AssetSaveAnalyzer.h"
+
 #include "Diff/AssetPackageDiff.h"
 
 static int32 CountChangedChildren(const FAssetPackageDiffEntry& Entry)

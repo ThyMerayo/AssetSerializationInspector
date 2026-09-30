@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Diff/AssetByteDiff.h"
+
 #include "Model/AssetPackageDocument.h"
 
 TArray<FAssetByteDiffSpan> FAssetByteDiff::Compare(

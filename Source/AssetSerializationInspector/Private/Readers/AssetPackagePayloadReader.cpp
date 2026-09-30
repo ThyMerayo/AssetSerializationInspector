@@ -1,6 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
 #include "Readers/AssetPackagePayloadReader.h"
+
 #include "Model/AssetPackageDocument.h"
 
 FAssetPackagePayloadReader::FAssetPackagePayloadReader(const FAssetPackageDocument& InDocument, const int64 InOffset, const int64 InSize)

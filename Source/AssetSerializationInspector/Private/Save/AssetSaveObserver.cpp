@@ -1,5 +1,7 @@
 // Copyright Diego Merayo Merayo. All Rights Reserved
 
+#include "Save/AssetSaveObserver.h"
+
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -8,7 +10,6 @@
 
 #include "AssetSerializationInspectorSettings.h"
 #include "Save/AssetSaveHistoryManager.h"
-#include "Save/AssetSaveObserver.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 
 FAssetSaveObserver& FAssetSaveObserver::Get()
