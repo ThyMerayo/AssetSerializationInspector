@@ -7,6 +7,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SCompoundWidget.h"
 
+#include "Diff/AssetDiffFilter.h"
 #include "Diff/AssetPackageDiff.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Save/RepeatedSaveAnalyzer.h"
@@ -107,12 +108,17 @@ private:
 
 	// Diff tree
 	void RebuildDiffTree();
-	FDiffTreeNodePtr BuildDiffTreeNode(const FAssetPackageDiffEntry& Entry, const FDiffTreeNodePtr& Parent);
-	bool ShouldIncludeDiffEntry(const FAssetPackageDiffEntry& Entry) const;
-	bool HasVisibleChildren(const FAssetPackageDiffEntry& Entry) const;
+	FDiffTreeNodePtr BuildDiffTreeNode(const FAssetPackageDiffEntry& Entry, const FDiffTreeNodePtr& Parent, bool bAncestorMatchedQuery);
 	void GetDiffTreeChildren(FDiffTreeNodePtr Item, TArray<FDiffTreeNodePtr>& OutChildren) const;
 	TSharedRef<ITableRow> GenerateDiffTreeRow(FDiffTreeNodePtr Item, const TSharedRef<STableViewBase>& OwnerTable);
 	void HandleShowUnchangedChanged(ECheckBoxState NewState);
+	void HandleSearchTextChanged(const FText& NewText);
+	void HandleSearchValuesChanged(ECheckBoxState NewState);
+	void HandleStateFilterChanged(ECheckBoxState NewState, EAssetDiffStateFilter Flag);
+	ECheckBoxState GetStateFilterCheckState(EAssetDiffStateFilter Flag) const;
+	TSharedRef<SWidget> BuildStateFilterCheckBox(EAssetDiffStateFilter Flag, const FText& Label);
+	FText GetFilterResultText() const;
+	void ExpandDiffSubtree(const FDiffTreeNodePtr& Node);
 	void HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 	void AnnotateSelectedDiffSpans();
 	const FAssetSerializationTrace* FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const;
@@ -184,7 +190,7 @@ private:
 	TArray<FAssetByteDiffSpan> SelectedByteDiffSpans;
 	TSharedPtr<FSlateStyleSet> HexDiffStyle;
 
-	bool bShowUnchanged = false;
+	FAssetDiffFilter DiffFilter;
 
 	bool bUseRelativeOffsets = true;
 

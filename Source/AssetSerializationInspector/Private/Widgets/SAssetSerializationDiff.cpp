@@ -12,6 +12,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSeparator.h"
@@ -282,8 +283,30 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			8.0f, 6.0f)[SNew(SHorizontalBox) + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSummaryText)]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SCheckBox)
-					.IsChecked_Lambda([this]() { return bShowUnchanged ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					.IsChecked_Lambda([this]() { return DiffFilter.bShowUnchanged ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
+
+		// Search and state filters
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+				.FillWidth(1.0f)
+				.VAlign(VAlign_Center)
+				.Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SSearchBox)
+						.HintText(LOCTEXT("DiffSearchHint", "Search names, paths, types and values"))
+						.ToolTipText(LOCTEXT("DiffSearchTooltip", "Separate terms with spaces; every term must match. Matching entries keep their parents visible."))
+						.OnTextChanged(this, &SAssetSerializationDiff::HandleSearchTextChanged)]
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SCheckBox)
+						.IsChecked_Lambda([this]() { return DiffFilter.bSearchValues ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleSearchValuesChanged)
+						.ToolTipText(LOCTEXT("SearchValuesTooltip", "Also search old, new, decoded and final values."))[SNew(STextBlock).Text(LOCTEXT("SearchValues", "Values"))]]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Added, LOCTEXT("FilterAdded", "Added"))]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Removed, LOCTEXT("FilterRemoved", "Removed"))]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Modified, LOCTEXT("FilterModified", "Modified"))]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Moved, LOCTEXT("FilterMoved", "Moved"))]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SBox).MinDesiredHeight(400.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
@@ -795,6 +818,10 @@ FReply SAssetSerializationDiff::HandleCompareClicked()
 
 void SAssetSerializationDiff::RebuildDiffTree()
 {
+	// Keep the selection across filter changes when the selected entry is still visible.
+	const FString PreviousSemanticPath = SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.SemanticPath : FString();
+	const FString PreviousKey = SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.Key : FString();
+
 	RootDiffNodes.Reset();
 	SelectedDiffNode.Reset();
 
@@ -810,12 +837,7 @@ void SAssetSerializationDiff::RebuildDiffTree()
 
 	for (const FAssetPackageDiffEntry& Entry : DiffSession->DiffResult->Entries)
 	{
-		if (!ShouldIncludeDiffEntry(Entry))
-		{
-			continue;
-		}
-
-		FDiffTreeNodePtr Node = BuildDiffTreeNode(Entry, nullptr);
+		FDiffTreeNodePtr Node = BuildDiffTreeNode(Entry, nullptr, false);
 
 		if (Node.IsValid())
 		{
@@ -829,26 +851,49 @@ void SAssetSerializationDiff::RebuildDiffTree()
 
 		for (const FDiffTreeNodePtr& Node : RootDiffNodes)
 		{
-			DiffTreeView->SetItemExpansion(Node, true);
+			// While searching, open everything so the matches are visible without hunting for them.
+			if (DiffFilter.IsSearchActive())
+			{
+				ExpandDiffSubtree(Node);
+			}
+			else
+			{
+				DiffTreeView->SetItemExpansion(Node, true);
+			}
+		}
+
+		FDiffTreeNodePtr Previous;
+		if (!PreviousSemanticPath.IsEmpty())
+		{
+			Previous = FindDiffTreeNodeBySemanticPath(RootDiffNodes, PreviousSemanticPath);
+		}
+		else if (!PreviousKey.IsEmpty())
+		{
+			Previous = FindDiffTreeNodeByKey(RootDiffNodes, PreviousKey);
+		}
+
+		if (Previous.IsValid())
+		{
+			ExpandDiffAncestors(Previous);
+			DiffTreeView->SetSelection(Previous, ESelectInfo::Direct);
+			DiffTreeView->RequestScrollIntoView(Previous);
 		}
 	}
 }
 
-SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::BuildDiffTreeNode(const FAssetPackageDiffEntry& Entry, const FDiffTreeNodePtr& Parent)
+SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::BuildDiffTreeNode(const FAssetPackageDiffEntry& Entry, const FDiffTreeNodePtr& Parent, const bool bAncestorMatchedQuery)
 {
-	if (!ShouldIncludeDiffEntry(Entry))
-	{
-		return nullptr;
-	}
-
 	FDiffTreeNodePtr Node = MakeShared<FAssetPackageDiffTreeNode>();
 
 	Node->Diff = Entry;
 	Node->Parent = Parent;
 
+	// Once an entry matches the search, everything inside it counts as matching.
+	const bool bMatchedForChildren = bAncestorMatchedQuery || DiffFilter.MatchesQuery(Entry);
+
 	for (const FAssetPackageDiffEntry& Child : Entry.Children)
 	{
-		FDiffTreeNodePtr ChildNode = BuildDiffTreeNode(Child, Node);
+		FDiffTreeNodePtr ChildNode = BuildDiffTreeNode(Child, Node, bMatchedForChildren);
 
 		if (ChildNode.IsValid())
 		{
@@ -856,42 +901,85 @@ SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::BuildDiffTree
 		}
 	}
 
+	// An entry stays when it matches or when something inside it does.
+	if (Node->Children.IsEmpty() && !DiffFilter.ShouldIncludeSelf(Entry, bAncestorMatchedQuery))
+	{
+		return nullptr;
+	}
+
 	return Node;
 }
 
-bool SAssetSerializationDiff::HasVisibleChildren(const FAssetPackageDiffEntry& Entry) const
+void SAssetSerializationDiff::ExpandDiffSubtree(const FDiffTreeNodePtr& Node)
 {
-	for (const FAssetPackageDiffEntry& Child : Entry.Children)
+	if (!Node.IsValid() || !DiffTreeView.IsValid())
 	{
-		if (ShouldIncludeDiffEntry(Child))
-		{
-			return true;
-		}
+		return;
 	}
 
-	return false;
-}
+	DiffTreeView->SetItemExpansion(Node, true);
 
-bool SAssetSerializationDiff::ShouldIncludeDiffEntry(const FAssetPackageDiffEntry& Entry) const
-{
-	if (bShowUnchanged)
+	for (const FDiffTreeNodePtr& Child : Node->Children)
 	{
-		return true;
+		ExpandDiffSubtree(Child);
 	}
-
-	if (Entry.State != EAssetPackageDiffState::Unchanged)
-	{
-		return true;
-	}
-
-	return HasVisibleChildren(Entry);
 }
 
 void SAssetSerializationDiff::HandleShowUnchangedChanged(const ECheckBoxState NewState)
 {
-	bShowUnchanged = NewState == ECheckBoxState::Checked;
+	DiffFilter.bShowUnchanged = NewState == ECheckBoxState::Checked;
 
 	RebuildDiffTree();
+}
+
+void SAssetSerializationDiff::HandleSearchTextChanged(const FText& NewText)
+{
+	DiffFilter.Query = FAssetSearchQuery::Parse(NewText.ToString());
+
+	RebuildDiffTree();
+}
+
+void SAssetSerializationDiff::HandleSearchValuesChanged(const ECheckBoxState NewState)
+{
+	DiffFilter.bSearchValues = NewState == ECheckBoxState::Checked;
+
+	RebuildDiffTree();
+}
+
+void SAssetSerializationDiff::HandleStateFilterChanged(const ECheckBoxState NewState, const EAssetDiffStateFilter Flag)
+{
+	if (NewState == ECheckBoxState::Checked)
+	{
+		DiffFilter.States |= Flag;
+	}
+	else
+	{
+		DiffFilter.States &= ~Flag;
+	}
+
+	RebuildDiffTree();
+}
+
+ECheckBoxState SAssetSerializationDiff::GetStateFilterCheckState(const EAssetDiffStateFilter Flag) const
+{
+	return EnumHasAnyFlags(DiffFilter.States, Flag) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildStateFilterCheckBox(const EAssetDiffStateFilter Flag, const FText& Label)
+{
+	return SNew(SCheckBox)
+		.IsChecked(this, &SAssetSerializationDiff::GetStateFilterCheckState, Flag)
+		.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleStateFilterChanged, Flag)[SNew(STextBlock).Text(Label)];
+}
+
+FText SAssetSerializationDiff::GetFilterResultText() const
+{
+	if (!DiffSession.IsValid() || !DiffSession->DiffResult.IsSet() || (!DiffFilter.IsSearchActive() && !DiffFilter.IsStateFilterActive()))
+	{
+		return FText::GetEmpty();
+	}
+
+	return FText::Format(LOCTEXT("FilterResultCount", "{0} matching"), FText::AsNumber(DiffFilter.CountMatches(DiffSession->DiffResult->Entries)));
 }
 
 void SAssetSerializationDiff::GetDiffTreeChildren(FDiffTreeNodePtr Item, TArray<FDiffTreeNodePtr>& OutChildren) const
