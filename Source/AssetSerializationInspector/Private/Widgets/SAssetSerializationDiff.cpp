@@ -29,6 +29,15 @@
 #include "Save/AssetSaveHistoryManager.h"
 #include "Widgets/SSelectableRichText.h"
 
+namespace
+{
+	/** The decoded value, followed by the final contents of a set or map when they could be reconstructed from its archetype. */
+	FString MakeDecodedValueText(const FString& DecodedValue, const FString& FinalValue)
+	{
+		return FinalValue.IsEmpty() ? DecodedValue : FString::Printf(TEXT("%s  ->  %s"), *DecodedValue, *FinalValue);
+	}
+} // namespace
+
 #define LOCTEXT_NAMESPACE "SAssetSerializationDiff"
 
 namespace
@@ -138,7 +147,10 @@ public:
 		{
 			if (Diff.bHasOldDecodedValue)
 			{
-				return SNew(SEditableText).Text(FText::FromString(Diff.OldDecodedValue)).IsReadOnly(true);
+				return SNew(SEditableText)
+					.Text(FText::FromString(MakeDecodedValueText(Diff.OldDecodedValue, Diff.OldFinalValue)))
+					.ToolTipText(FText::FromString(Diff.OldFinalValueNote))
+					.IsReadOnly(true);
 			}
 
 			return SNew(STextBlock).Text(FText::Format(LOCTEXT("ChangedBytesOld", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));
@@ -152,7 +164,10 @@ public:
 		{
 			if (Diff.bHasNewDecodedValue)
 			{
-				return SNew(SEditableText).Text(FText::FromString(Diff.NewDecodedValue)).IsReadOnly(true);
+				return SNew(SEditableText)
+					.Text(FText::FromString(MakeDecodedValueText(Diff.NewDecodedValue, Diff.NewFinalValue)))
+					.ToolTipText(FText::FromString(Diff.NewFinalValueNote))
+					.IsReadOnly(true);
 			}
 
 			return SNew(STextBlock).Text(FText::Format(LOCTEXT("ChangedBytesNew", "{0} changed bytes"), FText::AsNumber(Diff.ChangedByteCount)));

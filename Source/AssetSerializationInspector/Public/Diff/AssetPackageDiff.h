@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+class FAssetArchetypeResolver;
 struct FAssetDecodedValueDiff;
 struct FAssetPackageDocument;
 struct FAssetPackageExportEntry;
@@ -77,6 +78,14 @@ struct FAssetPackageDiffEntry
 	bool bHasOldDecodedValue = false;
 	bool bHasNewDecodedValue = false;
 
+	/** For sets and maps stored as deltas: the contents after applying them to the archetype's value. Empty when unknown. */
+	FString OldFinalValue;
+	FString NewFinalValue;
+
+	/** Caveats about the final values, such as an assumed empty default. Empty when the final value is certain. */
+	FString OldFinalValueNote;
+	FString NewFinalValueNote;
+
 	FString OldFieldPath;
 	FString NewFieldPath;
 
@@ -132,6 +141,7 @@ struct FPropertyDiffData
 	const FAssetPackageDocument& Document;
 	const FAssetPackageExportEntry& Export;
 	const FAssetSerializationTrace* Trace;
+	FAssetArchetypeResolver* ArchetypeResolver = nullptr;
 };
 
 namespace AssetPackageDiff

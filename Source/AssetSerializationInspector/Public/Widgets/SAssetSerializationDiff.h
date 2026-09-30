@@ -33,21 +33,6 @@ enum class EAssetByteDiffState : uint8
 	Removed
 };
 
-struct FAssetPackageTraceCollection
-{
-	TMap<int32, FAssetSerializationTrace> ExportTraces;
-
-	const FAssetSerializationTrace* FindExportTrace(const int32 ExportIndex) const
-	{
-		if (ExportIndex == INDEX_NONE)
-		{
-			return nullptr;
-		}
-
-		return ExportTraces.Find(ExportIndex);
-	}
-};
-
 struct FAssetSerializationDiffSide
 {
 	TSharedPtr<FAssetPackageDocument> Document;
