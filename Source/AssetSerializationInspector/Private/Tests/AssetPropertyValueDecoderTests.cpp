@@ -265,4 +265,45 @@ bool FAssetPropertyValueDecoder_DecodesMapReplaceMarker::RunTest(const FString& 
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_FormatsValuesForDisplay, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.FormatsValuesForDisplay",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_FormatsValuesForDisplay::RunTest(const FString& Parameters)
+{
+	const auto MakeScalar = [](const FString& Name, const FString& Value) {
+		FAssetDecodedPropertyValue Scalar;
+		Scalar.Status = EAssetPropertyDecodeStatus::Success;
+		Scalar.Kind = EAssetDecodedValueKind::Scalar;
+		Scalar.Name = Name;
+		Scalar.Value = Value;
+		return Scalar;
+	};
+
+	TestEqual(TEXT("Scalars are shown as-is"), FAssetPropertyValueDecoder::FormatForDisplay(MakeScalar(TEXT("X"), TEXT("5"))), FString(TEXT("5")));
+
+	FAssetDecodedPropertyValue Struct;
+	Struct.Kind = EAssetDecodedValueKind::Struct;
+	Struct.Value = TEXT("2 fields");
+	Struct.Children = { MakeScalar(TEXT("X"), TEXT("1")), MakeScalar(TEXT("Y"), TEXT("2")) };
+	TestEqual(TEXT("Structs list their fields by name"), FAssetPropertyValueDecoder::FormatForDisplay(Struct), FString(TEXT("{X=1, Y=2}")));
+
+	FAssetDecodedPropertyValue Array;
+	Array.Kind = EAssetDecodedValueKind::Array;
+	Array.Value = TEXT("3 elements");
+	Array.Children = { MakeScalar(TEXT("[0]"), TEXT("a")), MakeScalar(TEXT("[1]"), TEXT("b")), MakeScalar(TEXT("[2]"), TEXT("c")) };
+	TestEqual(TEXT("Containers show their count and elements"), FAssetPropertyValueDecoder::FormatForDisplay(Array), FString(TEXT("3 elements: a, b, c")));
+	TestEqual(TEXT("Long containers are cut"), FAssetPropertyValueDecoder::FormatForDisplay(Array, 2), FString(TEXT("3 elements: a, b, ...")));
+
+	FAssetDecodedPropertyValue Entry;
+	Entry.Kind = EAssetDecodedValueKind::MapEntry;
+	Entry.Children = { MakeScalar(TEXT("Key"), TEXT("k")), MakeScalar(TEXT("Value"), TEXT("v")) };
+	FAssetDecodedPropertyValue Map;
+	Map.Kind = EAssetDecodedValueKind::Map;
+	Map.Value = TEXT("1 entries");
+	Map.Children = { Entry };
+	TestEqual(TEXT("Map entries are shown as key=value"), FAssetPropertyValueDecoder::FormatForDisplay(Map), FString(TEXT("1 entries: k=v")));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

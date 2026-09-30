@@ -70,4 +70,10 @@ public:
 	static FAssetDecodedPropertyValue Decode(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, int64 ExportSerialOffset);
 
 	static FString BuildSemanticValueKey(const FAssetDecodedPropertyValue& Value);
+
+	/**
+	 * A single-line summary of a decoded value for display: scalars as-is, structs as {Name=Value, ...}, and containers as
+	 * "<count>: element, element, ...". Long containers are cut after MaximumElements entries and deep values are summarized.
+	 */
+	static FString FormatForDisplay(const FAssetDecodedPropertyValue& Value, int32 MaximumElements = 8);
 };

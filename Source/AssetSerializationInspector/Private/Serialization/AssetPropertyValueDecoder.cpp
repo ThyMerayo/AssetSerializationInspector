@@ -1200,3 +1200,48 @@ FString FAssetPropertyValueDecoder::BuildSemanticValueKey(const FAssetDecodedPro
 
 	return Result;
 }
+
+static FString FormatForDisplayInternal(const FAssetDecodedPropertyValue& Value, const int32 MaximumElements, const int32 Depth)
+{
+	constexpr int32 MaximumDepth = 3;
+
+	if (Value.Children.IsEmpty() || Depth >= MaximumDepth)
+	{
+		return Value.Value;
+	}
+
+	TArray<FString> Parts;
+	for (const FAssetDecodedPropertyValue& Child : Value.Children)
+	{
+		if (Parts.Num() == MaximumElements)
+		{
+			Parts.Add(TEXT("..."));
+			break;
+		}
+
+		FString Text;
+		if (Child.Kind == EAssetDecodedValueKind::MapEntry && Child.Children.Num() == 2)
+		{
+			Text = FString::Printf(TEXT("%s=%s"), *FormatForDisplayInternal(Child.Children[0], MaximumElements, Depth + 1), *FormatForDisplayInternal(Child.Children[1], MaximumElements, Depth + 1));
+		}
+		else
+		{
+			Text = FormatForDisplayInternal(Child, MaximumElements, Depth + 1);
+		}
+
+		if (Value.Kind == EAssetDecodedValueKind::Struct && !Child.Name.IsEmpty())
+		{
+			Text = FString::Printf(TEXT("%s=%s"), *Child.Name, *Text);
+		}
+
+		Parts.Add(MoveTemp(Text));
+	}
+
+	const FString Joined = FString::Join(Parts, TEXT(", "));
+	return Value.Kind == EAssetDecodedValueKind::Struct ? FString::Printf(TEXT("{%s}"), *Joined) : FString::Printf(TEXT("%s: %s"), *Value.Value, *Joined);
+}
+
+FString FAssetPropertyValueDecoder::FormatForDisplay(const FAssetDecodedPropertyValue& Value, const int32 MaximumElements)
+{
+	return FormatForDisplayInternal(Value, MaximumElements, 0);
+}
