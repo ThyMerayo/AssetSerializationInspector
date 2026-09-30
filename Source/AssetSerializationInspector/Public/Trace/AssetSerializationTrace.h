@@ -67,6 +67,21 @@ struct FAssetSerializationTrace
 	TSharedPtr<FAssetSerializationTraceNode> Root;
 };
 
+struct FAssetPackageTraceCollection
+{
+	TMap<int32, FAssetSerializationTrace> ExportTraces;
+
+	const FAssetSerializationTrace* FindExportTrace(const int32 ExportIndex) const
+	{
+		if (ExportIndex == INDEX_NONE)
+		{
+			return nullptr;
+		}
+
+		return ExportTraces.Find(ExportIndex);
+	}
+};
+
 struct FAssetByteRange
 {
 	int64 Offset = 0;

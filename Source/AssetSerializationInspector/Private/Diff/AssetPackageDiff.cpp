@@ -8,6 +8,7 @@
 #include "Diff/AssetByteDiff.h"
 #include "Diff/AssetDecodedValueDiff.h"
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -314,7 +315,46 @@ namespace
 		const FAssetPackageDocument& Document;
 		const FAssetPackageExportEntry& Export;
 		const FAssetSerializationTraceNode* Node;
+		FAssetArchetypeResolver* ArchetypeResolver = nullptr;
 	};
+
+	FString FormatFinalValue(const FAssetDecodedPropertyValue& Final)
+	{
+		constexpr int32 MaximumShownElements = 8;
+
+		TArray<FString> Parts;
+		for (const FAssetDecodedPropertyValue& Child : Final.Children)
+		{
+			if (Parts.Num() == MaximumShownElements)
+			{
+				Parts.Add(TEXT("..."));
+				break;
+			}
+
+			Parts.Add(Child.Kind == EAssetDecodedValueKind::MapEntry && Child.Children.Num() == 2 ? FString::Printf(TEXT("%s=%s"), *Child.Children[0].Value, *Child.Children[1].Value) : Child.Value);
+		}
+
+		return FString::Printf(TEXT("%s: %s"), *Final.Value, *FString::Join(Parts, TEXT(", ")));
+	}
+
+	/** Reconstructs the final contents of a set or map that may have been stored as a delta against its archetype. */
+	void ResolveFinalValue(const FPropertyDiffNodeData& Data, const FAssetDecodedPropertyValue& Decoded, FString& OutFinalValue, FString& OutNote)
+	{
+		if (Data.ArchetypeResolver == nullptr || Data.Node == nullptr || (Decoded.Kind != EAssetDecodedValueKind::Set && Decoded.Kind != EAssetDecodedValueKind::Map))
+		{
+			return;
+		}
+
+		FAssetArchetypeValue Final;
+		FString Message;
+		if (!Data.ArchetypeResolver->ResolveFinalContainerValue(Data.Export.Index, Data.Node->Name, Data.Node->ArrayIndex, Decoded, Final, Message))
+		{
+			return;
+		}
+
+		OutFinalValue = FormatFinalValue(Final.Value);
+		OutNote = Final.Note;
+	}
 
 	bool ArePropertyBytesIdentical(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData)
 	{
@@ -471,6 +511,7 @@ namespace
 			Entry.bHasOldDecodedValue = true;
 			Entry.OldDecodedValue = OldDecoded.Value;
 			Entry.OldValue = OldDecoded.Value;
+			ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
 		}
 		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
 		if (NewDecoded.IsSuccess())
@@ -478,6 +519,7 @@ namespace
 			Entry.bHasNewDecodedValue = true;
 			Entry.NewDecodedValue = NewDecoded.Value;
 			Entry.NewValue = NewDecoded.Value;
+			ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
 		}
 
 		const FAssetDecodedPropertyValue* OldPtr = OldDecoded.IsSuccess() ? &OldDecoded : nullptr;
@@ -515,7 +557,7 @@ namespace
 			const FAssetSerializationTraceNode* OldNode = OldFound != nullptr ? *OldFound : nullptr;
 			const FAssetSerializationTraceNode* NewNode = NewFound != nullptr ? *NewFound : nullptr;
 
-			BuildOnePropertyDiff({ OldData.Document, OldData.Export, OldNode }, { NewData.Document, NewData.Export, NewNode }, Key, PayloadEntry);
+			BuildOnePropertyDiff({ OldData.Document, OldData.Export, OldNode, OldData.ArchetypeResolver }, { NewData.Document, NewData.Export, NewNode, NewData.ArchetypeResolver }, Key, PayloadEntry);
 		}
 	}
 
@@ -524,6 +566,10 @@ namespace
 	{
 		const auto OldExports = BuildExportPathMap(OldDocument);
 		const auto NewExports = BuildExportPathMap(NewDocument);
+
+		// Resolvers cache the archetype packages they load, so they live for the whole comparison.
+		const TUniquePtr<FAssetArchetypeResolver> OldResolver = OldTraces != nullptr ? MakeUnique<FAssetArchetypeResolver>(OldDocument, *OldTraces) : nullptr;
+		const TUniquePtr<FAssetArchetypeResolver> NewResolver = NewTraces != nullptr ? MakeUnique<FAssetArchetypeResolver>(NewDocument, *NewTraces) : nullptr;
 
 		TSet<FString> Keys;
 		for (const auto& Pair : OldExports)
@@ -607,7 +653,7 @@ namespace
 
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
-					BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace }, { NewDocument, B, NewTrace }, Payload);
+					BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace, OldResolver.Get() }, { NewDocument, B, NewTrace, NewResolver.Get() }, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
 				{
