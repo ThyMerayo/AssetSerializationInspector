@@ -218,8 +218,11 @@ namespace
 		return FMemory::Memcmp(OldDocument.FileData.GetData() + OldRegion.Offset, NewDocument.FileData.GetData() + NewRegion.Offset, OldRegion.Size) == 0;
 	}
 
-	FAssetPackageDiffEntry MakeRegionEntry(
-		const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageHeaderRegion* OldRegion, const FAssetPackageHeaderRegion* NewRegion)
+	bool AreDifferencesShiftedOffsets(const FAssetPackageDocument& OldDocument, const FAssetPackageHeaderRegion& OldRegion, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, int64 Delta, int32& OutShiftedValues);
+
+	FAssetPackageDiffEntry MakeRegionEntry(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageHeaderRegion* OldRegion,
+		const FAssetPackageHeaderRegion* NewRegion, const int64 HeaderDelta)
 	{
 		const FAssetPackageHeaderRegion& Named = OldRegion != nullptr ? *OldRegion : *NewRegion;
 
@@ -262,6 +265,19 @@ namespace
 				{
 					Entry.ChangedByteCount += Span.Size;
 				}
+
+				// Tables that store absolute file offsets change when the data before them changes size, without changing meaning.
+				int32 ShiftedValues = 0;
+				if (AreDifferencesShiftedOffsets(OldDocument, *OldRegion, NewDocument, *NewRegion, Entry.ChangedSpans, HeaderDelta, ShiftedValues))
+				{
+					Entry.State = EAssetPackageDiffState::Moved;
+					Entry.Explanation = FText::Format(LOCTEXT("ShiftedOffsetsExplanation", "Only absolute file offsets differ: {0} stored offsets {1} by {2} bytes, the header's size change."),
+						FText::AsNumber(ShiftedValues), HeaderDelta < 0 ? LOCTEXT("ShiftedDown", "moved back") : LOCTEXT("ShiftedUp", "moved forward"), FText::AsNumber(FMath::Abs(HeaderDelta)));
+				}
+				else
+				{
+					Entry.Explanation = FText::Format(LOCTEXT("BytesDifferExplanation", "{0} of {1} bytes differ."), FText::AsNumber(Entry.ChangedByteCount), FText::AsNumber(OldRegion->Size));
+				}
 			}
 		}
 		else
@@ -270,6 +286,236 @@ namespace
 		}
 
 		return Entry;
+	}
+
+	/** Reads a little-endian integer of 4 or 8 bytes, sign-extended. */
+	int64 ReadInteger(const FAssetPackageDocument& Document, const int64 Offset, const int32 Width)
+	{
+		if (Width == 4)
+		{
+			int32 Value = 0;
+			FMemory::Memcpy(&Value, Document.FileData.GetData() + Offset, sizeof(Value));
+			return Value;
+		}
+
+		int64 Value = 0;
+		FMemory::Memcpy(&Value, Document.FileData.GetData() + Offset, sizeof(Value));
+		return Value;
+	}
+
+	/**
+	 * True when every difference between two same-sized regions is an absolute file offset (a 4 or 8 byte integer) that grew by
+	 * exactly Delta. That is what happens to the offsets stored in a table when the data in front of it changes size.
+	 */
+	bool AreDifferencesShiftedOffsets(const FAssetPackageDocument& OldDocument, const FAssetPackageHeaderRegion& OldRegion, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, const int64 Delta, int32& OutShiftedValues)
+	{
+		OutShiftedValues = 0;
+
+		if (Delta == 0 || Spans.IsEmpty())
+		{
+			return false;
+		}
+
+		int64 CoveredUntil = 0;
+
+		for (const FAssetByteDiffSpan& Span : Spans)
+		{
+			const int64 SpanStart = FMath::Max(Span.Offset, CoveredUntil);
+			const int64 SpanEnd = Span.End();
+
+			if (SpanStart >= SpanEnd)
+			{
+				continue;
+			}
+
+			bool bExplained = false;
+
+			for (const int32 Width : { 8, 4 })
+			{
+				// The integer must contain the whole remaining span, and not start before what is already explained.
+				for (int64 Start = FMath::Max(CoveredUntil, SpanEnd - Width); Start <= SpanStart && !bExplained; ++Start)
+				{
+					if (Start + Width > OldRegion.Size)
+					{
+						continue;
+					}
+
+					if (ReadInteger(NewDocument, NewRegion.Offset + Start, Width) - ReadInteger(OldDocument, OldRegion.Offset + Start, Width) == Delta)
+					{
+						bExplained = true;
+						CoveredUntil = Start + Width;
+						++OutShiftedValues;
+					}
+				}
+
+				if (bExplained)
+				{
+					break;
+				}
+			}
+
+			if (!bExplained)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	FString DescribeThumbnails(const FAssetPackageDocument& Document)
+	{
+		TArray<FString> Parts;
+		for (const FAssetPackageThumbnailEntry& Thumbnail : AssetPackageHeaderLayout::ReadThumbnailIndex(Document))
+		{
+			Parts.Add(FString::Printf(TEXT("%s %s%s"), *Thumbnail.ObjectClassName, *Thumbnail.ObjectPath, Thumbnail.bEmpty ? TEXT(" (no image)") : TEXT("")));
+		}
+
+		return FString::Join(Parts, TEXT(", "));
+	}
+
+	FString SignedBytes(const int64 Value)
+	{
+		return FString::Printf(TEXT("%s%lld"), Value > 0 ? TEXT("+") : TEXT(""), Value);
+	}
+
+	/** A sentence about how the header changed size, broken down by region. Empty when its size did not change. */
+	FText ExplainHeaderSize(const TArray<FAssetPackageHeaderRegion>& OldRegions, const TArray<FAssetPackageHeaderRegion>& NewRegions, const int64 HeaderDelta)
+	{
+		if (HeaderDelta == 0)
+		{
+			return FText::GetEmpty();
+		}
+
+		struct FRegionChange
+		{
+			FText Name;
+			int64 Delta = 0;
+		};
+
+		TArray<FRegionChange> Changes;
+
+		const auto Consider = [&Changes](const FAssetPackageHeaderRegion& Region, const int64 OldSize, const int64 NewSize) {
+			if (OldSize != NewSize)
+			{
+				Changes.Add({ Region.Name, NewSize - OldSize });
+			}
+		};
+
+		for (const FAssetPackageHeaderRegion& NewRegion : NewRegions)
+		{
+			const FAssetPackageHeaderRegion* OldRegion = OldRegions.FindByPredicate([&NewRegion](const FAssetPackageHeaderRegion& Region) { return Region.Key == NewRegion.Key; });
+			Consider(NewRegion, OldRegion != nullptr ? OldRegion->Size : 0, NewRegion.Size);
+		}
+
+		for (const FAssetPackageHeaderRegion& OldRegion : OldRegions)
+		{
+			if (!NewRegions.ContainsByPredicate([&OldRegion](const FAssetPackageHeaderRegion& Region) { return Region.Key == OldRegion.Key; }))
+			{
+				Consider(OldRegion, OldRegion.Size, 0);
+			}
+		}
+
+		Changes.Sort([](const FRegionChange& Left, const FRegionChange& Right) { return FMath::Abs(Left.Delta) > FMath::Abs(Right.Delta); });
+
+		TArray<FString> Parts;
+		for (const FRegionChange& Change : Changes)
+		{
+			Parts.Add(FString::Printf(TEXT("%s (%s)"), *Change.Name.ToString(), *SignedBytes(Change.Delta)));
+		}
+
+		return FText::Format(LOCTEXT("HeaderSizeExplanation", "The header is {0} bytes {1}: {2}."), FText::AsNumber(FMath::Abs(HeaderDelta)),
+			HeaderDelta < 0 ? LOCTEXT("Smaller", "smaller") : LOCTEXT("Larger", "larger"), FText::FromString(FString::Join(Parts, TEXT(", "))));
+	}
+
+	FText ExplainField(const FAssetPackageDiffEntry& Field, const int64 HeaderDelta, const FText& HeaderExplanation)
+	{
+		if (Field.State == EAssetPackageDiffState::Unchanged)
+		{
+			return FText::GetEmpty();
+		}
+
+		if (Field.Key == TEXT("SavedHash"))
+		{
+			return LOCTEXT("SavedHashExplanation", "A hash of the saved file. It changes whenever anything in the file changes, so it is always different after a real change.");
+		}
+
+		if (Field.Key == TEXT("PackageSource"))
+		{
+			return LOCTEXT("PackageSourceExplanation", "A checksum of the saved file's name. It differs when the package was saved under a different file name.");
+		}
+
+		if (Field.Key == TEXT("PersistentGuid"))
+		{
+			return LOCTEXT("PersistentGuidExplanation", "The package's identity. The engine gives the package a new one when it is saved to a different file.");
+		}
+
+		if (Field.Key == TEXT("TotalHeaderSize"))
+		{
+			return HeaderExplanation;
+		}
+
+		if (Field.Key.EndsWith(TEXT("Offset")) && Field.OldValue.IsNumeric() && Field.NewValue.IsNumeric())
+		{
+			const int64 OldOffset = FCString::Atoi64(*Field.OldValue);
+			const int64 NewOffset = FCString::Atoi64(*Field.NewValue);
+
+			if (NewOffset == 0)
+			{
+				return LOCTEXT("OffsetRemovedExplanation", "This part of the package no longer exists, so it has no offset.");
+			}
+
+			if (OldOffset == 0)
+			{
+				return LOCTEXT("OffsetAddedExplanation", "This part of the package did not exist before.");
+			}
+
+			if (NewOffset - OldOffset == HeaderDelta)
+			{
+				return FText::Format(LOCTEXT("OffsetShiftedExplanation", "Moved by {0} bytes, the same as the header's size change: it sits after the part of the header that changed size."),
+					FText::FromString(SignedBytes(HeaderDelta)));
+			}
+
+			return FText::Format(LOCTEXT("OffsetMovedExplanation", "Moved by {0} bytes."), FText::FromString(SignedBytes(NewOffset - OldOffset)));
+		}
+
+		return FText::GetEmpty();
+	}
+
+	FText ExplainRegion(const FAssetPackageDiffEntry& Region, const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument)
+	{
+		const bool bThumbnails = Region.Key == TEXT("ThumbnailTable") || Region.Key == TEXT("ThumbnailData");
+
+		if (Region.State == EAssetPackageDiffState::Removed && bThumbnails)
+		{
+			return FText::Format(
+				LOCTEXT("ThumbnailsRemovedExplanation", "The package was saved without thumbnails. Before it stored: {0}. Thumbnails are only written when the package has them loaded in memory."),
+				FText::FromString(DescribeThumbnails(OldDocument)));
+		}
+
+		if (Region.State == EAssetPackageDiffState::Added && bThumbnails)
+		{
+			return FText::Format(LOCTEXT("ThumbnailsAddedExplanation", "The package now stores thumbnails: {0}."), FText::FromString(DescribeThumbnails(NewDocument)));
+		}
+
+		if (Region.State == EAssetPackageDiffState::Added)
+		{
+			return LOCTEXT("RegionAddedExplanation", "Only the new header has this part.");
+		}
+
+		if (Region.State == EAssetPackageDiffState::Removed)
+		{
+			return LOCTEXT("RegionRemovedExplanation", "Only the old header had this part.");
+		}
+
+		if (Region.OldSize != Region.NewSize)
+		{
+			return FText::Format(LOCTEXT("RegionResizedExplanation", "{0} by {1} bytes."), Region.NewSize > Region.OldSize ? LOCTEXT("Grew", "Grew") : LOCTEXT("Shrank", "Shrank"),
+				FText::AsNumber(FMath::Abs(Region.NewSize - Region.OldSize)));
+		}
+
+		return FText::GetEmpty();
 	}
 
 	FString DescribeHeaderSize(const int64 Size, const int64 OtherSize, const bool bIsNew)
@@ -302,6 +548,9 @@ void AssetPackageDiff::AppendHeaderDiff(const FAssetPackageDocument& OldDocument
 	Header.NewOffset = 0;
 	Header.OldSize = OldHeaderSize;
 	Header.NewSize = NewHeaderSize;
+	const int64 HeaderDelta = NewHeaderSize - OldHeaderSize;
+	const FText HeaderExplanation = ExplainHeaderSize(OldRegions, NewRegions, HeaderDelta);
+	Header.Explanation = HeaderExplanation;
 	Header.OldValue = DescribeHeaderSize(OldHeaderSize, NewHeaderSize, false);
 	Header.NewValue = DescribeHeaderSize(NewHeaderSize, OldHeaderSize, true);
 
@@ -322,20 +571,26 @@ void AssetPackageDiff::AppendHeaderDiff(const FAssetPackageDocument& OldDocument
 
 	for (const FString& Key : Keys)
 	{
-		FAssetPackageDiffEntry RegionEntry = MakeRegionEntry(OldDocument, NewDocument, FindRegion(OldRegions, Key), FindRegion(NewRegions, Key));
+		FAssetPackageDiffEntry RegionEntry = MakeRegionEntry(OldDocument, NewDocument, FindRegion(OldRegions, Key), FindRegion(NewRegions, Key), HeaderDelta);
 
 		if (Key == TEXT("Summary"))
 		{
 			// The summary is where the individual fields live.
 			AddSummaryFields(RegionEntry.Children, OldDocument, NewDocument);
 
-			for (const FAssetPackageDiffEntry& Field : RegionEntry.Children)
+			for (FAssetPackageDiffEntry& Field : RegionEntry.Children)
 			{
+				Field.Explanation = ExplainField(Field, HeaderDelta, HeaderExplanation);
 				if (Field.State != EAssetPackageDiffState::Unchanged && RegionEntry.State == EAssetPackageDiffState::Unchanged)
 				{
 					RegionEntry.State = EAssetPackageDiffState::Modified;
 				}
 			}
+		}
+
+		if (RegionEntry.Explanation.IsEmpty())
+		{
+			RegionEntry.Explanation = ExplainRegion(RegionEntry, OldDocument, NewDocument);
 		}
 
 		if (RegionEntry.State != EAssetPackageDiffState::Unchanged && Header.State == EAssetPackageDiffState::Unchanged)

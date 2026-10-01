@@ -93,6 +93,9 @@ struct FAssetPackageDiffEntry
 
 	FString TypeName;
 
+	/** Why the entry differs, when that can be said: a consequence of another change, an expected effect of saving, and so on. */
+	FText Explanation;
+
 	int64 OldOffset = INDEX_NONE;
 	int64 NewOffset = INDEX_NONE;
 

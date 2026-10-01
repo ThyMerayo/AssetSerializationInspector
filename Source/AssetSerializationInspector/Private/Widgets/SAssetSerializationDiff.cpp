@@ -143,7 +143,7 @@ public:
 
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SExpanderArrow, SharedThis(this)).IndentAmount(16.0f)]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2.0f, 0.0f, 6.0f, 0.0f)[SNew(STextBlock).Text(GetStateSymbol()).ToolTipText(GetStateText())]
-				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName)];
+				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName).ToolTipText(Diff.Explanation)];
 		}
 
 		if (ColumnName == TEXT("Old") && Diff.Kind == EAssetPackageDiffKind::Property)
@@ -321,6 +321,11 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				120.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Justification(ETextJustify::Right)]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock)
+				.Text(this, &SAssetSerializationDiff::GetSelectedExplanationText)
+				.AutoWrapText(true)
+				.Visibility_Lambda([this]() { return GetSelectedExplanationText().IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible; })
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SBox).MinDesiredHeight(400.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 
 			// Tree
@@ -1359,6 +1364,11 @@ FText SAssetSerializationDiff::GetSummaryText() const
 							 "{0} modified · {1} moved · "
 							 "{2} added · {3} removed"),
 		FText::AsNumber(Counts.Modified), FText::AsNumber(Counts.Moved), FText::AsNumber(Counts.Added), FText::AsNumber(Counts.Removed));
+}
+
+FText SAssetSerializationDiff::GetSelectedExplanationText() const
+{
+	return SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.Explanation : FText::GetEmpty();
 }
 
 FText SAssetSerializationDiff::GetSelectedByteComparisonText() const

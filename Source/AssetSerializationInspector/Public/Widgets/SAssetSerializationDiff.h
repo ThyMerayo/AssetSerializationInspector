@@ -155,6 +155,7 @@ private:
 	FText GetSelectedNewHexRichText() const;
 	FText GetSelectedNewHexPlainText() const;
 	FText GetSelectedByteComparisonText() const;
+	FText GetSelectedExplanationText() const;
 	int64 GetSelectedChangedByteCount() const;
 	FText GetComparisonTitle() const;
 	FText GetChangeClassificationText() const;

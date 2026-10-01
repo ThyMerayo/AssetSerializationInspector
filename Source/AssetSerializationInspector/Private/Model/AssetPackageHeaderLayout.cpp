@@ -5,12 +5,68 @@
 #include "UObject/PackageFileSummary.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackageMemoryReader.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 
 int64 AssetPackageHeaderLayout::GetHeaderSize(const FAssetPackageDocument& Document)
 {
 	const int64 TotalHeaderSize = Document.PackageSummary.TotalHeaderSize;
 
 	return TotalHeaderSize > 0 && TotalHeaderSize <= Document.GetFileSize() ? TotalHeaderSize : Document.GetFileSize();
+}
+
+TArray<FAssetPackageThumbnailEntry> AssetPackageHeaderLayout::ReadThumbnailIndex(const FAssetPackageDocument& Document)
+{
+	TArray<FAssetPackageThumbnailEntry> Entries;
+
+	const int64 TableOffset = Document.PackageSummary.ThumbnailTableOffset;
+	const int64 HeaderSize = GetHeaderSize(Document);
+
+	if (TableOffset <= 0 || TableOffset >= HeaderSize)
+	{
+		return Entries;
+	}
+
+	FAssetPackageMemoryReader Reader(Document.FileData, TableOffset, HeaderSize - TableOffset);
+
+	int32 Count = 0;
+	Reader << Count;
+
+	// Each entry takes at least three length-prefixed fields, so a larger count cannot be real.
+	if (Reader.IsError() || Count < 0 || Count > (HeaderSize - TableOffset) / 12)
+	{
+		return Entries;
+	}
+
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FAssetPackageThumbnailEntry Entry;
+		FText Error;
+
+		if (!AssetSerializationPrimitives::ReadSerializedString(Reader, Entry.ObjectClassName, Error) || !AssetSerializationPrimitives::ReadSerializedString(Reader, Entry.ObjectPath, Error))
+		{
+			return TArray<FAssetPackageThumbnailEntry>();
+		}
+
+		Reader << Entry.FileOffset;
+
+		if (Reader.IsError())
+		{
+			return TArray<FAssetPackageThumbnailEntry>();
+		}
+
+		// An image starts with its width and height; the placeholder thumbnails have none.
+		int32 Dimensions[2] = { 0, 0 };
+		if (Entry.FileOffset >= 0 && Document.IsValidRange(Entry.FileOffset, sizeof(Dimensions)))
+		{
+			FMemory::Memcpy(Dimensions, Document.FileData.GetData() + Entry.FileOffset, sizeof(Dimensions));
+		}
+		Entry.bEmpty = Dimensions[0] <= 0 || Dimensions[1] <= 0;
+
+		Entries.Add(MoveTemp(Entry));
+	}
+
+	return Entries;
 }
 
 TArray<FAssetPackageHeaderRegion> AssetPackageHeaderLayout::Build(const FAssetPackageDocument& Document)
@@ -47,6 +103,23 @@ TArray<FAssetPackageHeaderRegion> AssetPackageHeaderLayout::Build(const FAssetPa
 		TEXT("SoftPackageReferences"), NSLOCTEXT("AssetPackageHeader", "SoftPackageReferences", "Soft package references"), Summary.SoftPackageReferencesOffset, Summary.SoftPackageReferencesCount);
 	AddTable(TEXT("SearchableNames"), NSLOCTEXT("AssetPackageHeader", "SearchableNames", "Searchable names"), Summary.SearchableNamesOffset);
 	AddTable(TEXT("ThumbnailTable"), NSLOCTEXT("AssetPackageHeader", "ThumbnailTable", "Thumbnail table"), Summary.ThumbnailTableOffset);
+
+	// The thumbnails' image data sits just before the table that indexes it, and nothing else in the summary points at it.
+	// Without its own region those bytes would be counted as part of whichever table precedes them.
+	const TArray<FAssetPackageThumbnailEntry> Thumbnails = ReadThumbnailIndex(Document);
+	if (!Thumbnails.IsEmpty())
+	{
+		int64 DataStart = Summary.ThumbnailTableOffset;
+		for (const FAssetPackageThumbnailEntry& Thumbnail : Thumbnails)
+		{
+			if (Thumbnail.FileOffset > 0 && Thumbnail.FileOffset < DataStart)
+			{
+				DataStart = Thumbnail.FileOffset;
+			}
+		}
+
+		AddTable(TEXT("ThumbnailData"), NSLOCTEXT("AssetPackageHeader", "ThumbnailData", "Thumbnail data"), DataStart, Thumbnails.Num());
+	}
 	AddTable(
 		TEXT("ImportTypeHierarchies"), NSLOCTEXT("AssetPackageHeader", "ImportTypeHierarchies", "Import type hierarchies"), Summary.ImportTypeHierarchiesOffset, Summary.ImportTypeHierarchiesCount);
 	AddTable(TEXT("AssetRegistryData"), NSLOCTEXT("AssetPackageHeader", "AssetRegistryData", "Asset registry data"), Summary.AssetRegistryDataOffset);
