@@ -27,6 +27,8 @@
 #include "Diff/AssetByteDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Report/AssetAnalysisReport.h"
+#include "Report/AssetReportWriter.h"
 #include "Save/AssetSaveHistoryManager.h"
 #include "Widgets/SSelectableRichText.h"
 
@@ -284,7 +286,15 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 			8.0f, 6.0f)[SNew(SHorizontalBox) + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSummaryText)]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SCheckBox)
 					.IsChecked_Lambda([this]() { return DiffFilter.bShowUnchanged ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]]
+					.OnCheckStateChanged(this, &SAssetSerializationDiff::HandleShowUnchangedChanged)[SNew(STextBlock).Text(LOCTEXT("ShowUnchanged", "Show unchanged"))]]
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(8.0f, 0.0f, 0.0f, 0.0f)[SNew(SButton)
+						.Text(LOCTEXT("ExportReport", "Export report..."))
+						.ToolTipText(LOCTEXT("ExportReportTooltip",
+							"Save the comparison, save analysis and repeated-save patterns as a text or JSON report. The listed differences follow the current search and filters."))
+						.OnClicked(this, &SAssetSerializationDiff::HandleExportReportClicked)]]
 
 		// Search and state filters
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(SHorizontalBox)
@@ -745,6 +755,78 @@ FReply SAssetSerializationDiff::HandleBrowseNewClicked()
 	{
 		NewFilenameTextBox->SetText(FText::FromString(Filename));
 	}
+	return FReply::Handled();
+}
+
+bool SAssetSerializationDiff::BrowseForReportFile(FString& OutFilename)
+{
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+
+	if (DesktopPlatform == nullptr)
+	{
+		return false;
+	}
+
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+	TArray<FString> SelectedFiles;
+	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(),
+		TEXT("AssetSerializationReport.txt"), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles);
+
+	if (!bSelected || SelectedFiles.IsEmpty())
+	{
+		return false;
+	}
+
+	OutFilename = SelectedFiles[0];
+
+	// The format follows the extension, so make sure there is one.
+	if (FPaths::GetExtension(OutFilename).IsEmpty())
+	{
+		OutFilename += TEXT(".txt");
+	}
+
+	return true;
+}
+
+FReply SAssetSerializationDiff::HandleExportReportClicked()
+{
+	if (!DiffSession.IsValid() || !DiffSession->DiffResult.IsSet())
+	{
+		StatusText = LOCTEXT("ExportNoComparison", "There is no comparison to export.");
+		return FReply::Handled();
+	}
+
+	FString Filename;
+	if (!BrowseForReportFile(Filename))
+	{
+		return FReply::Handled();
+	}
+
+	TArray<FRepeatedSavePattern> RepeatedSavePatterns;
+	if (!DiffSession->PackageName.IsNone())
+	{
+		const FAssetSaveHistory* History = FAssetSaveHistoryManager::Get().FindHistory(DiffSession->PackageName);
+
+		if (History != nullptr && History->Entries.Num() >= 2)
+		{
+			RepeatedSavePatterns = FRepeatedSaveAnalyzer::Analyze(*History);
+		}
+	}
+
+	const FAssetSaveAnalysis* Analysis = DiffSession->Analysis.IsSet() ? &DiffSession->Analysis.GetValue() : nullptr;
+	const FAssetAnalysisReport Report = AssetAnalysisReport::Build(DiffSession->DiffResult.GetValue(), Analysis, RepeatedSavePatterns, &DiffFilter);
+
+	FText Error;
+	if (AssetReportWriter::SaveToFile(Report, Filename, Error))
+	{
+		StatusText = FText::Format(LOCTEXT("ExportSucceeded", "Report saved to {0}"), FText::FromString(Filename));
+	}
+	else
+	{
+		StatusText = Error;
+	}
+
 	return FReply::Handled();
 }
 
