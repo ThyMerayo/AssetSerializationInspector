@@ -43,7 +43,7 @@ FString FAssetSaveObserver::MakeSnapshotFilename(const FString& SourceFilename) 
 
 void FAssetSaveObserver::HandlePreSavePackage(UPackage* Package, FObjectPreSaveContext SaveContext)
 {
-	if (Package == nullptr)
+	if (Package == nullptr || SuppressionCount > 0)
 	{
 		return;
 	}
@@ -139,9 +139,48 @@ static EObservedSaveChangeKind ClassifySave(const FAssetPackageDiffResult& Diff)
 	return EObservedSaveChangeKind::MetadataOnly;
 }
 
+TSharedPtr<FObservedAssetSave> FAssetSaveObserver::BuildObservedSave(const FName PackageName, const FString& BeforeFilename, const FString& AfterFilename)
+{
+	TSharedPtr<FObservedAssetSave> Save = MakeShared<FObservedAssetSave>();
+	Save->SaveId = NextSaveId++;
+	Save->PackageName = PackageName;
+	Save->BeforeFilename = BeforeFilename;
+	Save->AfterFilename = AfterFilename;
+
+	FText Error;
+
+	if (!BeforeFilename.IsEmpty())
+	{
+		Save->Before = FAssetPackageReader::LoadFromFile(BeforeFilename, Error);
+	}
+
+	Save->After = FAssetPackageReader::LoadFromFile(AfterFilename, Error);
+
+	if (Save->Before.IsValid())
+	{
+		Save->BeforeFields = FAssetPackageFieldDecoder::Decode(*Save->Before);
+	}
+
+	if (Save->After.IsValid())
+	{
+		Save->AfterFields = FAssetPackageFieldDecoder::Decode(*Save->After);
+	}
+
+	if (Save->Before.IsValid() && Save->After.IsValid())
+	{
+		Save->Diff = AssetPackageDiff::Compare(*Save->Before, *Save->After, Save->BeforeFields.Get(), Save->AfterFields.Get());
+		Save->Analysis = FAssetSaveAnalyzer::Analyze(Save->Diff, *Save->Before, *Save->After);
+	}
+
+	Save->Timestamp = FDateTime::Now();
+	Save->ChangeKind = ClassifySave(Save->Diff);
+
+	return Save;
+}
+
 void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPackage* Package, FObjectPostSaveContext SaveContext)
 {
-	if (Package == nullptr)
+	if (Package == nullptr || SuppressionCount > 0)
 	{
 		return;
 	}
@@ -160,39 +199,9 @@ void FAssetSaveObserver::HandlePackageSaved(const FString& PackageFilename, UPac
 		return;
 	}
 
-	TSharedPtr<FObservedAssetSave> Save = MakeShared<FObservedAssetSave>();
-	Save->SaveId = NextSaveId++;
-	Save->PackageName = PackageName;
-
-	FText Error;
-
-	if (Snapshot->bHadPreviousFile)
-	{
-		Save->Before = FAssetPackageReader::LoadFromFile(Snapshot->BeforeFilename, Error);
-	}
-
-	Save->After = FAssetPackageReader::LoadFromFile(PackageFilename, Error);
-
-	// We'll implement these below.
-	if (Save->Before.IsValid())
-	{
-		Save->BeforeFields = FAssetPackageFieldDecoder::Decode(*Save->Before);
-	}
-
-	if (Save->After.IsValid())
-	{
-		Save->AfterFields = FAssetPackageFieldDecoder::Decode(*Save->After);
-	}
-
-	if (Save->Before.IsValid() && Save->After.IsValid())
-	{
-		Save->Diff = AssetPackageDiff::Compare(*Save->Before, *Save->After, Save->BeforeFields.Get(), Save->AfterFields.Get());
-		Save->Analysis = FAssetSaveAnalyzer::Analyze(Save->Diff, *Save->Before, *Save->After);
-	}
+	const TSharedPtr<FObservedAssetSave> Save = BuildObservedSave(PackageName, Snapshot->bHadPreviousFile ? Snapshot->BeforeFilename : FString(), PackageFilename);
 
 	PendingSaves.Remove(PackageName);
-	Save->Timestamp = FDateTime::Now();
-	Save->ChangeKind = ClassifySave(Save->Diff);
 	ObservedSaves.Add(PackageName, Save);
 	RecentSaves.Insert(Save, 0);
 	FAssetSaveHistoryManager::Get().RecordSave(Save);

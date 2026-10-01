@@ -5,7 +5,10 @@
 #include "ContentBrowserMenuContexts.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "LevelEditor.h"
+#include "Misc/ScopedSlowTask.h"
 #include "ToolMenus.h"
+#include "UObject/Package.h"
+#include "UObject/UObjectGlobals.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Notifications/SNotificationList.h"
@@ -13,6 +16,7 @@
 
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
+#include "Save/AssetNoOpResaveTest.h"
 #include "Save/AssetSaveObserver.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
@@ -164,6 +168,12 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					})));
 			}
 
+			InSection.AddMenuEntry("RunNoOpResaveTest", LOCTEXT("NoOpResaveTest", "Run No-op Resave Test"),
+				LOCTEXT("NoOpResaveTestTooltip",
+					"Save the selected assets twice to temporary files, without changing them, and report what the save alone changes "
+					"and whether it does so every time. The assets on disk are not modified."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunNoOpResaveTests, SelectedPackages)));
+
 			if (bAnyMonitored)
 			{
 				InSection.AddMenuEntry("StopAssetSerializationMonitoring", LOCTEXT("StopMonitoring", "Stop Monitoring"), LOCTEXT("StopMonitoringTooltip", "Stop monitoring the selected assets."),
@@ -225,6 +235,83 @@ void FAssetSerializationInspectorModule::ShowSaveDiffNotification(TSharedPtr<FOb
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::OpenObservedSaveDiff, Save), SNotificationItem::CS_None));
 
 	FSlateNotificationManager::Get().AddNotification(Info);
+}
+
+void FAssetSerializationInspectorModule::RunNoOpResaveTests(TArray<FName> PackageNames)
+{
+	FScopedSlowTask SlowTask(PackageNames.Num(), LOCTEXT("RunningNoOpResaveTest", "Running no-op resave test..."));
+	SlowTask.MakeDialog();
+
+	for (const FName PackageName : PackageNames)
+	{
+		SlowTask.EnterProgressFrame(1.0f, FText::FromString(FPackageName::GetShortName(PackageName)));
+
+		UPackage* Package = LoadPackage(nullptr, *PackageName.ToString(), LOAD_None);
+		ShowNoOpResaveNotification(AssetNoOpResaveTest::Run(Package));
+	}
+}
+
+void FAssetSerializationInspectorModule::ShowNoOpResaveNotification(const FNoOpResaveResult& Result)
+{
+	const FText AssetName = FText::FromString(FPackageName::GetShortName(Result.PackageName));
+
+	FText Message;
+	SNotificationItem::ECompletionState State = SNotificationItem::CS_None;
+
+	if (!Result.bSucceeded)
+	{
+		Message = FText::Format(LOCTEXT("NoOpResaveFailed", "No-op resave test of {0} failed: {1}"), AssetName, Result.Error);
+		State = SNotificationItem::CS_Fail;
+	}
+	else if (Result.bOriginalFileModified)
+	{
+		Message = FText::Format(LOCTEXT("NoOpResaveModifiedOriginal", "No-op resave test of {0}: the original file changed during the test, so the result cannot be trusted"), AssetName);
+		State = SNotificationItem::CS_Fail;
+	}
+	else
+	{
+		switch (Result.Verdict)
+		{
+			case ENoOpResaveVerdict::Stable:
+				Message = FText::Format(LOCTEXT("NoOpResaveStable", "{0}: resaving without changes leaves the file byte-identical"), AssetName);
+				State = SNotificationItem::CS_Success;
+				break;
+
+			case ENoOpResaveVerdict::NormalizedOnFirstSave:
+				Message = FText::Format(LOCTEXT("NoOpResaveNormalized", "{0}: the first resave changes the file, later resaves change nothing more"), AssetName);
+				break;
+
+			case ENoOpResaveVerdict::Unstable:
+				Message = FText::Format(LOCTEXT("NoOpResaveUnstable", "{0}: resaving without changes keeps changing the file"), AssetName);
+				break;
+		}
+	}
+
+	FNotificationInfo Info(Message);
+	Info.ExpireDuration = 10.0f;
+	Info.bFireAndForget = true;
+
+	if (Result.bSucceeded)
+	{
+		if (Result.FirstResave.IsValid() && Result.FirstResave->HasChanges())
+		{
+			Info.ButtonDetails.Add(
+				FNotificationButtonInfo(LOCTEXT("ViewFirstResaveButton", "View First Resave"), LOCTEXT("ViewFirstResaveTooltip", "Open what the first resave changed compared with the file on disk."),
+					FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::OpenObservedSaveDiff, Result.FirstResave), SNotificationItem::CS_None));
+		}
+
+		if (Result.SecondResave.IsValid() && Result.SecondResave->HasChanges())
+		{
+			Info.ButtonDetails.Add(
+				FNotificationButtonInfo(LOCTEXT("ViewSecondResaveButton", "View Second Resave"), LOCTEXT("ViewSecondResaveTooltip", "Open what a second resave changed compared with the first one."),
+					FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::OpenObservedSaveDiff, Result.SecondResave), SNotificationItem::CS_None));
+		}
+	}
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(State);
+	}
 }
 
 static TSharedRef<FAssetSerializationDiffSession> MakeDiffSession(const FObservedAssetSave& Save)

@@ -77,6 +77,25 @@ public:
 	void Startup();
 	void Shutdown();
 
+	/**
+	 * Loads, decodes and compares two versions of a package into the record the UI works with.
+	 *
+	 * @param BeforeFilename The earlier version, or empty when there was none.
+	 * @param AfterFilename The later version.
+	 */
+	TSharedPtr<FObservedAssetSave> BuildObservedSave(FName PackageName, const FString& BeforeFilename, const FString& AfterFilename);
+
+	/** While one of these exists, saves are not observed. Used when the plugin saves packages itself. */
+	class FScopedSuppression
+	{
+	public:
+		FScopedSuppression() { ++FAssetSaveObserver::Get().SuppressionCount; }
+		~FScopedSuppression() { --FAssetSaveObserver::Get().SuppressionCount; }
+
+		FScopedSuppression(const FScopedSuppression&) = delete;
+		FScopedSuppression& operator=(const FScopedSuppression&) = delete;
+	};
+
 private:
 	void HandlePreSavePackage(UPackage* Package, FObjectPreSaveContext SaveContext);
 	void HandlePackageSaved(const FString& PackageFilename, UPackage* Package, FObjectPostSaveContext SaveContext);
@@ -84,6 +103,7 @@ private:
 
 private:
 	FObservedSaveId NextSaveId = 1;
+	int32 SuppressionCount = 0;
 
 	FOnObservedAssetSave ObservedAssetSaveEvent;
 

@@ -6,6 +6,7 @@
 
 class SAssetSerializationDiff;
 struct FAssetSerializationDiffSession;
+struct FNoOpResaveResult;
 struct FObservedAssetSave;
 
 class FAssetSerializationInspectorModule : public IModuleInterface
@@ -27,6 +28,8 @@ private:
 	void HandleObservedAssetSave(TSharedPtr<FObservedAssetSave> Save);
 	void ShowSaveDiffNotification(TSharedPtr<FObservedAssetSave> Save);
 	void OpenObservedSaveDiff(TSharedPtr<FObservedAssetSave> Save);
+	void RunNoOpResaveTests(TArray<FName> PackageNames);
+	void ShowNoOpResaveNotification(const FNoOpResaveResult& Result);
 
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
