@@ -102,8 +102,10 @@ private:
 	FReply HandleBrowseOldClicked();
 	FReply HandleBrowseNewClicked();
 	FReply HandleCompareClicked();
+	FReply HandleExportReportClicked();
 
 	bool BrowseForAsset(const FText& DialogTitle, FString& OutFilename);
+	bool BrowseForReportFile(const FString& DefaultFilename, FString& OutFilename);
 	bool LoadDocument(const FString& Filename, TSharedPtr<FAssetPackageDocument>& OutDocument, FText& OutError);
 
 	// Diff tree

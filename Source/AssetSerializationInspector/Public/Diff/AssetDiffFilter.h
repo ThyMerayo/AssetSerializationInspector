@@ -68,6 +68,12 @@ struct FAssetDiffFilter
 	/** Whether the entry or any descendant is shown. */
 	bool ShouldInclude(const FAssetPackageDiffEntry& Entry, bool bAncestorMatchedQuery = false) const;
 
+	/** Copies the entries that are shown, pruning the children that are not. Entries kept only to reach a match keep just those children. */
+	TArray<FAssetPackageDiffEntry> FilterEntries(const TArray<FAssetPackageDiffEntry>& Entries, bool bAncestorMatchedQuery = false) const;
+
+	/** A human-readable summary of the active filters, or an empty string for the default view (changed entries only, no search). */
+	FString Describe() const;
+
 	/** Counts the entries, at any depth, that are shown for their own sake. */
 	int32 CountMatches(const TArray<FAssetPackageDiffEntry>& Entries, bool bAncestorMatchedQuery = false) const;
 };

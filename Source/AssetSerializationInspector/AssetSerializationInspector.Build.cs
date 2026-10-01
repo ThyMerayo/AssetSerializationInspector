@@ -41,6 +41,7 @@ public class AssetSerializationInspector : ModuleRules
                 "DeveloperSettings",
                 "Engine",
                 "InputCore",
+                "Json",
                 "Projects",
                 "Slate",
                 "SlateCore",

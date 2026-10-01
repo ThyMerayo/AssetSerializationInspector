@@ -114,3 +114,61 @@ int32 FAssetDiffFilter::CountMatches(const TArray<FAssetPackageDiffEntry>& Entri
 
 	return Count;
 }
+
+TArray<FAssetPackageDiffEntry> FAssetDiffFilter::FilterEntries(const TArray<FAssetPackageDiffEntry>& Entries, const bool bAncestorMatchedQuery) const
+{
+	TArray<FAssetPackageDiffEntry> Result;
+
+	for (const FAssetPackageDiffEntry& Entry : Entries)
+	{
+		TArray<FAssetPackageDiffEntry> Children = FilterEntries(Entry.Children, bAncestorMatchedQuery || MatchesQuery(Entry));
+
+		if (ShouldIncludeSelf(Entry, bAncestorMatchedQuery) || !Children.IsEmpty())
+		{
+			FAssetPackageDiffEntry& Copy = Result.Add_GetRef(Entry);
+			Copy.Children = MoveTemp(Children);
+		}
+	}
+
+	return Result;
+}
+
+FString FAssetDiffFilter::Describe() const
+{
+	TArray<FString> Parts;
+
+	if (IsSearchActive())
+	{
+		Parts.Add(FString::Printf(TEXT("search \"%s\"%s"), *FString::Join(Query.Terms, TEXT(" ")), bSearchValues ? TEXT("") : TEXT(" (names only)")));
+	}
+
+	if (IsStateFilterActive())
+	{
+		TArray<FString> Names;
+		if (EnumHasAnyFlags(States, EAssetDiffStateFilter::Added))
+		{
+			Names.Add(TEXT("added"));
+		}
+		if (EnumHasAnyFlags(States, EAssetDiffStateFilter::Removed))
+		{
+			Names.Add(TEXT("removed"));
+		}
+		if (EnumHasAnyFlags(States, EAssetDiffStateFilter::Modified))
+		{
+			Names.Add(TEXT("modified"));
+		}
+		if (EnumHasAnyFlags(States, EAssetDiffStateFilter::Moved))
+		{
+			Names.Add(TEXT("moved"));
+		}
+
+		Parts.Add(FString::Printf(TEXT("states: %s"), Names.IsEmpty() ? TEXT("none") : *FString::Join(Names, TEXT(", "))));
+	}
+
+	if (bShowUnchanged)
+	{
+		Parts.Add(TEXT("unchanged entries included"));
+	}
+
+	return FString::Join(Parts, TEXT("; "));
+}
