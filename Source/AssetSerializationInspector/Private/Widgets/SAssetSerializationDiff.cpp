@@ -306,7 +306,9 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Removed, LOCTEXT("FilterRemoved", "Removed"))]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Modified, LOCTEXT("FilterModified", "Modified"))]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[BuildStateFilterCheckBox(EAssetDiffStateFilter::Moved, LOCTEXT("FilterMoved", "Moved"))]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]]
+			// Fixed width, so the count appearing or changing never moves the controls next to it.
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(
+				120.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Justification(ETextJustify::Right)]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SBox).MinDesiredHeight(400.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
