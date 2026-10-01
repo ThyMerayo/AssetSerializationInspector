@@ -93,6 +93,9 @@ struct FAssetPackageDiffEntry
 
 	FString TypeName;
 
+	/** Why the entry differs, when that can be said: a consequence of another change, an expected effect of saving, and so on. */
+	FText Explanation;
+
 	int64 OldOffset = INDEX_NONE;
 	int64 NewOffset = INDEX_NONE;
 
@@ -108,6 +111,12 @@ struct FAssetPackageDiffEntry
 	int64 ChangedByteCount = 0;
 
 	TArray<FAssetByteDiffSpan> ChangedSpans;
+
+	/**
+	 * Parts of the selected range, relative to its start, that hold an absolute file offset which only moved with the data in
+	 * front of it. The hex view shows differences inside them apart from real changes.
+	 */
+	TArray<FAssetByteDiffSpan> ShiftedOffsetRanges;
 	TArray<FAssetPackageDiffEntry> Children;
 };
 

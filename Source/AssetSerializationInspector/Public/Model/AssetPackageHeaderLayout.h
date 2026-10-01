@@ -23,8 +23,26 @@ struct FAssetPackageHeaderRegion
 	int64 End() const { return Offset + Size; }
 };
 
+/** One entry of the thumbnail table: an object in the package and where its thumbnail image data starts. */
+struct FAssetPackageThumbnailEntry
+{
+	FString ObjectClassName;
+	FString ObjectPath;
+
+	int32 FileOffset = 0;
+
+	/** True for the placeholder thumbnails Unreal saves to record that an asset is in the package; they hold no image. */
+	bool bEmpty = true;
+};
+
 namespace AssetPackageHeaderLayout
 {
+	/**
+	 * Reads the thumbnail table the summary points to. The thumbnails' image data is written first and the table after it,
+	 * so the table also tells where the data starts. Returns an empty array when there is no table or it cannot be read.
+	 */
+	TArray<FAssetPackageThumbnailEntry> ReadThumbnailIndex(const FAssetPackageDocument& Document);
+
 	/** The size of the header: where the export data starts. Falls back to the file size when the summary does not say. */
 	int64 GetHeaderSize(const FAssetPackageDocument& Document);
 

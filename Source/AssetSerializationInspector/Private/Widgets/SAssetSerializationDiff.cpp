@@ -143,7 +143,7 @@ public:
 
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SExpanderArrow, SharedThis(this)).IndentAmount(16.0f)]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2.0f, 0.0f, 6.0f, 0.0f)[SNew(STextBlock).Text(GetStateSymbol()).ToolTipText(GetStateText())]
-				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName)];
+				+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SNew(STextBlock).Text(Diff.DisplayName).ToolTipText(Diff.Explanation)];
 		}
 
 		if (ColumnName == TEXT("Old") && Diff.Kind == EAssetPackageDiffKind::Property)
@@ -260,6 +260,9 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 	FTextBlockStyle ChangedStyle = NormalStyle;
 	ChangedStyle.SetColorAndOpacity(FSlateColor(FStyleColors::AccentRed));
 	HexDiffStyle->Set(TEXT("Changed"), ChangedStyle);
+	FTextBlockStyle ShiftedStyle = NormalStyle;
+	ShiftedStyle.SetColorAndOpacity(FSlateColor(FStyleColors::Warning));
+	HexDiffStyle->Set(TEXT("Shifted"), ShiftedStyle);
 
 	ChildSlot[SNew(SVerticalBox)
 
@@ -321,6 +324,11 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				120.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Justification(ETextJustify::Right)]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetSelectedByteComparisonText)]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 6.0f)[SNew(STextBlock)
+				.Text(this, &SAssetSerializationDiff::GetSelectedExplanationText)
+				.AutoWrapText(true)
+				.Visibility_Lambda([this]() { return GetSelectedExplanationText().IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible; })
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SBox).MinDesiredHeight(400.0f)[SNew(SSplitter).Orientation(Orient_Horizontal)
 
 			// Tree
@@ -1163,8 +1171,8 @@ void SAssetSerializationDiff::HandleDiffSelectionChanged(FDiffTreeNodePtr Item, 
 
 	AnnotateSelectedDiffSpans();
 
-	OldHexPreview = BuildHighlightedHexPreview(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, SelectedByteDiffSpans);
-	NewHexPreview = BuildHighlightedHexPreview(DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize, SelectedByteDiffSpans);
+	OldHexPreview = BuildHighlightedHexPreview(DiffSession->Old.Document.Get(), Diff.OldOffset, Diff.OldSize, SelectedByteDiffSpans, Diff.ShiftedOffsetRanges);
+	NewHexPreview = BuildHighlightedHexPreview(DiffSession->New.Document.Get(), Diff.NewOffset, Diff.NewSize, SelectedByteDiffSpans, Diff.ShiftedOffsetRanges);
 }
 
 void SAssetSerializationDiff::AnnotateSelectedDiffSpans()
@@ -1361,6 +1369,11 @@ FText SAssetSerializationDiff::GetSummaryText() const
 		FText::AsNumber(Counts.Modified), FText::AsNumber(Counts.Moved), FText::AsNumber(Counts.Added), FText::AsNumber(Counts.Removed));
 }
 
+FText SAssetSerializationDiff::GetSelectedExplanationText() const
+{
+	return SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.Explanation : FText::GetEmpty();
+}
+
 FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
 {
 	if (!SelectedDiffNode.IsValid())
@@ -1396,6 +1409,11 @@ FText SAssetSerializationDiff::GetSelectedByteComparisonText() const
 		}
 
 		return LOCTEXT("BytesIdentical", "Bytes are identical.");
+	}
+
+	if (!Diff.ShiftedOffsetRanges.IsEmpty())
+	{
+		return LOCTEXT("BytesDifferShifted", "Byte contents differ only in stored file offsets (shown in orange).");
 	}
 
 	return LOCTEXT("BytesDifferent", "Byte contents differ.");
@@ -1679,7 +1697,21 @@ bool SAssetSerializationDiff::IsByteDifferent(const int64 RelativeOffset, const 
 	return false;
 }
 
-FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const
+bool SAssetSerializationDiff::IsByteInRanges(const int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Ranges)
+{
+	for (const FAssetByteDiffSpan& Range : Ranges)
+	{
+		if (RelativeOffset >= Range.Offset && RelativeOffset < Range.End())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
+	const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, const TArray<FAssetByteDiffSpan>& Spans, const TArray<FAssetByteDiffSpan>& ShiftedRanges) const
 {
 	if (Document == nullptr || Offset == INDEX_NONE)
 	{
@@ -1709,7 +1741,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 		PlainResult += OffsetText;
 
 		// HEX
-		bool bMarkupOpen = false;
+		int32 OpenStyle = 0;
 
 		for (int32 Column = 0; Column < BytesPerRow; ++Column)
 		{
@@ -1720,17 +1752,24 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 				break;
 			}
 
+			// A difference inside a stored file offset that merely moved is shown apart from a real change.
 			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
+			const bool bShifted = bChanged && IsByteInRanges(RelativeOffset, ShiftedRanges);
+			const int32 Style = !bChanged ? 0 : bShifted ? 2 : 1;
 
-			if (bChanged && !bMarkupOpen)
+			if (Style != OpenStyle)
 			{
-				RichResult += TEXT("<Changed>");
-				bMarkupOpen = true;
-			}
-			else if (!bChanged && bMarkupOpen)
-			{
-				RichResult += TEXT("</>");
-				bMarkupOpen = false;
+				if (OpenStyle != 0)
+				{
+					RichResult += TEXT("</>");
+				}
+
+				if (Style != 0)
+				{
+					RichResult += Style == 2 ? TEXT("<Shifted>") : TEXT("<Changed>");
+				}
+
+				OpenStyle = Style;
 			}
 
 			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
@@ -1745,7 +1784,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 			}
 		}
 
-		if (bMarkupOpen)
+		if (OpenStyle != 0)
 		{
 			RichResult += TEXT("</>");
 		}
@@ -1754,7 +1793,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 		RichResult += TEXT(" |");
 		PlainResult += TEXT(" |");
 
-		bMarkupOpen = false;
+		OpenStyle = 0;
 
 		for (int32 Column = 0; Column < BytesPerRow; ++Column)
 		{
@@ -1765,17 +1804,24 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 				break;
 			}
 
+			// A difference inside a stored file offset that merely moved is shown apart from a real change.
 			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
+			const bool bShifted = bChanged && IsByteInRanges(RelativeOffset, ShiftedRanges);
+			const int32 Style = !bChanged ? 0 : bShifted ? 2 : 1;
 
-			if (bChanged && !bMarkupOpen)
+			if (Style != OpenStyle)
 			{
-				RichResult += TEXT("<Changed>");
-				bMarkupOpen = true;
-			}
-			else if (!bChanged && bMarkupOpen)
-			{
-				RichResult += TEXT("</>");
-				bMarkupOpen = false;
+				if (OpenStyle != 0)
+				{
+					RichResult += TEXT("</>");
+				}
+
+				if (Style != 0)
+				{
+					RichResult += Style == 2 ? TEXT("<Shifted>") : TEXT("<Changed>");
+				}
+
+				OpenStyle = Style;
 			}
 
 			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
@@ -1807,7 +1853,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 			}
 		}
 
-		if (bMarkupOpen)
+		if (OpenStyle != 0)
 		{
 			RichResult += TEXT("</>");
 		}
@@ -1826,6 +1872,12 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(const FAsset
 	FooterResult += LINE_TERMINATOR;
 	FooterResult += FString::Printf(TEXT("Changed bytes: %lld"), GetSelectedChangedByteCount());
 	FooterResult += LINE_TERMINATOR;
+
+	if (!ShiftedRanges.IsEmpty())
+	{
+		FooterResult += TEXT("Orange bytes are stored file offsets that moved with the header; red bytes are other changes.");
+		FooterResult += LINE_TERMINATOR;
+	}
 
 	RichResult += FooterResult;
 	PlainResult += FooterResult;

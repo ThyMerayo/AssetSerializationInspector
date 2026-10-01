@@ -155,6 +155,7 @@ private:
 	FText GetSelectedNewHexRichText() const;
 	FText GetSelectedNewHexPlainText() const;
 	FText GetSelectedByteComparisonText() const;
+	FText GetSelectedExplanationText() const;
 	int64 GetSelectedChangedByteCount() const;
 	FText GetComparisonTitle() const;
 	FText GetChangeClassificationText() const;
@@ -168,7 +169,9 @@ private:
 	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
-	FHexPreviewText BuildHighlightedHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans) const;
+	static bool IsByteInRanges(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Ranges);
+	FHexPreviewText BuildHighlightedHexPreview(
+		const FAssetPackageDocument* Document, int64 Offset, int64 Size, const TArray<FAssetByteDiffSpan>& Spans, const TArray<FAssetByteDiffSpan>& ShiftedRanges) const;
 
 	void LoadSessionIntoUI();
 	void SelectFirstMeaningfulDifference();

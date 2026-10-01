@@ -215,6 +215,11 @@ namespace
 
 		OutLines.Add(Line);
 
+		if (!Entry.Explanation.IsEmpty())
+		{
+			OutLines.Add(FString::Printf(TEXT("%s    why: %s"), *Indent(Depth), *OneLine(Entry.Explanation.ToString())));
+		}
+
 		for (const FString& Note : { Entry.OldFinalValueNote, Entry.NewFinalValueNote })
 		{
 			if (!Note.IsEmpty())
@@ -319,6 +324,7 @@ namespace
 		Writer.WriteValue(TEXT("name"), Entry.DisplayName.ToString());
 		Writer.WriteValue(TEXT("semanticPath"), Entry.SemanticPath);
 		Writer.WriteValue(TEXT("type"), Entry.TypeName);
+		WriteOptionalString(Writer, TEXT("explanation"), Entry.Explanation.ToString(), !Entry.Explanation.IsEmpty());
 		WriteSide(Writer, TEXT("old"), Entry, true);
 		WriteSide(Writer, TEXT("new"), Entry, false);
 		Writer.WriteValue(TEXT("changedBytes"), Entry.ChangedByteCount);
