@@ -38,6 +38,15 @@ namespace AssetReportWriter
 	/** File-dialog extension (without a dot) for a format. */
 	const TCHAR* GetFileExtension(EAssetReportFormat Format);
 
+	/**
+	 * A suggested filename for a report: the asset's name, "Report" and the time, such as "Hero_Report_20261001-140743.txt".
+	 * Characters that are not valid in filenames are replaced.
+	 *
+	 * @param AssetFilename The compared asset's file or package name; only its name is used.
+	 * @param Time When the report is saved.
+	 */
+	FString MakeDefaultFilename(const FString& AssetFilename, const FDateTime& Time, EAssetReportFormat Format);
+
 	/** Picks the format from a filename's extension, defaulting to text. */
 	EAssetReportFormat GetFormatForFilename(const FString& Filename);
 

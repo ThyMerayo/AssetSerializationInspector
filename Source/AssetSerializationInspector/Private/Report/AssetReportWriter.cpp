@@ -556,6 +556,18 @@ const TCHAR* AssetReportWriter::GetFileExtension(const EAssetReportFormat Format
 	return Format == EAssetReportFormat::Json ? TEXT("json") : TEXT("txt");
 }
 
+FString AssetReportWriter::MakeDefaultFilename(const FString& AssetFilename, const FDateTime& Time, const EAssetReportFormat Format)
+{
+	FString AssetName = FPaths::GetBaseFilename(AssetFilename);
+
+	if (AssetName.IsEmpty())
+	{
+		AssetName = TEXT("Asset");
+	}
+
+	return FPaths::MakeValidFileName(FString::Printf(TEXT("%s_Report_%s.%s"), *AssetName, *Time.ToString(TEXT("%Y%m%d-%H%M%S")), GetFileExtension(Format)));
+}
+
 EAssetReportFormat AssetReportWriter::GetFormatForFilename(const FString& Filename)
 {
 	return FPaths::GetExtension(Filename).Equals(TEXT("json"), ESearchCase::IgnoreCase) ? EAssetReportFormat::Json : EAssetReportFormat::Text;

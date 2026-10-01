@@ -758,7 +758,7 @@ FReply SAssetSerializationDiff::HandleBrowseNewClicked()
 	return FReply::Handled();
 }
 
-bool SAssetSerializationDiff::BrowseForReportFile(FString& OutFilename)
+bool SAssetSerializationDiff::BrowseForReportFile(const FString& DefaultFilename, FString& OutFilename)
 {
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 
@@ -770,8 +770,8 @@ bool SAssetSerializationDiff::BrowseForReportFile(FString& OutFilename)
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
 	TArray<FString> SelectedFiles;
-	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(),
-		TEXT("AssetSerializationReport.txt"), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles);
+	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(), DefaultFilename,
+		TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles);
 
 	if (!bSelected || SelectedFiles.IsEmpty())
 	{
@@ -797,8 +797,13 @@ FReply SAssetSerializationDiff::HandleExportReportClicked()
 		return FReply::Handled();
 	}
 
+	// Name the report after the compared asset, preferring the newer file, so reports for different assets do not collide.
+	const TSharedPtr<FAssetPackageDocument>& NamedDocument = DiffSession->New.Document.IsValid() ? DiffSession->New.Document : DiffSession->Old.Document;
+	const FString DefaultFilename =
+		AssetReportWriter::MakeDefaultFilename(NamedDocument.IsValid() ? NamedDocument->Filename : DiffSession->PackageName.ToString(), FDateTime::Now(), EAssetReportFormat::Text);
+
 	FString Filename;
-	if (!BrowseForReportFile(Filename))
+	if (!BrowseForReportFile(DefaultFilename, Filename))
 	{
 		return FReply::Handled();
 	}

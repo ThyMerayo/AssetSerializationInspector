@@ -271,4 +271,25 @@ bool FAssetReport_SavesInTheFormatOfTheFilename::RunTest(const FString& Paramete
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetReport_NamesReportsAfterTheAsset, "AssetSerializationInspector.Report.AssetReportWriter.NamesReportsAfterTheAsset", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetReport_NamesReportsAfterTheAsset::RunTest(const FString& Parameters)
+{
+	const FDateTime Time(2026, 10, 1, 14, 7, 43);
+
+	TestEqual(TEXT("A file path gives the asset name, the time and the extension"),
+		AssetReportWriter::MakeDefaultFilename(TEXT("D:/Project/Content/Hero/BP_Hero.uasset"), Time, EAssetReportFormat::Text), FString(TEXT("BP_Hero_Report_20261001-140743.txt")));
+	TestEqual(
+		TEXT("The extension follows the format"), AssetReportWriter::MakeDefaultFilename(TEXT("BP_Hero.uasset"), Time, EAssetReportFormat::Json), FString(TEXT("BP_Hero_Report_20261001-140743.json")));
+	TestEqual(
+		TEXT("A package name works too"), AssetReportWriter::MakeDefaultFilename(TEXT("/Game/Hero/BP_Hero"), Time, EAssetReportFormat::Text), FString(TEXT("BP_Hero_Report_20261001-140743.txt")));
+	TestEqual(TEXT("A missing name falls back to a placeholder"), AssetReportWriter::MakeDefaultFilename(FString(), Time, EAssetReportFormat::Text), FString(TEXT("Asset_Report_20261001-140743.txt")));
+
+	const FString Invalid = AssetReportWriter::MakeDefaultFilename(TEXT("Bad*Name?.uasset"), Time, EAssetReportFormat::Text);
+	TestTrue(TEXT("Characters invalid in filenames are removed"), !Invalid.Contains(TEXT("*")) && !Invalid.Contains(TEXT("?")));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
