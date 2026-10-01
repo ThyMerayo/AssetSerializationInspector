@@ -29,6 +29,8 @@ Planned next steps:
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
 - [ ] Real-asset fixture tests for the decoders and archetype resolution
 - [x] Search and state filtering for the structural diff (#6)
+- [x] Package header diff: every summary field plus per-region byte comparison with hex view (#9)
+- [ ] Describe header changes in the Save Analysis (for example which tables grew)
 - [ ] Search and filtering for Save Analysis and repeated-save patterns (reuse `FAssetSearchQuery`)
 - [x] No-op resave test mode: two temporary resaves per asset with a stable / normalized / unstable verdict (#8)
 - [x] Exportable text/JSON analysis reports for a comparison (#7); reports for batches of assets reuse `FAssetAnalysisReport`
