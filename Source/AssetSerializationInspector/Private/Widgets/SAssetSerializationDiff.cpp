@@ -822,6 +822,18 @@ void SAssetSerializationDiff::RebuildDiffTree()
 	const FString PreviousSemanticPath = SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.SemanticPath : FString();
 	const FString PreviousKey = SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.Key : FString();
 
+	// Rebuilding creates new nodes, which the tree view would show collapsed. Remember what the user had expanded, unless the
+	// tree was only expanded to show search results.
+	if (DiffTreeView.IsValid() && !bDiffTreeExpandedForSearch)
+	{
+		ExpandedDiffNodeIdentities.Reset();
+
+		for (const FDiffTreeNodePtr& Node : RootDiffNodes)
+		{
+			CollectExpandedDiffNodes(Node, ExpandedDiffNodeIdentities);
+		}
+	}
+
 	RootDiffNodes.Reset();
 	SelectedDiffNode.Reset();
 
@@ -849,16 +861,19 @@ void SAssetSerializationDiff::RebuildDiffTree()
 	{
 		DiffTreeView->RequestTreeRefresh();
 
+		bDiffTreeExpandedForSearch = DiffFilter.IsSearchActive();
+
 		for (const FDiffTreeNodePtr& Node : RootDiffNodes)
 		{
 			// While searching, open everything so the matches are visible without hunting for them.
-			if (DiffFilter.IsSearchActive())
+			if (bDiffTreeExpandedForSearch)
 			{
 				ExpandDiffSubtree(Node);
 			}
 			else
 			{
 				DiffTreeView->SetItemExpansion(Node, true);
+				RestoreDiffNodeExpansion(Node);
 			}
 		}
 
@@ -908,6 +923,54 @@ SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::BuildDiffTree
 	}
 
 	return Node;
+}
+
+FString SAssetSerializationDiff::MakeDiffNodeIdentity(const FDiffTreeNodePtr& Node)
+{
+	FString Identity;
+
+	for (FDiffTreeNodePtr Current = Node; Current.IsValid(); Current = Current->Parent.Pin())
+	{
+		Identity = FString::Printf(TEXT("/%s|%s%s"), *Current->Diff.Key, *Current->Diff.SemanticPath, *Identity);
+	}
+
+	return Identity;
+}
+
+void SAssetSerializationDiff::CollectExpandedDiffNodes(const FDiffTreeNodePtr& Node, TSet<FString>& OutIdentities) const
+{
+	if (!Node.IsValid())
+	{
+		return;
+	}
+
+	if (DiffTreeView->IsItemExpanded(Node))
+	{
+		OutIdentities.Add(MakeDiffNodeIdentity(Node));
+	}
+
+	for (const FDiffTreeNodePtr& Child : Node->Children)
+	{
+		CollectExpandedDiffNodes(Child, OutIdentities);
+	}
+}
+
+void SAssetSerializationDiff::RestoreDiffNodeExpansion(const FDiffTreeNodePtr& Node)
+{
+	if (!Node.IsValid())
+	{
+		return;
+	}
+
+	if (ExpandedDiffNodeIdentities.Contains(MakeDiffNodeIdentity(Node)))
+	{
+		DiffTreeView->SetItemExpansion(Node, true);
+	}
+
+	for (const FDiffTreeNodePtr& Child : Node->Children)
+	{
+		RestoreDiffNodeExpansion(Child);
+	}
 }
 
 void SAssetSerializationDiff::ExpandDiffSubtree(const FDiffTreeNodePtr& Node)

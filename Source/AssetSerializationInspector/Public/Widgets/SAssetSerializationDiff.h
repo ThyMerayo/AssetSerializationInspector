@@ -119,6 +119,9 @@ private:
 	TSharedRef<SWidget> BuildStateFilterCheckBox(EAssetDiffStateFilter Flag, const FText& Label);
 	FText GetFilterResultText() const;
 	void ExpandDiffSubtree(const FDiffTreeNodePtr& Node);
+	static FString MakeDiffNodeIdentity(const FDiffTreeNodePtr& Node);
+	void CollectExpandedDiffNodes(const FDiffTreeNodePtr& Node, TSet<FString>& OutIdentities) const;
+	void RestoreDiffNodeExpansion(const FDiffTreeNodePtr& Node);
 	void HandleDiffSelectionChanged(FDiffTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 	void AnnotateSelectedDiffSpans();
 	const FAssetSerializationTrace* FindTraceForDiffEntry(const FAssetPackageDiffEntry& Diff, const bool bOldSide) const;
@@ -191,6 +194,12 @@ private:
 	TSharedPtr<FSlateStyleSet> HexDiffStyle;
 
 	FAssetDiffFilter DiffFilter;
+
+	/** Expanded entries, by identity, as the user left them. Rebuilding the tree creates new nodes, so expansion is restored from this. */
+	TSet<FString> ExpandedDiffNodeIdentities;
+
+	/** True while every node was expanded to show search results, which says nothing about what the user chose to expand. */
+	bool bDiffTreeExpandedForSearch = false;
 
 	bool bUseRelativeOffsets = true;
 
