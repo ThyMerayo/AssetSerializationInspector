@@ -25,6 +25,8 @@ enum class EAssetPackageDiffKind : uint8
 {
 	File,
 	SummaryField,
+	Header,
+	HeaderRegion,
 	Name,
 	Import,
 	Export,
@@ -146,6 +148,12 @@ struct FPropertyDiffData
 
 namespace AssetPackageDiff
 {
+	/**
+	 * Adds the "Package header" entry: every field of the package summary, and each region of the header (the summary and the
+	 * tables it locates) with its offset, size and byte-level differences, so a changed header can be inspected like a payload.
+	 */
+	void AppendHeaderDiff(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, FAssetPackageDiffResult& Result);
+
 	FAssetPackageDiffResult Compare(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces = nullptr,
 		const FAssetPackageTraceCollection* NewTraces = nullptr);
 
