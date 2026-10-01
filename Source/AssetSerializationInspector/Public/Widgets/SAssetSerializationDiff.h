@@ -9,6 +9,7 @@
 
 #include "Diff/AssetDiffFilter.h"
 #include "Diff/AssetPackageDiff.h"
+#include "Save/AssetAnalysisFilters.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Save/RepeatedSaveAnalyzer.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -91,7 +92,7 @@ private:
 	TSharedRef<SWidget> BuildSaveAnalysisWidget();
 	TSharedRef<SWidget> BuildSaveAnalysisSummary(const FAssetSaveAnalysis& Analysis);
 	TSharedRef<SWidget> BuildAnalysisStat(const FText& Label, const FText& Value);
-	TSharedRef<SWidget> BuildSaveAnalysisSection(const FText& Title, const TArray<FAssetSaveExplanationEntry>& Entries);
+	TSharedRef<SWidget> BuildSaveAnalysisSection(const FText& Title, const FString& StateKey, const TArray<FAssetSaveExplanationEntry>& Entries);
 	TSharedRef<SWidget> BuildSaveAnalysisEntry(const FAssetSaveExplanationEntry& Entry, const int32 Depth);
 	TSharedRef<SWidget> BuildSaveAnalysisEntries(const TArray<FAssetSaveExplanationEntry>& Entries, const int32 Depth);
 	TSharedRef<SWidget> BuildRepeatedSaveAnalysisWidget(FName PackageName);
@@ -131,6 +132,16 @@ private:
 
 	// Analysis
 	void UpdateSaveAnalysisLayout();
+	void RefreshSaveAnalysisPanel();
+	void RefreshRepeatedSavePanel();
+	TSharedRef<SWidget> BuildSaveAnalysisFilterBar();
+	TSharedRef<SWidget> BuildRepeatedSaveFilterBar();
+	TSharedRef<SWidget> BuildConfidenceFilterMenu();
+	TSharedRef<SWidget> BuildPatternFilterMenu();
+	void HandleAnalysisSearchTextChanged(const FText& NewText);
+	void HandleRepeatedSearchTextChanged(const FText& NewText);
+	FText GetAnalysisFilterResultText() const;
+	FText GetRepeatedFilterResultText() const;
 	void NavigateToDiffEntry(const FString& Key);
 	FDiffTreeNodePtr FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const;
 
@@ -199,6 +210,17 @@ private:
 	TSharedPtr<FSlateStyleSet> HexDiffStyle;
 
 	FAssetDiffFilter DiffFilter;
+
+	FAssetSaveAnalysisFilter AnalysisFilter;
+	FRepeatedSaveFilter RepeatedSaveFilter;
+
+	/** Rebuilding a panel for a filter change creates new expandable areas, so what the user opened or closed is remembered here. */
+	TSet<FString> CollapsedAnalysisSections;
+	TSet<FString> ExpandedRepeatedPatterns;
+
+	/** How many patterns with changes the last Repeated Save Analysis had before filtering. */
+	int32 RepeatedPatternTotal = 0;
+	int32 RepeatedPatternShown = 0;
 
 	/** Expanded entries, by identity, as the user left them. Rebuilding the tree creates new nodes, so expansion is restored from this. */
 	TSet<FString> ExpandedDiffNodeIdentities;
