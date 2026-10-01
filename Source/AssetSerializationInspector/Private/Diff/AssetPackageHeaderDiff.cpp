@@ -219,7 +219,7 @@ namespace
 	}
 
 	bool AreDifferencesShiftedOffsets(const FAssetPackageDocument& OldDocument, const FAssetPackageHeaderRegion& OldRegion, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, int64 Delta, int32& OutShiftedValues);
+		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, int64 Delta, TArray<FAssetByteDiffSpan>& OutShiftedRanges);
 
 	FAssetPackageDiffEntry MakeRegionEntry(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageHeaderRegion* OldRegion,
 		const FAssetPackageHeaderRegion* NewRegion, const int64 HeaderDelta)
@@ -267,16 +267,23 @@ namespace
 				}
 
 				// Tables that store absolute file offsets change when the data before them changes size, without changing meaning.
-				int32 ShiftedValues = 0;
-				if (AreDifferencesShiftedOffsets(OldDocument, *OldRegion, NewDocument, *NewRegion, Entry.ChangedSpans, HeaderDelta, ShiftedValues))
+				if (AreDifferencesShiftedOffsets(OldDocument, *OldRegion, NewDocument, *NewRegion, Entry.ChangedSpans, HeaderDelta, Entry.ShiftedOffsetRanges))
 				{
 					Entry.State = EAssetPackageDiffState::Moved;
 					Entry.Explanation = FText::Format(LOCTEXT("ShiftedOffsetsExplanation", "Only absolute file offsets differ: {0} stored offsets {1} by {2} bytes, the header's size change."),
-						FText::AsNumber(ShiftedValues), HeaderDelta < 0 ? LOCTEXT("ShiftedDown", "moved back") : LOCTEXT("ShiftedUp", "moved forward"), FText::AsNumber(FMath::Abs(HeaderDelta)));
+						FText::AsNumber(Entry.ShiftedOffsetRanges.Num()), HeaderDelta < 0 ? LOCTEXT("ShiftedDown", "moved back") : LOCTEXT("ShiftedUp", "moved forward"),
+						FText::AsNumber(FMath::Abs(HeaderDelta)));
 				}
 				else
 				{
 					Entry.Explanation = FText::Format(LOCTEXT("BytesDifferExplanation", "{0} of {1} bytes differ."), FText::AsNumber(Entry.ChangedByteCount), FText::AsNumber(OldRegion->Size));
+
+					if (!Entry.ShiftedOffsetRanges.IsEmpty())
+					{
+						Entry.Explanation =
+							FText::Format(LOCTEXT("MixedDifferencesExplanation", "{0} {1} of them are stored offsets that moved by the header's size change; the rest are other changes."),
+								Entry.Explanation, FText::AsNumber(Entry.ShiftedOffsetRanges.Num()));
+					}
 				}
 			}
 		}
@@ -308,9 +315,9 @@ namespace
 	 * exactly Delta. That is what happens to the offsets stored in a table when the data in front of it changes size.
 	 */
 	bool AreDifferencesShiftedOffsets(const FAssetPackageDocument& OldDocument, const FAssetPackageHeaderRegion& OldRegion, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, const int64 Delta, int32& OutShiftedValues)
+		const FAssetPackageHeaderRegion& NewRegion, const TArray<FAssetByteDiffSpan>& Spans, const int64 Delta, TArray<FAssetByteDiffSpan>& OutShiftedRanges)
 	{
-		OutShiftedValues = 0;
+		OutShiftedRanges.Reset();
 
 		if (Delta == 0 || Spans.IsEmpty())
 		{
@@ -318,6 +325,7 @@ namespace
 		}
 
 		int64 CoveredUntil = 0;
+		bool bAllExplained = true;
 
 		for (const FAssetByteDiffSpan& Span : Spans)
 		{
@@ -345,7 +353,10 @@ namespace
 					{
 						bExplained = true;
 						CoveredUntil = Start + Width;
-						++OutShiftedValues;
+
+						FAssetByteDiffSpan& Range = OutShiftedRanges.AddDefaulted_GetRef();
+						Range.Offset = Start;
+						Range.Size = Width;
 					}
 				}
 
@@ -355,13 +366,11 @@ namespace
 				}
 			}
 
-			if (!bExplained)
-			{
-				return false;
-			}
+			// Keep going: the offsets that are explained are still worth showing apart from the real changes.
+			bAllExplained &= bExplained;
 		}
 
-		return true;
+		return bAllExplained;
 	}
 
 	FString DescribeThumbnails(const FAssetPackageDocument& Document)

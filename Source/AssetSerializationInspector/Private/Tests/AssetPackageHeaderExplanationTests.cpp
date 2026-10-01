@@ -194,6 +194,16 @@ bool FAssetPackageHeaderExplanation_ExplainsRemovedThumbnails::RunTest(const FSt
 	// The asset registry table keeps its content except for the absolute offset, which moved with the header.
 	TestEqual(TEXT("Only its offsets changed, so it moved"), Registry->State, EAssetPackageDiffState::Moved);
 	TestTrue(TEXT("The explanation says why"), Registry->Explanation.ToString().Contains(TEXT("Only absolute file offsets differ: 1 stored offsets moved back")));
+	if (TestEqual(TEXT("The shifted offset is recorded for the hex view"), Registry->ShiftedOffsetRanges.Num(), 1))
+	{
+		TestEqual(TEXT("It is the 8 byte integer at the start of the table"), Registry->ShiftedOffsetRanges[0].Offset, static_cast<int64>(0));
+		TestEqual(TEXT("With its width"), Registry->ShiftedOffsetRanges[0].Size, static_cast<int64>(8));
+
+		for (const FAssetByteDiffSpan& Span : Registry->ChangedSpans)
+		{
+			TestTrue(TEXT("Every differing byte lies inside a shifted offset"), Span.Offset >= 0 && Span.End() <= 8);
+		}
+	}
 
 	const FAssetPackageDiffEntry* TableOffset = FindChild(*Summary, TEXT("ThumbnailTableOffset"));
 	const FAssetPackageDiffEntry* RegistryOffset = FindChild(*Summary, TEXT("AssetRegistryDataOffset"));
@@ -227,6 +237,8 @@ bool FAssetPackageHeaderExplanation_DistinguishesShiftsFromRealChanges::RunTest(
 	{
 		TestEqual(TEXT("A change that is not an offset is a real modification"), Registry->State, EAssetPackageDiffState::Modified);
 		TestTrue(TEXT("The explanation counts the differing bytes"), Registry->Explanation.ToString().Contains(TEXT("of 16 bytes differ")));
+		TestEqual(TEXT("The offset that did shift is still shown apart"), Registry->ShiftedOffsetRanges.Num(), 1);
+		TestTrue(TEXT("The explanation separates it from the other change"), Registry->Explanation.ToString().Contains(TEXT("1 of them are stored offsets")));
 	}
 
 	// With the header the same size there is nothing to blame a difference on.
@@ -237,6 +249,7 @@ bool FAssetPackageHeaderExplanation_DistinguishesShiftsFromRealChanges::RunTest(
 	{
 		TestEqual(TEXT("It is modified"), SameSizeRegistry->State, EAssetPackageDiffState::Modified);
 		TestTrue(TEXT("It states how many bytes differ"), SameSizeRegistry->Explanation.ToString().Contains(TEXT("1 of 16 bytes differ")));
+		TestTrue(TEXT("Nothing is presented as a shifted offset"), SameSizeRegistry->ShiftedOffsetRanges.IsEmpty());
 	}
 
 	return true;
