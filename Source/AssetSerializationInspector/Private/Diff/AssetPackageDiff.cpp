@@ -54,35 +54,6 @@ namespace
 		return FSHA1::HashBuffer(Document.FileData.GetData(), static_cast<uint64>(Document.FileData.Num())).ToString();
 	}
 
-	template <typename TValue> void AddSummaryValueDiff(FAssetPackageDiffResult& Result, const TCHAR* Key, const FText& DisplayName, const TValue& OldValue, const TValue& NewValue)
-	{
-		FAssetPackageDiffEntry Entry;
-
-		Entry.Kind = EAssetPackageDiffKind::SummaryField;
-		Entry.Key = Key;
-		Entry.DisplayName = DisplayName;
-		Entry.OldValue = LexToString(OldValue);
-		Entry.NewValue = LexToString(NewValue);
-		Entry.State = Entry.OldValue == Entry.NewValue ? EAssetPackageDiffState::Unchanged : EAssetPackageDiffState::Modified;
-
-		Result.Entries.Add(MoveTemp(Entry));
-	}
-
-	void CompareSummary(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, FAssetPackageDiffResult& Result)
-	{
-		const FPackageFileSummary& A = OldDocument.PackageSummary;
-		const FPackageFileSummary& B = NewDocument.PackageSummary;
-
-		AddSummaryValueDiff(Result, TEXT("TotalHeaderSize"), NSLOCTEXT("AssetPackageDiff", "TotalHeaderSize", "Total header size"), A.TotalHeaderSize, B.TotalHeaderSize);
-		AddSummaryValueDiff(Result, TEXT("NameCount"), NSLOCTEXT("AssetPackageDiff", "NameCount", "Name count"), A.NameCount, B.NameCount);
-		AddSummaryValueDiff(Result, TEXT("NameOffset"), NSLOCTEXT("AssetPackageDiff", "NameOffset", "Name offset"), A.NameOffset, B.NameOffset);
-		AddSummaryValueDiff(Result, TEXT("ImportCount"), NSLOCTEXT("AssetPackageDiff", "ImportCount", "Import count"), A.ImportCount, B.ImportCount);
-		AddSummaryValueDiff(Result, TEXT("ImportOffset"), NSLOCTEXT("AssetPackageDiff", "ImportOffset", "Import offset"), A.ImportOffset, B.ImportOffset);
-		AddSummaryValueDiff(Result, TEXT("ExportCount"), NSLOCTEXT("AssetPackageDiff", "ExportCount", "Export count"), A.ExportCount, B.ExportCount);
-		AddSummaryValueDiff(Result, TEXT("ExportOffset"), NSLOCTEXT("AssetPackageDiff", "ExportOffset", "Export offset"), A.ExportOffset, B.ExportOffset);
-		AddSummaryValueDiff(Result, TEXT("PackageFlags"), NSLOCTEXT("AssetPackageDiff", "PackageFlags", "Package flags"), A.GetPackageFlags(), B.GetPackageFlags());
-	}
-
 	void CompareNames(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, FAssetPackageDiffResult& Result)
 	{
 		const int32 MaximumCount = FMath::Max(OldDocument.NameMap.Num(), NewDocument.NameMap.Num());
@@ -736,7 +707,7 @@ namespace AssetPackageDiff
 			return Result;
 		}
 
-		CompareSummary(OldDocument, NewDocument, Result);
+		AssetPackageDiff::AppendHeaderDiff(OldDocument, NewDocument, Result);
 		CompareNames(OldDocument, NewDocument, Result);
 		CompareImports(OldDocument, NewDocument, Result);
 		CompareExports(OldDocument, NewDocument, OldTraces, NewTraces, Result);

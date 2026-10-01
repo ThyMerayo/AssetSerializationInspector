@@ -26,6 +26,10 @@ namespace
 				return TEXT("File");
 			case EAssetPackageDiffKind::SummaryField:
 				return TEXT("SummaryField");
+			case EAssetPackageDiffKind::Header:
+				return TEXT("Header");
+			case EAssetPackageDiffKind::HeaderRegion:
+				return TEXT("HeaderRegion");
 			case EAssetPackageDiffKind::Name:
 				return TEXT("Name");
 			case EAssetPackageDiffKind::Import:
