@@ -4,6 +4,7 @@
 
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "IDesktopPlatform.h"
 #include "Misc/Paths.h"
@@ -11,6 +12,7 @@
 #include "Styling/StyleColors.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
@@ -353,16 +355,18 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
 				.AreaTitle(LOCTEXT("SaveAnalysis", "Save Analysis"))
 				.InitiallyCollapsed(false)
-				.BodyContent()[SAssignNew(SaveAnalysisBox, SBox)
-						.MaxDesiredHeight(
-							260.0f)[SAssignNew(SaveAnalysisScrollBox, SScrollBox) + SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]]
+				.BodyContent()[SNew(SVerticalBox) + SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[BuildSaveAnalysisFilterBar()]
+					+ SVerticalBox::Slot().AutoHeight()[SAssignNew(SaveAnalysisBox, SBox)
+							.MaxDesiredHeight(
+								260.0f)[SAssignNew(SaveAnalysisScrollBox, SScrollBox) + SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoSaveAnalysis", "No save analysis is available."))]]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SExpandableArea)
 				.AreaTitle(LOCTEXT("RepeatedSaveAnalysis", "Repeated Save Analysis"))
 				.InitiallyCollapsed(false)
-				.BodyContent()[SAssignNew(RepeatedSaveAnalysisBox, SBox)
-						.MaxDesiredHeight(260.0f)[SAssignNew(RepeatedSaveAnalysisScrollBox, SScrollBox)
-							+ SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoRepeatedSaveAnalysis", "No repeated save analysis is available."))]]]]
+				.BodyContent()[SNew(SVerticalBox) + SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)[BuildRepeatedSaveFilterBar()]
+					+ SVerticalBox::Slot().AutoHeight()[SAssignNew(RepeatedSaveAnalysisBox, SBox)
+							.MaxDesiredHeight(260.0f)[SAssignNew(RepeatedSaveAnalysisScrollBox, SScrollBox)
+								+ SScrollBox::Slot()[SNew(STextBlock).Text(LOCTEXT("NoRepeatedSaveAnalysis", "No repeated save analysis is available."))]]]]]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 
@@ -435,17 +439,166 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSelectableDetailRow(const FTex
 
 void SAssetSerializationDiff::UpdateSaveAnalysisLayout()
 {
+	RefreshSaveAnalysisPanel();
+	RefreshRepeatedSavePanel();
+}
+
+void SAssetSerializationDiff::RefreshSaveAnalysisPanel()
+{
 	if (SaveAnalysisBox.IsValid())
 	{
 		SaveAnalysisScrollBox->ClearChildren();
 		SaveAnalysisScrollBox->AddSlot()[BuildSaveAnalysisWidget()];
 	}
+}
 
+void SAssetSerializationDiff::RefreshRepeatedSavePanel()
+{
 	if (RepeatedSaveAnalysisBox.IsValid())
 	{
 		RepeatedSaveAnalysisScrollBox->ClearChildren();
 		RepeatedSaveAnalysisScrollBox->AddSlot()[BuildRepeatedSaveAnalysisWidget(DiffSession->PackageName)];
 	}
+}
+
+void SAssetSerializationDiff::HandleAnalysisSearchTextChanged(const FText& NewText)
+{
+	AnalysisFilter.Query = FAssetSearchQuery::Parse(NewText.ToString());
+	RefreshSaveAnalysisPanel();
+}
+
+void SAssetSerializationDiff::HandleRepeatedSearchTextChanged(const FText& NewText)
+{
+	RepeatedSaveFilter.Query = FAssetSearchQuery::Parse(NewText.ToString());
+	RefreshRepeatedSavePanel();
+}
+
+FText SAssetSerializationDiff::GetAnalysisFilterResultText() const
+{
+	if (!AnalysisFilter.IsActive() || !DiffSession.IsValid() || !DiffSession->Analysis.IsSet())
+	{
+		return FText::GetEmpty();
+	}
+
+	const FAssetSaveAnalysis& Analysis = DiffSession->Analysis.GetValue();
+	const int32 Count = AnalysisFilter.CountMatches(Analysis.SemanticChanges) + AnalysisFilter.CountMatches(Analysis.LayoutChanges) + AnalysisFilter.CountMatches(Analysis.UnexplainedChanges);
+
+	return FText::Format(LOCTEXT("AnalysisFilterResultCount", "{0} matching"), FText::AsNumber(Count));
+}
+
+FText SAssetSerializationDiff::GetRepeatedFilterResultText() const
+{
+	if (!RepeatedSaveFilter.IsActive() || RepeatedPatternTotal == 0)
+	{
+		return FText::GetEmpty();
+	}
+
+	return FText::Format(LOCTEXT("RepeatedFilterResultCount", "{0} of {1} shown"), FText::AsNumber(RepeatedPatternShown), FText::AsNumber(RepeatedPatternTotal));
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildConfidenceFilterMenu()
+{
+	// Keep the menu open while toggling, so several confidences can be changed in a row.
+	FMenuBuilder Menu(false, nullptr);
+
+	const auto AddItem = [this, &Menu](const EAssetConfidenceFilter Flag, const FText& Label) {
+		Menu.AddMenuEntry(Label, FText::GetEmpty(), FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([this, Flag]() {
+				AnalysisFilter.Confidences ^= Flag;
+				RefreshSaveAnalysisPanel();
+			}),
+				FCanExecuteAction(), FIsActionChecked::CreateLambda([this, Flag]() { return EnumHasAnyFlags(AnalysisFilter.Confidences, Flag); })),
+			NAME_None, EUserInterfaceActionType::ToggleButton);
+	};
+
+	AddItem(EAssetConfidenceFilter::Certain, LOCTEXT("ConfidenceCertain", "Certain"));
+	AddItem(EAssetConfidenceFilter::High, LOCTEXT("ConfidenceHigh", "High"));
+	AddItem(EAssetConfidenceFilter::Inferred, LOCTEXT("ConfidenceInferred", "Inferred"));
+	AddItem(EAssetConfidenceFilter::Unknown, LOCTEXT("ConfidenceUnknown", "Unknown"));
+
+	return Menu.MakeWidget();
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildPatternFilterMenu()
+{
+	FMenuBuilder Menu(false, nullptr);
+
+	const auto AddItem = [this, &Menu](const EObservedPatternFilter Flag, const EObservedValuePattern Pattern) {
+		Menu.AddMenuEntry(GetObservedPatternText(Pattern), FText::GetEmpty(), FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([this, Flag]() {
+				RepeatedSaveFilter.Patterns ^= Flag;
+				RefreshRepeatedSavePanel();
+			}),
+				FCanExecuteAction(), FIsActionChecked::CreateLambda([this, Flag]() { return EnumHasAnyFlags(RepeatedSaveFilter.Patterns, Flag); })),
+			NAME_None, EUserInterfaceActionType::ToggleButton);
+	};
+
+	AddItem(EObservedPatternFilter::ChangedOnce, EObservedValuePattern::ChangedOnce);
+	AddItem(EObservedPatternFilter::Recurring, EObservedValuePattern::Recurring);
+	AddItem(EObservedPatternFilter::ChangedEverySave, EObservedValuePattern::ChangedEverySave);
+	AddItem(EObservedPatternFilter::ContinuouslyChanging, EObservedValuePattern::ContinuouslyChanging);
+	AddItem(EObservedPatternFilter::Alternating, EObservedValuePattern::Alternating);
+	AddItem(EObservedPatternFilter::Stable, EObservedValuePattern::Stable);
+	AddItem(EObservedPatternFilter::Unknown, EObservedValuePattern::Unknown);
+
+	return Menu.MakeWidget();
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisFilterBar()
+{
+	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+			  .FillWidth(1.0f)
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f, 0.0f)
+				  [SNew(SSearchBox).HintText(LOCTEXT("AnalysisSearchHint", "Search explanations, paths and values")).OnTextChanged(this, &SAssetSerializationDiff::HandleAnalysisSearchTextChanged)]
+		+ SHorizontalBox::Slot()
+			  .AutoWidth()
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SCheckBox)
+					  .IsChecked_Lambda([this]() { return AnalysisFilter.bSearchValues ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					  .OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState) {
+						  AnalysisFilter.bSearchValues = NewState == ECheckBoxState::Checked;
+						  RefreshSaveAnalysisPanel();
+					  })
+					  .ToolTipText(LOCTEXT("AnalysisSearchValuesTooltip", "Also search old and new values."))[SNew(STextBlock).Text(LOCTEXT("AnalysisSearchValues", "Values"))]]
+		+ SHorizontalBox::Slot()
+			  .AutoWidth()
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SComboButton)
+					  .ButtonContent()[SNew(STextBlock).Text(LOCTEXT("ConfidenceFilterButton", "Confidence"))]
+					  .OnGetMenuContent(this, &SAssetSerializationDiff::BuildConfidenceFilterMenu)]
+		// Fixed width, so the count appearing or changing never moves the controls next to it.
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(
+			120.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetAnalysisFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Justification(ETextJustify::Right)]];
+}
+
+TSharedRef<SWidget> SAssetSerializationDiff::BuildRepeatedSaveFilterBar()
+{
+	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+			  .FillWidth(1.0f)
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SSearchBox)
+					  .HintText(LOCTEXT("RepeatedSearchHint", "Search properties and the values seen across saves"))
+					  .OnTextChanged(this, &SAssetSerializationDiff::HandleRepeatedSearchTextChanged)]
+		+ SHorizontalBox::Slot()
+			  .AutoWidth()
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f, 0.0f)[SNew(SCheckBox)
+					  .IsChecked_Lambda([this]() { return RepeatedSaveFilter.bSearchValues ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					  .OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState) {
+						  RepeatedSaveFilter.bSearchValues = NewState == ECheckBoxState::Checked;
+						  RefreshRepeatedSavePanel();
+					  })
+					  .ToolTipText(LOCTEXT("RepeatedSearchValuesTooltip", "Also search the values seen across saves."))[SNew(STextBlock).Text(LOCTEXT("RepeatedSearchValues", "Values"))]]
+		+ SHorizontalBox::Slot()
+			  .AutoWidth()
+			  .VAlign(VAlign_Center)
+			  .Padding(0.0f, 0.0f, 8.0f,
+				  0.0f)[SNew(SComboButton).ButtonContent()[SNew(STextBlock).Text(LOCTEXT("PatternFilterButton", "Pattern"))].OnGetMenuContent(this, &SAssetSerializationDiff::BuildPatternFilterMenu)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(
+			120.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetRepeatedFilterResultText).ColorAndOpacity(FSlateColor::UseSubduedForeground()).Justification(ETextJustify::Right)]];
 }
 
 TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisWidget()
@@ -460,9 +613,12 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisWidget()
 	return SNew(SVerticalBox)
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 8.0f)[BuildSaveAnalysisSummary(Analysis)]
-		+ SVerticalBox::Slot().AutoHeight()[BuildSaveAnalysisSection(LOCTEXT("MeaningfulChangesSection", "Meaningful Changes"), Analysis.SemanticChanges)]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("LayoutChangesSection", "Layout / Serialization"), Analysis.LayoutChanges)]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("UnexplainedChangesSection", "Unexplained"), Analysis.UnexplainedChanges)];
+		+ SVerticalBox::Slot()
+			  .AutoHeight()[BuildSaveAnalysisSection(LOCTEXT("MeaningfulChangesSection", "Meaningful Changes"), TEXT("Meaningful"), AnalysisFilter.FilterEntries(Analysis.SemanticChanges))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("LayoutChangesSection", "Layout / Serialization"), TEXT("Layout"), AnalysisFilter.FilterEntries(Analysis.LayoutChanges))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("UnexplainedChangesSection", "Unexplained"), TEXT("Unexplained"), AnalysisFilter.FilterEntries(Analysis.UnexplainedChanges))];
 }
 
 TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisSummary(const FAssetSaveAnalysis& Analysis)
@@ -486,9 +642,22 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildAnalysisStat(const FText& Labe
 		+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(Label)] + SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(Value).Font(FAppStyle::GetFontStyle("BoldFont"))];
 }
 
-TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisSection(const FText& Title, const TArray<FAssetSaveExplanationEntry>& Entries)
+TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisSection(const FText& Title, const FString& StateKey, const TArray<FAssetSaveExplanationEntry>& Entries)
 {
-	return SNew(SExpandableArea).AreaTitle(Title).InitiallyCollapsed(false).BodyContent()[BuildSaveAnalysisEntries(Entries, 0)];
+	return SNew(SExpandableArea)
+		.AreaTitle(Title)
+		.InitiallyCollapsed(CollapsedAnalysisSections.Contains(StateKey))
+		.OnAreaExpansionChanged_Lambda([this, StateKey](const bool bExpanded) {
+			if (bExpanded)
+			{
+				CollapsedAnalysisSections.Remove(StateKey);
+			}
+			else
+			{
+				CollapsedAnalysisSections.Add(StateKey);
+			}
+		})
+		.BodyContent()[BuildSaveAnalysisEntries(Entries, 0)];
 }
 
 TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisEntries(const TArray<FAssetSaveExplanationEntry>& Entries, const int32 Depth)
@@ -497,7 +666,7 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisEntries(const TArr
 
 	if (Entries.IsEmpty())
 	{
-		Box->AddSlot().AutoHeight().Padding(8.0f, 4.0f)[SNew(STextBlock).Text(LOCTEXT("NoAnalysisEntries", "None"))];
+		Box->AddSlot().AutoHeight().Padding(8.0f, 4.0f)[SNew(STextBlock).Text(AnalysisFilter.IsActive() ? LOCTEXT("NoAnalysisMatches", "No matches") : LOCTEXT("NoAnalysisEntries", "None"))];
 		return Box;
 	}
 
@@ -554,20 +723,32 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildRepeatedSaveAnalysisWidget(con
 		return SNew(STextBlock).Text(LOCTEXT("NotEnoughSaveHistory", "Save the monitored asset at least twice to analyze repeated behavior."));
 	}
 
-	const TArray<FRepeatedSavePattern> Patterns = FRepeatedSaveAnalyzer::Analyze(*History);
+	// Only properties that changed are of interest; the filter then narrows those.
+	TArray<FRepeatedSavePattern> Changed;
+	for (const FRepeatedSavePattern& Pattern : FRepeatedSaveAnalyzer::Analyze(*History))
+	{
+		if (Pattern.ChangeCount > 0)
+		{
+			Changed.Add(Pattern);
+		}
+	}
+
+	const TArray<FRepeatedSavePattern> Patterns = RepeatedSaveFilter.Filter(Changed);
+	RepeatedPatternTotal = Changed.Num();
+	RepeatedPatternShown = Patterns.Num();
 
 	TSharedRef<SVerticalBox> Content = SNew(SVerticalBox);
 
 	Content->AddSlot().AutoHeight().Padding(0.0f, 0.0f, 0.0f,
 		8.0f)[SNew(STextBlock).Text(FText::Format(LOCTEXT("ObservedSaveCount", "{0} saves observed"), FText::AsNumber(History->Entries.Num()))).Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))];
 
+	if (Patterns.IsEmpty() && RepeatedSaveFilter.IsActive())
+	{
+		Content->AddSlot().AutoHeight().Padding(0.0f, 2.0f)[SNew(STextBlock).Text(LOCTEXT("NoRepeatedMatches", "No matches"))];
+	}
+
 	for (const FRepeatedSavePattern& Pattern : Patterns)
 	{
-		if (Pattern.ChangeCount == 0)
-		{
-			continue;
-		}
-
 		Content->AddSlot().AutoHeight().Padding(0.0f, 2.0f)[BuildRepeatedSavePatternWidget(Pattern)];
 	}
 
@@ -578,7 +759,17 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildRepeatedSavePatternWidget(cons
 {
 	return SNew(SExpandableArea)
 		.AreaTitle(Pattern.DisplayName)
-		.InitiallyCollapsed(true)
+		.InitiallyCollapsed(!ExpandedRepeatedPatterns.Contains(Pattern.SemanticPath))
+		.OnAreaExpansionChanged_Lambda([this, Path = Pattern.SemanticPath](const bool bExpanded) {
+			if (bExpanded)
+			{
+				ExpandedRepeatedPatterns.Add(Path);
+			}
+			else
+			{
+				ExpandedRepeatedPatterns.Remove(Path);
+			}
+		})
 		.HeaderContent()[SNew(SHorizontalBox)
 
 			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(Pattern.DisplayName).Font(FAppStyle::GetFontStyle("BoldFont"))]
