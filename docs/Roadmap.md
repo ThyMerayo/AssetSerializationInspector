@@ -34,7 +34,8 @@ Planned next steps:
 - [x] Search and filtering for Save Analysis (confidence) and repeated-save patterns (pattern) (#11)
 - [x] No-op resave test mode: two temporary resaves per asset with a stable / normalized / unstable verdict (#8)
 - [x] Exportable text/JSON analysis reports for a comparison (#7); reports for batches of assets reuse `FAssetAnalysisReport`
-- [ ] Batch/project-wide save analysis
+- [x] Batch/project-wide save analysis: the no-op resave test over selected assets, folders or the whole project, with a text/JSON report (#13)
+- [ ] Results window for a batch run (browse assets, open one asset's diff)
 - [ ] Cross-engine/version comparison workflows
 - [ ] Additional property/native serializer coverage driven by real assets
 - [ ] Persistent monitored-asset configuration
