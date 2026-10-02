@@ -217,8 +217,13 @@ TArray<FName> AssetBatchResave::CollectPackages(const TArray<FString>& PackagePa
 
 void AssetBatchResave::ExtractChanges(const FObservedAssetSave& Save, TArray<FAssetBatchResaveChange>& OutChanges, int32& OutOmitted)
 {
+	ExtractChanges(Save.Diff, Save.Analysis, OutChanges, OutOmitted);
+}
+
+void AssetBatchResave::ExtractChanges(const FAssetPackageDiffResult& Diff, const FAssetSaveAnalysis& Analysis, TArray<FAssetBatchResaveChange>& OutChanges, int32& OutOmitted)
+{
 	// The header is not covered by the save analysis, so its regions are read from the comparison itself.
-	for (const FAssetPackageDiffEntry& Entry : Save.Diff.Entries)
+	for (const FAssetPackageDiffEntry& Entry : Diff.Entries)
 	{
 		if (Entry.Kind != EAssetPackageDiffKind::Header)
 		{
@@ -240,9 +245,9 @@ void AssetBatchResave::ExtractChanges(const FObservedAssetSave& Save, TArray<FAs
 		}
 	}
 
-	AddExplanations(Save.Analysis.SemanticChanges, OutChanges, OutOmitted);
-	AddExplanations(Save.Analysis.LayoutChanges, OutChanges, OutOmitted);
-	AddExplanations(Save.Analysis.UnexplainedChanges, OutChanges, OutOmitted);
+	AddExplanations(Analysis.SemanticChanges, OutChanges, OutOmitted);
+	AddExplanations(Analysis.LayoutChanges, OutChanges, OutOmitted);
+	AddExplanations(Analysis.UnexplainedChanges, OutChanges, OutOmitted);
 }
 
 FAssetBatchResaveEntry AssetBatchResave::Condense(const FNoOpResaveResult& Result)

@@ -20,7 +20,9 @@
 
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
+#include "Compare/AssetFolderComparison.h"
 #include "Report/AssetBatchReportWriter.h"
+#include "Report/AssetFolderComparisonReportWriter.h"
 #include "Save/AssetBatchResave.h"
 #include "Save/AssetNoOpResaveTest.h"
 #include "Save/AssetSaveObserver.h"
@@ -120,6 +122,11 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					"saved and whether they do so every time. The assets on disk are not modified."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
 				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
+			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
+				LOCTEXT("CompareAssetFoldersTooltip",
+					"Compare the .uasset files of two folders on disk, for example a project before and after moving it to another engine "
+					"version. Files are paired by relative path, and the report groups what changed and the engine versions involved."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Diff"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::CompareAssetFolders)));
 		}
 	}
 
@@ -333,6 +340,122 @@ void FAssetSerializationInspectorModule::SaveBatchResaveReport()
 	const bool bSaved = AssetBatchReportWriter::SaveToFile(*LastBatchResult, Filename, Error);
 
 	FNotificationInfo Info(bSaved ? FText::Format(LOCTEXT("BatchReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error);
+	Info.ExpireDuration = 8.0f;
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
+	}
+}
+
+void FAssetSerializationInspectorModule::CompareAssetFolders()
+{
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+
+	if (DesktopPlatform == nullptr)
+	{
+		return;
+	}
+
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+	FString OldFolder;
+	if (!DesktopPlatform->OpenDirectoryDialog(
+			ParentWindowHandle, LOCTEXT("PickOldFolder", "Select the folder with the older assets").ToString(), LastComparedFolder.IsEmpty() ? FPaths::ProjectDir() : LastComparedFolder, OldFolder))
+	{
+		return;
+	}
+
+	FString NewFolder;
+	if (!DesktopPlatform->OpenDirectoryDialog(ParentWindowHandle, LOCTEXT("PickNewFolder", "Select the folder with the newer assets").ToString(), OldFolder, NewFolder))
+	{
+		return;
+	}
+
+	LastComparedFolder = NewFolder;
+
+	if (FPaths::IsSamePath(OldFolder, NewFolder))
+	{
+		FNotificationInfo Info(LOCTEXT("SameFolder", "Choose two different folders to compare."));
+		Info.ExpireDuration = 6.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	// The number of files is only known once the run has listed both folders, so progress is a fraction of a fixed amount of work.
+	constexpr float TotalWork = 1000.0f;
+	FScopedSlowTask SlowTask(TotalWork, LOCTEXT("ComparingFolders", "Comparing asset folders..."));
+	SlowTask.MakeDialog(true);
+
+	FAssetFolderComparisonResult Result = AssetFolderComparison::Run(OldFolder, NewFolder, [&SlowTask, TotalWork](const int32 Index, const int32 Total, const FString& RelativePath) {
+		if (SlowTask.ShouldCancel())
+		{
+			return false;
+		}
+
+		SlowTask.EnterProgressFrame(TotalWork / static_cast<float>(FMath::Max(Total, 1)),
+			FText::Format(LOCTEXT("CompareFoldersProgress", "{0} of {1}: {2}"), FText::AsNumber(Index + 1), FText::AsNumber(Total), FText::FromString(RelativePath)));
+		return true;
+	});
+
+	LastFolderComparison = MakeShared<FAssetFolderComparisonResult>(MoveTemp(Result));
+	ShowFolderComparisonNotification(*LastFolderComparison);
+}
+
+void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result)
+{
+	const FAssetFolderComparisonSummary Summary = Result.Summarize();
+
+	const FText Message = FText::Format(
+		LOCTEXT("FolderComparisonSummary", "Folder comparison{0}: {1} identical, {2} changed ({3} saved by different versions), {4} only in the old folder, {5} only in the new folder, {6} failed"),
+		Result.bCancelled ? LOCTEXT("FolderComparisonCancelled", " (cancelled)") : FText::GetEmpty(), FText::AsNumber(Summary.Identical), FText::AsNumber(Summary.Changed),
+		FText::AsNumber(Summary.ChangedWithDifferentVersions), FText::AsNumber(Summary.OnlyInOldFolder), FText::AsNumber(Summary.OnlyInNewFolder), FText::AsNumber(Summary.Failed));
+
+	FNotificationInfo Info(Message);
+	Info.ExpireDuration = 20.0f;
+	Info.bFireAndForget = true;
+	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveFolderComparisonButton", "Save Report..."),
+		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text or JSON report."),
+		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport), SNotificationItem::CS_None));
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(
+			Summary.Changed == 0 && Summary.Failed == 0 && Summary.OnlyInOldFolder == 0 && Summary.OnlyInNewFolder == 0 ? SNotificationItem::CS_Success : SNotificationItem::CS_None);
+	}
+}
+
+void FAssetSerializationInspectorModule::SaveFolderComparisonReport()
+{
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+
+	if (!LastFolderComparison.IsValid() || DesktopPlatform == nullptr)
+	{
+		return;
+	}
+
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+	TArray<FString> SelectedFiles;
+	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report").ToString(), FPaths::ProjectSavedDir(),
+			AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text),
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles)
+		|| SelectedFiles.IsEmpty())
+	{
+		return;
+	}
+
+	// The format follows the extension, so make sure there is one.
+	FString Filename = SelectedFiles[0];
+	if (FPaths::GetExtension(Filename).IsEmpty())
+	{
+		Filename += TEXT(".txt");
+	}
+
+	FText Error;
+	const bool bSaved = AssetFolderComparisonReportWriter::SaveToFile(*LastFolderComparison, Filename, Error);
+
+	FNotificationInfo Info(bSaved ? FText::Format(LOCTEXT("FolderComparisonReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error);
 	Info.ExpireDuration = 8.0f;
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))

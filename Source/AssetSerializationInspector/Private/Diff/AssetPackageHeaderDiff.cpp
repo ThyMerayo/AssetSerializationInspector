@@ -438,11 +438,38 @@ namespace
 			HeaderDelta < 0 ? LOCTEXT("Smaller", "smaller") : LOCTEXT("Larger", "larger"), FText::FromString(FString::Join(Parts, TEXT(", "))));
 	}
 
+	FText ExplainVersionDifference()
+	{
+		return LOCTEXT("VersionDifferenceExplanation",
+			"The packages were saved by different engine or file versions. The engine rewrites a package in its own format when it saves, so some differences in this comparison can come from the format rather than from edits.");
+	}
+
 	FText ExplainField(const FAssetPackageDiffEntry& Field, const int64 HeaderDelta, const FText& HeaderExplanation)
 	{
 		if (Field.State == EAssetPackageDiffState::Unchanged)
 		{
 			return FText::GetEmpty();
+		}
+
+		if (Field.Key.StartsWith(TEXT("FileVersion")) || Field.Key == TEXT("SavedByEngineVersion") || Field.Key == TEXT("CompatibleWithEngineVersion"))
+		{
+			return ExplainVersionDifference();
+		}
+
+		if (Field.Key.StartsWith(TEXT("CustomVersion:")))
+		{
+			if (Field.State == EAssetPackageDiffState::Added)
+			{
+				return LOCTEXT("CustomVersionAddedExplanation", "Only the newer package records a format version for this system.");
+			}
+
+			if (Field.State == EAssetPackageDiffState::Removed)
+			{
+				return LOCTEXT("CustomVersionRemovedExplanation", "Only the older package records a format version for this system.");
+			}
+
+			return FText::Format(LOCTEXT("CustomVersionChangedExplanation", "The format version of this system went from {0} to {1}: the engine may read or write its data differently."),
+				FText::FromString(Field.OldValue), FText::FromString(Field.NewValue));
 		}
 
 		if (Field.Key == TEXT("SavedHash"))
@@ -560,6 +587,21 @@ void AssetPackageDiff::AppendHeaderDiff(const FAssetPackageDocument& OldDocument
 	const int64 HeaderDelta = NewHeaderSize - OldHeaderSize;
 	const FText HeaderExplanation = ExplainHeaderSize(OldRegions, NewRegions, HeaderDelta);
 	Header.Explanation = HeaderExplanation;
+
+	const FPackageFileSummary& OldSummary = OldDocument.PackageSummary;
+	const FPackageFileSummary& NewSummary = NewDocument.PackageSummary;
+	if (!(OldSummary.GetFileVersionUE() == NewSummary.GetFileVersionUE()) || OldSummary.GetFileVersionLicenseeUE() != NewSummary.GetFileVersionLicenseeUE()
+		|| OldSummary.SavedByEngineVersion.ToString() != NewSummary.SavedByEngineVersion.ToString())
+	{
+		const auto DescribeEngine = [](const FEngineVersion& Version) {
+			return Version.GetMajor() == 0 && Version.GetMinor() == 0 && Version.GetPatch() == 0 ? LOCTEXT("UnknownEngine", "an unknown engine version")
+																								 : FText::FromString(Version.ToString(EVersionComponent::Patch));
+		};
+
+		const FText VersionNote = FText::Format(
+			LOCTEXT("HeaderVersionNote", "Saved by {0} and {1}. {2}"), DescribeEngine(OldSummary.SavedByEngineVersion), DescribeEngine(NewSummary.SavedByEngineVersion), ExplainVersionDifference());
+		Header.Explanation = HeaderExplanation.IsEmpty() ? VersionNote : FText::Format(LOCTEXT("HeaderSizeAndVersionNote", "{0} {1}"), HeaderExplanation, VersionNote);
+	}
 	Header.OldValue = DescribeHeaderSize(OldHeaderSize, NewHeaderSize, false);
 	Header.NewValue = DescribeHeaderSize(NewHeaderSize, OldHeaderSize, true);
 

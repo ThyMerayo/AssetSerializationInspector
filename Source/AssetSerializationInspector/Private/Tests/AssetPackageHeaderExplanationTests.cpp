@@ -4,6 +4,9 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Misc/EngineVersion.h"
+#include "Serialization/CustomVersion.h"
+
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Model/AssetPackageHeaderLayout.h"
@@ -251,6 +254,72 @@ bool FAssetPackageHeaderExplanation_DistinguishesShiftsFromRealChanges::RunTest(
 		TestTrue(TEXT("It states how many bytes differ"), SameSizeRegistry->Explanation.ToString().Contains(TEXT("1 of 16 bytes differ")));
 		TestTrue(TEXT("Nothing is presented as a shifted offset"), SameSizeRegistry->ShiftedOffsetRanges.IsEmpty());
 	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPackageHeaderExplanation_ExplainsVersionDifferences, "AssetSerializationInspector.Diff.AssetPackageHeaderDiff.ExplainsVersionDifferences",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPackageHeaderExplanation_ExplainsVersionDifferences::RunTest(const FString& Parameters)
+{
+	using namespace AssetPackageHeaderExplanationTestUtils;
+
+	const FGuid Shared(1, 2, 3, 4);
+	const FGuid OnlyNew(5, 6, 7, 8);
+	const FGuid OnlyOld(9, 10, 11, 12);
+
+	FAssetPackageDocument OldDocument = MakeDocument(false);
+	FAssetPackageDocument NewDocument = MakeDocument(false);
+
+	OldDocument.PackageSummary.SavedByEngineVersion.Set(5, 5, 1, 1000, TEXT("++UE5+Release-5.5"));
+	NewDocument.PackageSummary.SavedByEngineVersion.Set(5, 8, 0, 2000, TEXT("++UE5+Main"));
+	OldDocument.PackageSummary.SetFileVersions(522, 1012, 0);
+	NewDocument.PackageSummary.SetFileVersions(522, 1018, 0);
+
+	FCustomVersionContainer& OldVersions = const_cast<FCustomVersionContainer&>(OldDocument.PackageSummary.GetCustomVersionContainer());
+	FCustomVersionContainer& NewVersions = const_cast<FCustomVersionContainer&>(NewDocument.PackageSummary.GetCustomVersionContainer());
+	OldVersions.SetVersion(Shared, 12, TEXT("Dev-Shared"));
+	OldVersions.SetVersion(OnlyOld, 3, TEXT("Dev-OnlyOld"));
+	NewVersions.SetVersion(Shared, 15, TEXT("Dev-Shared"));
+	NewVersions.SetVersion(OnlyNew, 1, TEXT("Dev-OnlyNew"));
+
+	FAssetPackageDiffResult Result;
+	AssetPackageDiff::AppendHeaderDiff(OldDocument, NewDocument, Result);
+	const FAssetPackageDiffEntry& Header = Result.Entries[0];
+
+	const FString HeaderWhy = Header.Explanation.ToString();
+	TestTrue(TEXT("The header names the engines"), HeaderWhy.Contains(TEXT("Saved by 5.5.1 and 5.8.0")));
+	TestTrue(TEXT("And says differences can come from the format"), HeaderWhy.Contains(TEXT("can come from the format rather than from edits")));
+
+	const FAssetPackageDiffEntry* Summary = FindChild(Header, TEXT("Summary"));
+	if (!TestNotNull(TEXT("The summary is listed"), Summary))
+	{
+		return false;
+	}
+
+	const auto ExplanationOf = [Summary](const FString& Key) {
+		const FAssetPackageDiffEntry* Field = FindChild(*Summary, Key);
+		return Field != nullptr ? Field->Explanation.ToString() : FString(TEXT("<missing>"));
+	};
+
+	TestTrue(TEXT("The saving engine is explained"), ExplanationOf(TEXT("SavedByEngineVersion")).Contains(TEXT("different engine or file versions")));
+	TestTrue(TEXT("The file version is explained"), ExplanationOf(TEXT("FileVersionUE5")).Contains(TEXT("different engine or file versions")));
+	TestTrue(TEXT("A changed custom version states both numbers"), ExplanationOf(TEXT("CustomVersion:") + Shared.ToString()).Contains(TEXT("went from 12 to 15")));
+	TestTrue(TEXT("A custom version only the newer package has"), ExplanationOf(TEXT("CustomVersion:") + OnlyNew.ToString()).Contains(TEXT("Only the newer package")));
+	TestTrue(TEXT("A custom version only the older package has"), ExplanationOf(TEXT("CustomVersion:") + OnlyOld.ToString()).Contains(TEXT("Only the older package")));
+
+	// Packages saved by the same engine have nothing to say about versions.
+	FAssetPackageDiffResult Same;
+	AssetPackageDiff::AppendHeaderDiff(OldDocument, OldDocument, Same);
+	TestFalse(TEXT("Equal versions add no note"), Same.Entries[0].Explanation.ToString().Contains(TEXT("Saved by")));
+
+	// A package that does not record its engine is described as such.
+	FAssetPackageDocument Unrecorded = MakeDocument(false);
+	Unrecorded.PackageSummary.SetFileVersions(522, 1018, 0);
+	FAssetPackageDiffResult WithUnknown;
+	AssetPackageDiff::AppendHeaderDiff(Unrecorded, NewDocument, WithUnknown);
+	TestTrue(TEXT("An unrecorded engine is called unknown"), WithUnknown.Entries[0].Explanation.ToString().Contains(TEXT("Saved by an unknown engine version and 5.8.0")));
 
 	return true;
 }
