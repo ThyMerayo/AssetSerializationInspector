@@ -6,6 +6,7 @@
 
 class SAssetSerializationDiff;
 struct FAssetSerializationDiffSession;
+struct FAssetBatchResaveResult;
 struct FNoOpResaveResult;
 struct FObservedAssetSave;
 
@@ -30,6 +31,10 @@ private:
 	void OpenObservedSaveDiff(TSharedPtr<FObservedAssetSave> Save);
 	void RunNoOpResaveTests(TArray<FName> PackageNames);
 	void ShowNoOpResaveNotification(const FNoOpResaveResult& Result);
+	void RunBatchResaveTest(TArray<FName> PackageNames, FString Scope);
+	void RunBatchResaveOnPaths(TArray<FString> PackagePaths, FString Scope);
+	void ShowBatchResaveNotification(const FAssetBatchResaveResult& Result);
+	void SaveBatchResaveReport();
 
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
@@ -37,4 +42,7 @@ private:
 
 	TSharedPtr<FAssetSerializationDiffSession> PendingDiffSession;
 	TWeakPtr<SAssetSerializationDiff> ActiveDiffWidget;
+
+	/** The latest batch run, kept so its report can be saved from the notification. */
+	TSharedPtr<FAssetBatchResaveResult> LastBatchResult;
 };

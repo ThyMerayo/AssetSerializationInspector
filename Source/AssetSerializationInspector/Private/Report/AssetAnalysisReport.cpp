@@ -38,12 +38,13 @@ namespace
 		}
 	}
 
-	FString FindToolVersion()
-	{
-		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
-		return Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : FString();
-	}
 } // namespace
+
+FString AssetAnalysisReport::GetToolVersion()
+{
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	return Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : FString();
+}
 
 FAssetReportSummary AssetAnalysisReport::Summarize(const TArray<FAssetPackageDiffEntry>& Entries)
 {
@@ -62,7 +63,7 @@ FAssetAnalysisReport AssetAnalysisReport::Build(
 {
 	FAssetAnalysisReport Report;
 
-	Report.ToolVersion = FindToolVersion();
+	Report.ToolVersion = AssetAnalysisReport::GetToolVersion();
 	Report.GeneratedAtUtc = FDateTime::UtcNow();
 
 	Report.OldFilename = Diff.OldFilename;

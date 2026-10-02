@@ -35,6 +35,7 @@ public class AssetSerializationInspector : ModuleRules
             new string[]
             {
                 "ApplicationCore",
+                "AssetRegistry",
                 "ContentBrowser",
                 "CoreUObject",
                 "DesktopPlatform",
