@@ -36,7 +36,9 @@ Planned next steps:
 - [x] Exportable text/JSON analysis reports for a comparison (#7); reports for batches of assets reuse `FAssetAnalysisReport`
 - [x] Batch/project-wide save analysis: the no-op resave test over selected assets, folders or the whole project, with a text/JSON report (#13)
 - [ ] Results window for a batch run (browse assets, open one asset's diff)
-- [ ] Cross-engine/version comparison workflows
+- [x] Cross-engine/version comparison: compare two folders of assets with a grouped text/JSON report, and version-aware explanations in the two-file diff (#14)
+- [ ] Results window for a folder comparison (browse pairs, open one pair's diff)
+- [ ] Verify the folder comparison on packages that really were saved by different engine versions
 - [ ] Additional property/native serializer coverage driven by real assets
 - [ ] Persistent monitored-asset configuration
 - [ ] Support additional UE5 package versions
