@@ -298,7 +298,7 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				.Padding(8.0f, 0.0f, 0.0f, 0.0f)[SNew(SButton)
 						.Text(LOCTEXT("ExportReport", "Export report..."))
 						.ToolTipText(LOCTEXT("ExportReportTooltip",
-							"Save the comparison, save analysis and repeated-save patterns as a text or JSON report. The listed differences follow the current search and filters."))
+							"Save the comparison, save analysis and repeated-save patterns as a text or JSON report. The report always lists every changed entry, whatever the search and filters in this view are."))
 						.OnClicked(this, &SAssetSerializationDiff::HandleExportReportClicked)]]
 
 		// Search and state filters
@@ -1019,7 +1019,10 @@ FReply SAssetSerializationDiff::HandleExportReportClicked()
 	}
 
 	const FAssetSaveAnalysis* Analysis = DiffSession->Analysis.IsSet() ? &DiffSession->Analysis.GetValue() : nullptr;
-	const FAssetAnalysisReport Report = AssetAnalysisReport::Build(DiffSession->DiffResult.GetValue(), Analysis, RepeatedSavePatterns, &DiffFilter);
+	// The report is not a snapshot of the view: a filtered list could leave out the very entry someone needs later, and a text editor
+	// can search it anyway. Only the default view applies, which leaves out entries that did not change.
+	const FAssetDiffFilter ReportFilter;
+	const FAssetAnalysisReport Report = AssetAnalysisReport::Build(DiffSession->DiffResult.GetValue(), Analysis, RepeatedSavePatterns, &ReportFilter);
 
 	FText Error;
 	if (AssetReportWriter::SaveToFile(Report, Filename, Error))
