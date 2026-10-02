@@ -93,16 +93,17 @@ Decoded property values can be compared semantically instead of only as changed 
 - Signed and unsigned integer properties
 - Float and double properties
 - Name and string properties
-- Byte and enum properties
-- Hard UObject/package references
-- Soft object/class references
+- Byte and enum properties (enum values are decoded by name)
+- Text properties (empty/culture-invariant, base and string-table texts; formatted, number and date/time texts are reported as unsupported)
+- Hard UObject/package references, shown as stable paths rather than table indices
+- Soft object/class references (resolved through the package's soft object path table)
 - Common deterministic structs such as GUIDs, vectors, rotators, quaternions, transforms, colors, integer vectors/points, and related math types
 - Recursively tagged structs
 - Arrays
 - Sets
 - Maps
 
-Container decoding preserves Unreal's serialization semantics. In particular, set and map payloads may represent operations relative to defaults rather than complete final values, and the inspector does not incorrectly present such deltas as complete containers.
+Container decoding preserves Unreal's serialization semantics. In particular, set and map payloads may represent operations relative to defaults rather than complete final values, and the inspector does not incorrectly present such deltas as complete containers. Where the defaults can be found, the final contents are reconstructed as well (see [Values inherited from archetypes](#values-inherited-from-archetypes)).
 
 ### Container-aware semantic comparison
 
@@ -208,6 +209,45 @@ Pattern: Continuously changing
 
 A history row can open the corresponding historical save diff and navigate directly to the same semantic property, connecting a recurring pattern to the exact semantic and raw-byte change that produced it.
 
+### Values inherited from archetypes
+
+Unreal omits a property that equals its default and stores sets and maps as changes against the default, so what a package serializes is often not what the asset actually contains. The inspector follows each export's archetype chain (`TemplateIndex`) to recover it, reading archetypes in the same package directly and archetypes in other packages from disk:
+
+- **Omitted properties**: where one side of a comparison does not serialize a property, the diff shows the value it inherits (`<not serialized>  ->  inherited: 42`) and where it came from, and notes when that value equals the serialized value on the other side, so only the serialization changed.
+- **Delta sets and maps**: the final contents are computed as `(defaults - removed) + added` and shown next to the stored delta. A container written without defaults is told apart from a delta by the writer's own rule (a delta never repeats an element that equals its default). Results that rest on an assumption, such as an empty default for a container declared in a Blueprint, are marked *inferred* with the reason.
+
+Values that come from native C++ defaults cannot be read from package files, and are reported as unavailable instead of guessed. Only top-level properties are resolved.
+
+### Package header diff
+
+The header is compared as its own part of the diff, not only as a few changed numbers:
+
+- Every field of the package summary (versions, flags, counts and offsets, saved hash, persistent GUID, engine versions, compression flags, chunk IDs, generations, and each custom version).
+- Every region of the header, with offset, size and entry count: the summary, name/import/export maps, depends map, soft object paths, soft package references, searchable names, thumbnail table and thumbnail data, asset registry data, and so on. A region is **modified**, **moved** (identical bytes at another offset), **added** or **removed**, and selecting it shows the usual side-by-side hex view.
+- **Explanations** say why: the header's size change broken down by region, what a removed thumbnail table used to hold, that an offset moved by exactly the header's size change, that a region differs only in stored absolute file offsets (those bytes are shown in orange in the hex view, apart from real changes in red), and what the saved hash, package source and persistent GUID mean.
+
+### Search and filters
+
+The structural diff has a search box (several terms must all match; names, paths, types and, optionally, values), toggles for added/removed/modified/moved entries, and the existing *Show unchanged*. Matching entries keep their parents visible, and an entry that matches brings what is inside it. The Save Analysis can be filtered by text and confidence, and the Repeated Save Analysis by text and value pattern. The tree keeps the expansion you chose while filters change.
+
+### Reports
+
+*Export report...* saves the current comparison as a text or JSON file: both files and hashes, totals, the full save analysis, every changed entry with its values and explanations, and the repeated-save patterns recorded for the asset. The report does not depend on the view's filters, so it is a complete record; the JSON layout is versioned (`schemaVersion`) and documented in the source. Files are named after the asset and the time.
+
+### No-op resave test
+
+*Run No-op Resave Test* (Content Browser asset menu) answers the opposite question: what does Unreal change when nothing was edited, and does it do so every time? The package is saved twice to temporary files, never over its own file, and the original is compared with the first copy and the first with the second. The verdict is **stable**, **normalized on the first save** (the first resave rewrites the file, later ones do not) or **unstable** (resaving keeps changing the file), and the notification opens either diff. Assets with unsaved changes and levels are refused.
+
+### Batch and project-wide analysis
+
+The same test runs on many assets: select several assets, or use *Run No-op Resave Test on Folder* (Content Browser folder menu), or *Window -> Run No-op Resave Test on Project* (everything under `/Game`). A progress dialog with cancel is shown, and each result is condensed as soon as it is produced so memory does not grow with the project. The saved text/JSON report lists unstable assets first and groups **changes found in several assets**, which points at causes that are not about any one asset (for example every asset losing its thumbnails).
+
+### Folder comparison and engine versions
+
+*Window -> Compare Asset Folders...* compares two folders of `.uasset` files on disk, for example a copy of a project from before an engine upgrade and the upgraded one. Files are paired by relative path; each pair is identical, changed, only in one folder, or could not be compared (with the reason, such as a package version this editor cannot read). The report groups what changed: totals, how many files went from which engine version to which, changes found in several files, and then the files themselves.
+
+In the two-file diff, differences in the engine, file or custom versions are explained, including that some differences can come from the format rather than from edits.
+
 ---
 
 ## Why No Engine Modifications?
@@ -301,6 +341,18 @@ Interprets the diff and answers what the save means: semantic property changes, 
 ### Save history and repeated-pattern analysis
 
 Recent monitored saves are retained by stable save ID. Semantic paths are aggregated across observations to identify recurring, every-save, continuously changing, and alternating behavior. Historical samples can reopen their original diff session.
+
+### Archetype resolver and container final values
+
+`FAssetArchetypeResolver` walks an export's archetype chain through package files and returns the value a property inherits. `AssetContainerFinalValue` applies a decoded set or map delta to that value and reports how sure it is. Both are independent of the UI and unit tested.
+
+### Header layout and header diff
+
+`AssetPackageHeaderLayout` splits a header into regions (including the thumbnail data that no summary field points at), and the header diff compares fields and regions and attaches the explanations described above.
+
+### Reports and runners
+
+`FAssetAnalysisReport` is the format-independent model of one comparison; the writers turn it into text or JSON. The no-op resave test, the batch runner (`AssetBatchResave`) and the folder comparison (`AssetFolderComparison`) each condense their per-asset results into small entries and have their own report writers, so large runs stay cheap and every result can be saved.
 
 ### Slate UI
 
@@ -464,6 +516,8 @@ The plugin records save-related package changes only for monitored assets.
 
 Monitoring can later be disabled from the same context menu.
 
+Use the search box and the *Added / Removed / Modified / Moved* toggles to narrow a large diff. **Export report...** saves the whole comparison.
+
 ### Reviewing a monitored save
 
 When a monitored asset changes on save, open its diff to review **Save Analysis**. This view summarizes semantic changes, layout/relocation changes, and any bytes that remain native or undecoded. Selecting an explanation navigates to the corresponding semantic diff and hex range.
@@ -471,6 +525,32 @@ When a monitored asset changes on save, open its diff to review **Save Analysis*
 ### Reviewing repeated-save behavior
 
 After multiple observed saves, **Repeated Save Analysis** groups changes by stable semantic path and shows the value history across saves. Selecting a historical transition reopens that captured save and navigates to the corresponding property.
+
+### Testing what a save does on its own
+
+```text
+Right-click asset(s)
+    -> Asset Serialization
+        -> Run No-op Resave Test
+
+Right-click folder
+    -> Asset Serialization
+        -> Run No-op Resave Test on Folder
+
+Window
+    -> Run No-op Resave Test on Project
+```
+
+When the run finishes, a notification shows the totals and offers **Save Report...**. For a single asset it offers the diffs of the first and second resave instead.
+
+### Comparing two folders
+
+```text
+Window
+    -> Compare Asset Folders...
+```
+
+Pick the folder with the older assets and then the folder with the newer ones. The notification offers **Save Report...**.
 
 ---
 
@@ -481,6 +561,15 @@ This project is currently experimental and intended primarily as a serialization
 The `.uasset` format is heavily version-dependent, and many UObject types contain custom serialization that cannot be understood using reflected property metadata alone.
 
 The decoder is intentionally conservative and validates ranges aggressively to avoid silently interpreting unrelated bytes as valid package data.
+
+Known limitations:
+
+- Only `.uasset` packages are read; levels (`.umap`) are not.
+- Properties omitted inside structs, and defaults that live in native C++ code, are not reconstructed.
+- Text values with arguments (formatted, number, date/time) are not decoded.
+- Package versions this editor build cannot read are reported as failed rather than guessed.
+- Batch, project-wide and folder runs produce reports; there is no results window to browse them yet.
+- Most of the UI has been exercised through automation tests and manual use on small assets. Large projects and assets saved by several different engine versions deserve more real-world testing.
 
 ---
 
