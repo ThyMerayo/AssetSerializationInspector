@@ -7,6 +7,7 @@
 class SAssetSerializationDiff;
 struct FAssetSerializationDiffSession;
 struct FAssetBatchResaveResult;
+struct FAssetFolderComparisonResult;
 struct FNoOpResaveResult;
 struct FObservedAssetSave;
 
@@ -35,6 +36,9 @@ private:
 	void RunBatchResaveOnPaths(TArray<FString> PackagePaths, FString Scope);
 	void ShowBatchResaveNotification(const FAssetBatchResaveResult& Result);
 	void SaveBatchResaveReport();
+	void CompareAssetFolders();
+	void ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result);
+	void SaveFolderComparisonReport();
 
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
@@ -45,4 +49,8 @@ private:
 
 	/** The latest batch run, kept so its report can be saved from the notification. */
 	TSharedPtr<FAssetBatchResaveResult> LastBatchResult;
+
+	/** The latest folder comparison, kept so its report can be saved from the notification. */
+	TSharedPtr<FAssetFolderComparisonResult> LastFolderComparison;
+	FString LastComparedFolder;
 };

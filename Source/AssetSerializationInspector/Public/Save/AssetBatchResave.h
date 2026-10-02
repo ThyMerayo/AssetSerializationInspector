@@ -4,7 +4,9 @@
 
 #include "CoreMinimal.h"
 
+#include "Diff/AssetPackageDiff.h"
 #include "Save/AssetNoOpResaveTest.h"
+#include "Save/AssetSaveAnalyzer.h"
 
 struct FObservedAssetSave;
 
@@ -112,6 +114,9 @@ namespace AssetBatchResave
 
 	/** Reduces what a resave changed to a list of changes: the save analysis' explanations plus the header regions that changed. */
 	void ExtractChanges(const FObservedAssetSave& Save, TArray<FAssetBatchResaveChange>& OutChanges, int32& OutOmitted);
+
+	/** The same, from a comparison and its analysis. */
+	void ExtractChanges(const FAssetPackageDiffResult& Diff, const FAssetSaveAnalysis& Analysis, TArray<FAssetBatchResaveChange>& OutChanges, int32& OutOmitted);
 
 	/** Reduces the result of the test on one asset to what a batch report keeps. */
 	FAssetBatchResaveEntry Condense(const FNoOpResaveResult& Result);
