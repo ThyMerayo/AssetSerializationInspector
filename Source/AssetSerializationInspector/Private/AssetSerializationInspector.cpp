@@ -3,8 +3,12 @@
 #include "AssetSerializationInspector.h"
 
 #include "ContentBrowserMenuContexts.h"
+#include "DesktopPlatformModule.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "IDesktopPlatform.h"
 #include "LevelEditor.h"
+#include "Misc/MessageDialog.h"
+#include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
 #include "ToolMenus.h"
 #include "UObject/Package.h"
@@ -16,6 +20,8 @@
 
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
+#include "Report/AssetBatchReportWriter.h"
+#include "Save/AssetBatchResave.h"
 #include "Save/AssetNoOpResaveTest.h"
 #include "Save/AssetSaveObserver.h"
 #include "Widgets/SAssetSerializationDiff.h"
@@ -108,6 +114,12 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 		{
 			FToolMenuSection& Section = Menu->FindOrAddSection("WindowLayout");
 			Section.AddMenuEntryWithCommandList(FAssetSerializationInspectorCommands::Get().OpenPluginWindow, PluginCommands);
+			Section.AddMenuEntry("RunProjectNoOpResaveTest", LOCTEXT("ProjectNoOpResaveTest", "Run No-op Resave Test on Project"),
+				LOCTEXT("ProjectNoOpResaveTestTooltip",
+					"Save every asset under /Game twice to temporary files, without changing them, and report which assets change when "
+					"saved and whether they do so every time. The assets on disk are not modified."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
+				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
 		}
 	}
 
@@ -172,7 +184,16 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 				LOCTEXT("NoOpResaveTestTooltip",
 					"Save the selected assets twice to temporary files, without changing them, and report what the save alone changes "
 					"and whether it does so every time. The assets on disk are not modified."),
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunNoOpResaveTests, SelectedPackages)));
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"), FUIAction(FExecuteAction::CreateLambda([this, SelectedPackages]() {
+					if (SelectedPackages.Num() > 1)
+					{
+						RunBatchResaveTest(SelectedPackages, FString::Printf(TEXT("%d selected assets"), SelectedPackages.Num()));
+					}
+					else
+					{
+						RunNoOpResaveTests(SelectedPackages);
+					}
+				})));
 
 			if (bAnyMonitored)
 			{
@@ -185,6 +206,138 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					})));
 			}
 		}));
+	}
+
+	// Folder context menu
+	{
+		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.FolderContextMenu");
+
+		FToolMenuSection& Section = Menu->FindOrAddSection("AssetSerializationInspector", LOCTEXT("AssetSerializationSection", "Asset Serialization"));
+
+		Section.AddDynamicEntry("AssetSerializationFolderTests", FNewToolMenuSectionDelegate::CreateLambda([this](FToolMenuSection& InSection) {
+			const UContentBrowserFolderContext* Context = InSection.FindContext<UContentBrowserFolderContext>();
+
+			if (Context == nullptr || Context->SelectedPackagePaths.IsEmpty())
+			{
+				return;
+			}
+
+			const TArray<FString> PackagePaths = Context->SelectedPackagePaths;
+			const FString Scope = PackagePaths.Num() == 1 ? PackagePaths[0] : FString::Printf(TEXT("%d folders"), PackagePaths.Num());
+
+			InSection.AddMenuEntry("RunFolderNoOpResaveTest", LOCTEXT("FolderNoOpResaveTest", "Run No-op Resave Test on Folder"),
+				LOCTEXT("FolderNoOpResaveTestTooltip",
+					"Save every asset in the selected folders and their subfolders twice to temporary files, without changing them, and report "
+					"which assets change when saved and whether they do so every time. The assets on disk are not modified."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
+				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, PackagePaths, Scope)));
+		}));
+	}
+}
+
+void FAssetSerializationInspectorModule::RunBatchResaveOnPaths(TArray<FString> PackagePaths, FString Scope)
+{
+	RunBatchResaveTest(AssetBatchResave::CollectPackages(PackagePaths, true), MoveTemp(Scope));
+}
+
+void FAssetSerializationInspectorModule::RunBatchResaveTest(TArray<FName> PackageNames, FString Scope)
+{
+	if (PackageNames.IsEmpty())
+	{
+		FNotificationInfo Info(FText::Format(LOCTEXT("NoAssetsToTest", "No assets to test in {0}."), FText::FromString(Scope)));
+		Info.ExpireDuration = 5.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	// A long run on many assets is easy to start by accident from a folder menu.
+	constexpr int32 ConfirmationThreshold = 20;
+
+	if (PackageNames.Num() > ConfirmationThreshold
+		&& FMessageDialog::Open(EAppMsgType::YesNo,
+			   FText::Format(
+				   LOCTEXT("ConfirmBatchResave", "This loads {0} assets and saves each one twice to temporary files. The assets on disk are not modified, but it can take a long time. Continue?"),
+				   FText::AsNumber(PackageNames.Num())))
+			!= EAppReturnType::Yes)
+	{
+		return;
+	}
+
+	FScopedSlowTask SlowTask(PackageNames.Num(), LOCTEXT("RunningBatchResaveTest", "Running no-op resave test..."));
+	SlowTask.MakeDialog(true);
+
+	FAssetBatchResaveResult Result = AssetBatchResave::Run(PackageNames, Scope, [&SlowTask](const int32 Index, const int32 Total, const FName PackageName) {
+		if (SlowTask.ShouldCancel())
+		{
+			return false;
+		}
+
+		SlowTask.EnterProgressFrame(
+			1.0f, FText::Format(LOCTEXT("BatchResaveProgress", "{0} of {1}: {2}"), FText::AsNumber(Index + 1), FText::AsNumber(Total), FText::FromString(FPackageName::GetShortName(PackageName))));
+		return true;
+	});
+
+	LastBatchResult = MakeShared<FAssetBatchResaveResult>(MoveTemp(Result));
+	ShowBatchResaveNotification(*LastBatchResult);
+}
+
+void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAssetBatchResaveResult& Result)
+{
+	const FAssetBatchResaveSummary Summary = Result.Summarize();
+
+	const FText Message = FText::Format(LOCTEXT("BatchResaveSummary", "No-op resave test of {0}{1}: {2} stable, {3} normalized on the first save, {4} unstable, {5} skipped, {6} failed"),
+		FText::FromString(Result.Scope), Result.bCancelled ? LOCTEXT("BatchResaveCancelled", " (cancelled)") : FText::GetEmpty(), FText::AsNumber(Summary.Stable),
+		FText::AsNumber(Summary.NormalizedOnFirstSave), FText::AsNumber(Summary.Unstable), FText::AsNumber(Summary.Skipped), FText::AsNumber(Summary.Failed));
+
+	FNotificationInfo Info(Message);
+	Info.ExpireDuration = 20.0f;
+	Info.bFireAndForget = true;
+	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveBatchReportButton", "Save Report..."),
+		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text or JSON report."),
+		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport), SNotificationItem::CS_None));
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(Summary.Unstable == 0 && Summary.Failed == 0 ? SNotificationItem::CS_Success : SNotificationItem::CS_None);
+	}
+}
+
+void FAssetSerializationInspectorModule::SaveBatchResaveReport()
+{
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+
+	if (!LastBatchResult.IsValid() || DesktopPlatform == nullptr)
+	{
+		return;
+	}
+
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+	TArray<FString> SelectedFiles;
+	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report").ToString(), FPaths::ProjectSavedDir(),
+			AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"),
+			EFileDialogFlags::None, SelectedFiles)
+		|| SelectedFiles.IsEmpty())
+	{
+		return;
+	}
+
+	// The format follows the extension, so make sure there is one.
+	FString Filename = SelectedFiles[0];
+	if (FPaths::GetExtension(Filename).IsEmpty())
+	{
+		Filename += TEXT(".txt");
+	}
+
+	FText Error;
+	const bool bSaved = AssetBatchReportWriter::SaveToFile(*LastBatchResult, Filename, Error);
+
+	FNotificationInfo Info(bSaved ? FText::Format(LOCTEXT("BatchReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error);
+	Info.ExpireDuration = 8.0f;
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
 	}
 }
 

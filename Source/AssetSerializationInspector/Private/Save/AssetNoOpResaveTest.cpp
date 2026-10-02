@@ -49,11 +49,12 @@ namespace
 		return UPackage::SavePackage(Package, Asset, *Filename, SaveArgs) && FPaths::FileExists(Filename);
 	}
 
-	FNoOpResaveResult Fail(const FName PackageName, const FText& Error)
+	FNoOpResaveResult Fail(const FName PackageName, const FText& Error, const bool bSkipped = true)
 	{
 		FNoOpResaveResult Result;
 		Result.PackageName = PackageName;
 		Result.Error = Error;
+		Result.bSkipped = bSkipped;
 		return Result;
 	}
 } // namespace
@@ -119,7 +120,7 @@ FNoOpResaveResult AssetNoOpResaveTest::Run(UPackage* Package)
 
 	if (!SaveCopy(Package, Asset, FirstFilename) || !SaveCopy(Package, Asset, SecondFilename))
 	{
-		return Fail(PackageName, LOCTEXT("SaveFailed", "The package could not be saved to a temporary file."));
+		return Fail(PackageName, LOCTEXT("SaveFailed", "The package could not be saved to a temporary file."), false);
 	}
 
 	FNoOpResaveResult Result;
@@ -130,7 +131,7 @@ FNoOpResaveResult AssetNoOpResaveTest::Run(UPackage* Package)
 
 	if (!Result.FirstResave.IsValid() || !Result.FirstResave->Before.IsValid() || !Result.FirstResave->After.IsValid() || !Result.SecondResave.IsValid() || !Result.SecondResave->After.IsValid())
 	{
-		return Fail(PackageName, LOCTEXT("ReadFailed", "The saved copies could not be read back."));
+		return Fail(PackageName, LOCTEXT("ReadFailed", "The saved copies could not be read back."), false);
 	}
 
 	Result.Verdict = ClassifyVerdict(!Result.FirstResave->HasChanges(), !Result.SecondResave->HasChanges());

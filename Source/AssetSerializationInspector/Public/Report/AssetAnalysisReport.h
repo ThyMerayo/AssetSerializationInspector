@@ -68,4 +68,7 @@ namespace AssetAnalysisReport
 	FAssetAnalysisReport Build(const FAssetPackageDiffResult& Diff, const FAssetSaveAnalysis* SaveAnalysis, const TArray<FRepeatedSavePattern>& RepeatedSavePatterns, const FAssetDiffFilter* Filter);
 
 	FAssetReportSummary Summarize(const TArray<FAssetPackageDiffEntry>& Entries);
+
+	/** The plugin's version, or an empty string when it cannot be determined. */
+	FString GetToolVersion();
 } // namespace AssetAnalysisReport

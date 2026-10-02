@@ -32,6 +32,9 @@ struct FNoOpResaveResult
 	bool bSucceeded = false;
 	FText Error;
 
+	/** True when the package was left out for an expected reason (unsaved changes, a level, no file on disk) rather than failing. */
+	bool bSkipped = false;
+
 	ENoOpResaveVerdict Verdict = ENoOpResaveVerdict::Stable;
 
 	/** The original file compared with the first resave. */
