@@ -260,6 +260,51 @@ bool DecodeEdGraphPinTypeFromReader(FAssetPackagePayloadReader& Reader, FAssetDe
 	return true;
 }
 
+static bool DecodeNameFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue);
+
+static bool IsValidContainerCount(const FAssetPropertyDecodeContext& Context, const int32 Count);
+
+/** FGameplayTagContainer::Serialize writes its tags as an array of names, not as tagged properties. */
+static bool DecodeNameArrayStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	int32 Count = 0;
+	if (!ReadBounded(Reader, ValueEnd, Count) || !IsValidContainerCount(Context, Count))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not read the tag count.");
+		return false;
+	}
+
+	OutValue.Children.Reserve(Count);
+
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FAssetDecodedPropertyValue Element;
+		Element.Name = FString::Printf(TEXT("[%d]"), Index);
+		Element.TypeName = TEXT("NameProperty");
+
+		if (!DecodeNameFromReader(Context, Reader, ValueEnd, Element))
+		{
+			OutValue.Children.Add(MoveTemp(Element));
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = FString::Printf(TEXT("Could not decode tag %d."), Index);
+			return false;
+		}
+
+		Element.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Element);
+		OutValue.Children.Add(MoveTemp(Element));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Array;
+	OutValue.Value = FString::Printf(TEXT("%d elements"), Count);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FString& StructName, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	if (StructName == TEXT("Vector"))
@@ -270,6 +315,21 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	if (StructName == TEXT("Vector2D"))
 	{
 		return DecodePodStructFromReader<FVector2D>(Context, Reader, ValueEnd, OutValue, [](const FVector2D& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Vector2f") || StructName == TEXT("DeprecateSlateVector2D"))
+	{
+		return DecodePodStructFromReader<FVector2f>(Context, Reader, ValueEnd, OutValue, [](const FVector2f& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("GameplayTag"))
+	{
+		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("GameplayTagContainer"))
+	{
+		return DecodeNameArrayStructFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (StructName == TEXT("Vector4"))
