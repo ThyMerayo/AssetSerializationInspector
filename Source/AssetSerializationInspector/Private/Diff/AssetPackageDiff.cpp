@@ -389,6 +389,13 @@ namespace
 		const FAssetOmittedPropertyDefault Default = OmittedData.ArchetypeResolver->DescribeOmittedProperty(OmittedData.Export.Index, PresentNode.Name, PresentNode.ArrayIndex);
 		OutNote = Default.Note;
 
+		if (Default.Status == EAssetArchetypeValueStatus::DeclaredByBlueprint)
+		{
+			OutDecodedValue = TEXT("<not serialized>");
+			OutFinalValue = FString::Printf(TEXT("Blueprint default: %s"), *Default.Summary);
+			return;
+		}
+
 		if (Default.Status != EAssetArchetypeValueStatus::Found)
 		{
 			return;

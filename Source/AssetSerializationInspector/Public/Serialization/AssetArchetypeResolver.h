@@ -18,6 +18,12 @@ enum class EAssetArchetypeValueStatus : uint8
 	/** The whole archetype chain was read but none of it stores the property, so the value comes from C++ defaults. */
 	NotSerializedInChain,
 
+	/**
+	 * The chain does not store the property, but the Blueprint of the export's class declares it as a variable. A Blueprint
+	 * variable is zero or empty unless the variable has a default value, which the Blueprint stores as text.
+	 */
+	DeclaredByBlueprint,
+
 	/** The chain leaves the packages that can be read (native class, missing or unreadable file), or is malformed. */
 	Unavailable
 };

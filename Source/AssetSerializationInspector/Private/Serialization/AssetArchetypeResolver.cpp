@@ -65,6 +65,76 @@ namespace
 
 		return nullptr;
 	}
+
+	FString GetClassShortName(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export)
+	{
+		FString Path;
+		if (!Document.ResolvePackageIndexPath(Export.ClassIndex, Path))
+		{
+			return FString();
+		}
+
+		int32 Dot = INDEX_NONE;
+		return Path.FindLastChar(TEXT('.'), Dot) ? Path.RightChop(Dot + 1) : Path;
+	}
+
+	/**
+	 * Looks for a variable called PropertyName in the NewVariables of a Blueprint stored in the same package, when the export is
+	 * an object of a class generated in that package. Returns the variable's default value text (empty when it has none).
+	 */
+	bool FindBlueprintVariable(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const int32 ExportIndex, const FString& PropertyName, FString& OutDefaultText)
+	{
+		if (!Document.ExportMap.IsValidIndex(ExportIndex) || Document.ExportMap[ExportIndex].ClassIndex.GetKind() != EAssetPackageIndexKind::Export)
+		{
+			return false;
+		}
+
+		for (const FAssetPackageExportEntry& Candidate : Document.ExportMap)
+		{
+			if (GetClassShortName(Document, Candidate) != TEXT("Blueprint"))
+			{
+				continue;
+			}
+
+			const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Candidate.Index);
+			const FAssetSerializationTraceNode* Node = Trace != nullptr ? FindTopLevelPropertyNode(*Trace, TEXT("NewVariables"), 0) : nullptr;
+			if (Node == nullptr)
+			{
+				continue;
+			}
+
+			const FAssetDecodedPropertyValue Variables = FAssetPropertyValueDecoder::Decode(Document, *Node, Candidate.SerialOffset);
+			if (!Variables.IsSuccess())
+			{
+				continue;
+			}
+
+			for (const FAssetDecodedPropertyValue& Variable : Variables.Children)
+			{
+				const FAssetDecodedPropertyValue* Name = nullptr;
+				const FAssetDecodedPropertyValue* DefaultValue = nullptr;
+				for (const FAssetDecodedPropertyValue& Field : Variable.Children)
+				{
+					if (Field.Name == TEXT("VarName"))
+					{
+						Name = &Field;
+					}
+					else if (Field.Name == TEXT("DefaultValue"))
+					{
+						DefaultValue = &Field;
+					}
+				}
+
+				if (Name != nullptr && Name->Value == PropertyName)
+				{
+					OutDefaultText = DefaultValue != nullptr ? DefaultValue->Value : FString();
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
 } // namespace
 
 struct FAssetArchetypeResolver::FLoadedPackage
@@ -432,9 +502,19 @@ FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedField(const
 	}
 	else
 	{
-		// Nothing in the package chain stores the property, so the value is a native (C++) default.
-		// Live reflection on the class default object could supply it; see the class comment.
+		// Nothing in the package chain stores the property, so the value is a native (C++) default, unless the property is a
+		// variable of the Blueprint itself. Live reflection on the class default object could supply native values; see the
+		// class comment.
 		Result.Note = Message;
+
+		FString DefaultText;
+		if (FieldPath.IsEmpty() && FindBlueprintVariable(RootDocument, RootTraces, ExportIndex, PropertyName, DefaultText))
+		{
+			Result.Status = EAssetArchetypeValueStatus::DeclaredByBlueprint;
+			Result.Summary = DefaultText.IsEmpty() ? FString(TEXT("zero / empty")) : FString::Printf(TEXT("\"%s\""), *DefaultText);
+			Result.Note = DefaultText.IsEmpty() ? TEXT("Declared as a variable of the Blueprint with no default value, so it is zero or empty (inferred from the Blueprint's NewVariables).")
+												: FString::Printf(TEXT("Declared as a variable of the Blueprint with the default value text \"%s\" (from the Blueprint's NewVariables)."), *DefaultText);
+		}
 	}
 
 	return Result;
