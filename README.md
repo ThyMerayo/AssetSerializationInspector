@@ -97,7 +97,7 @@ Decoded property values can be compared semantically instead of only as changed 
 - Field paths (`FieldPathProperty`), shown as owner and property path
 - Delegates (single and multicast; bindings with payloads are not decoded)
 - Natively serialized structs: gameplay tags and tag containers, single-precision 2D vectors, boxes, gameplay effect versions
-- Text properties (empty/culture-invariant, base and string-table texts; formatted, number and date/time texts are reported as unsupported)
+- Text properties: empty, base and string-table texts, and the histories that carry arguments (named, ordered and Blueprint-argument formats with their arguments, numbers, percents, currencies, dates and times, case transforms, text generators as their type and size); a history type this build does not know is reported as unsupported
 - Hard UObject/package references, shown as stable paths rather than table indices
 - Soft object/class references (resolved through the package's soft object path table)
 - Common deterministic structs such as GUIDs, vectors, rotators, quaternions, transforms, colors, integer vectors/points, and related math types
@@ -583,7 +583,6 @@ Known limitations:
 
 - Only `.uasset` packages are read; levels (`.umap`) are not.
 - Native C++ defaults are read from the running editor (top-level properties only; set and map deltas still assume an empty default), and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
-- Text values with arguments (formatted, number, date/time) are not decoded.
 - Package versions this editor build cannot read are reported as failed rather than guessed.
 - Batch, project-wide and folder runs produce reports; there is no results window to browse them yet.
 - Most of the UI has been exercised through automation tests and manual use on small assets. Large projects and assets saved by several different engine versions deserve more real-world testing.

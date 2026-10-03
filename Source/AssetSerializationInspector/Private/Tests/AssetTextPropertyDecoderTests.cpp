@@ -165,12 +165,11 @@ bool FAssetTextPropertyDecoder_RejectsUnsupportedAndTruncatedText::RunTest(const
 {
 	using namespace AssetTextPropertyDecoderTestUtils;
 
-	FAssetPackageDocument Formatted = MakeDocument();
-	AppendValue<uint32>(Formatted, 0);
-	AppendValue<int8>(Formatted, 1); // ETextHistoryType::NamedFormat
-	AppendValue<int32>(Formatted, 0);
-	FAssetDecodedPropertyValue Result = DecodeText(Formatted);
-	TestEqual(TEXT("Formatted text is reported as unsupported"), Result.Status, EAssetPropertyDecodeStatus::Unsupported);
+	FAssetPackageDocument Unknown = MakeDocument();
+	AppendValue<uint32>(Unknown, 0);
+	AppendValue<int8>(Unknown, 99); // A history type newer than this build knows
+	FAssetDecodedPropertyValue Result = DecodeText(Unknown);
+	TestEqual(TEXT("An unknown text history type is reported as unsupported"), Result.Status, EAssetPropertyDecodeStatus::Unsupported);
 	TestTrue(TEXT("An unsupported text exposes no partial children"), Result.Children.IsEmpty());
 
 	FAssetPackageDocument Truncated = MakeDocument();
