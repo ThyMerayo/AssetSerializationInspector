@@ -23,7 +23,7 @@ Planned next steps:
 - [x] Final values for delta-serialized sets and maps, resolved through the archetype chain in package files (#4, top-level properties only)
 - [x] Final values for containers nested in structs (arrays of structs not covered); newly serialized containers use the stated empty-default assumption
 - [x] Default-value reconstruction for omitted top-level properties, shown in the diff from the archetype chain (#5)
-- [ ] Default values for properties omitted inside structs
+- [x] Default values for properties omitted inside structs (struct properties only, not structs inside containers)
 - [ ] Zero/empty default for Blueprint-declared properties omitted by their class default object
 - [ ] Live-reflection fallback for native defaults the package chain cannot provide
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
