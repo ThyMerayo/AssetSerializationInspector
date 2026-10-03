@@ -11,6 +11,8 @@
  * Tell() returns an absolute file offset, making parser errors and tree nodes
  * easier to relate to the hex display.
  */
+struct FPackageFileSummary;
+
 class FAssetPackageMemoryReader : public FArchiveUObject
 {
 public:
@@ -20,6 +22,12 @@ public:
 	virtual int64 Tell() override;
 	virtual int64 TotalSize() override;
 	virtual void Seek(int64 InPos) override;
+
+	/**
+	 * Makes the archive report the versions the package was saved with, so version-dependent layouts (such as the export map
+	 * entries) are read the way that package wrote them rather than the way this editor build would.
+	 */
+	void ApplyPackageSummary(const FPackageFileSummary& Summary);
 
 	int64 GetRegionStart() const { return RegionStart; }
 

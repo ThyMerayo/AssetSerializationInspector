@@ -232,7 +232,7 @@ bool FAssetPropertyValueDecoder_DecodesSoftObjectPaths::RunTest(const FString& P
 	NoTable.PackageSummary.SoftObjectPathsCount = 0;
 	Node.Offset = 0;
 	Result = FAssetPropertyValueDecoder::Decode(NoTable, Node, 0);
-	TestEqual(TEXT("Inline soft object paths are reported as unsupported"), Result.Status, EAssetPropertyDecodeStatus::Unsupported);
+	TestFalse(TEXT("Bytes that are not an inline soft object path do not decode"), Result.IsSuccess());
 
 	return true;
 }
@@ -458,6 +458,40 @@ bool FAssetPropertyValueDecoder_DecodesLegacyPropertyTags::RunTest(const FString
 			TestEqual(TEXT("Holding its field"), Result.Children[3].Children[0].Children.Num(), 1);
 		}
 	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesInlineSoftObjectPaths, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesInlineSoftObjectPaths",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesInlineSoftObjectPaths::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	FAssetSerializedPropertyType PathType = MakeType(TEXT("StructProperty"));
+	PathType.Parameters.Add(MakeType(TEXT("SoftObjectPath")));
+
+	// Before the soft object path table (UE5.0): the asset path as a name, then the sub path as a string.
+	FAssetPackageDocument Old;
+	Old.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES), 0);
+	AppendName(Old, AddName(Old, TEXT("/Game/Box.Box")));
+	AppendAnsiString(Old, TEXT("Sub"));
+
+	FAssetDecodedPropertyValue Result = DecodeWholeFile(Old, PathType);
+	TestTrue(TEXT("An inline soft object path decodes"), Result.IsSuccess());
+	TestEqual(TEXT("With its sub path"), Result.Value, FString(TEXT("/Game/Box.Box:Sub")));
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Old.FileData.Num()));
+
+	// From FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES: package and asset names, then a UTF-8 sub path.
+	FAssetPackageDocument Newer;
+	Newer.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES), 0);
+	AppendName(Newer, AddName(Newer, TEXT("/Game/Box")));
+	AppendName(Newer, AddName(Newer, TEXT("Box")));
+	AppendValue<int32>(Newer, 0);
+
+	Result = DecodeWholeFile(Newer, PathType);
+	TestEqual(TEXT("Names are joined"), Result.Value, FString(TEXT("/Game/Box.Box")));
 
 	return true;
 }

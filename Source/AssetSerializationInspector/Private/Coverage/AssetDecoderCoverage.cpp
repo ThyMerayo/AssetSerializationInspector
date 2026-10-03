@@ -123,6 +123,15 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 			continue;
 		}
 
+		// The reader keeps a package whose tables could not be decoded, so a scan would otherwise count it as having no exports.
+		const FText* TableError = !Document->NameMapError.IsEmpty() ? &Document->NameMapError : (!Document->ImportMapError.IsEmpty() ? &Document->ImportMapError : (!Document->ExportMapError.IsEmpty() ? &Document->ExportMapError : nullptr));
+		if (TableError != nullptr)
+		{
+			++Result.AssetsUnreadable;
+			++Result.UnreadableReasons.FindOrAdd(NormalizeMessage(TableError->ToString().Replace(TEXT("\n"), TEXT(" "))));
+			continue;
+		}
+
 		++Result.AssetsScanned;
 
 		const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);

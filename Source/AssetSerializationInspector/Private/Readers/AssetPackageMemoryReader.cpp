@@ -2,6 +2,8 @@
 
 #include "Readers/AssetPackageMemoryReader.h"
 
+#include "UObject/PackageFileSummary.h"
+
 FAssetPackageMemoryReader::FAssetPackageMemoryReader(const TArray64<uint8>& InFileData, const int64 InStartOffset, const int64 InSize)
 	: FileData(InFileData)
 	, RegionStart(InStartOffset)
@@ -19,6 +21,14 @@ FAssetPackageMemoryReader::FAssetPackageMemoryReader(const TArray64<uint8>& InFi
 		RegionEnd = 0;
 		Position = 0;
 	}
+}
+
+void FAssetPackageMemoryReader::ApplyPackageSummary(const FPackageFileSummary& Summary)
+{
+	SetUEVer(Summary.GetFileVersionUE());
+	SetLicenseeUEVer(Summary.GetFileVersionLicenseeUE());
+	SetCustomVersions(Summary.GetCustomVersionContainer());
+	SetUseUnversionedPropertySerialization((Summary.GetPackageFlags() & PKG_UnversionedProperties) != 0);
 }
 
 void FAssetPackageMemoryReader::Serialize(void* Data, const int64 Num)
