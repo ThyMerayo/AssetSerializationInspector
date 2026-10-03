@@ -4,9 +4,15 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "HAL/FileManager.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/Paths.h"
+
 #include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 #include "UObject/ObjectVersion.h"
 
@@ -368,6 +374,90 @@ bool FAssetArchetypeResolver_ResolvesSetNestedInStruct::RunTest(const FString& P
 	// Removing an element the defaults do not have is inconsistent, so the delta is refused rather than guessed.
 	FAssetArchetypeResolver LoneResolver(Package.Document, Package.Traces);
 	TestFalse(TEXT("A delta that removes what the defaults lack is refused"), LoneResolver.ResolveFinalNestedContainerValue(Lone, TEXT("Settings"), 0, { TEXT("Tags") }, LoneStruct.Children[0], Final, Message));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_DescribesBlueprintVariableDefaults, "AssetSerializationInspector.Serialization.AssetArchetypeResolver.DescribesBlueprintVariableDefaults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetArchetypeResolver_DescribesBlueprintVariableDefaults::RunTest(const FString& Parameters)
+{
+	// BP_BOX50 is a real Blueprint (migrated from UE 5.0) that declares variables.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
+	if (!TestTrue(TEXT("The fixture loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+
+	int32 ClassDefaultObject = INDEX_NONE;
+	const FAssetSerializationTraceNode* VariablesNode = nullptr;
+	const FAssetPackageExportEntry* BlueprintExport = nullptr;
+
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		if (Document->IsExportClassDefaultObject(Export))
+		{
+			ClassDefaultObject = Export.Index;
+		}
+
+		const FAssetSerializationTrace* Trace = Traces->FindExportTrace(Export.Index);
+		if (Trace != nullptr && Trace->Root.IsValid())
+		{
+			for (const TSharedPtr<FAssetSerializationTraceNode>& Child : Trace->Root->Children)
+			{
+				if (Child.IsValid() && Child->Name == TEXT("NewVariables"))
+				{
+					VariablesNode = Child.Get();
+					BlueprintExport = &Export;
+				}
+			}
+		}
+	}
+
+	if (!TestTrue(TEXT("The package has a class default object and a variable list"), ClassDefaultObject != INDEX_NONE && VariablesNode != nullptr))
+	{
+		return false;
+	}
+
+	const FAssetDecodedPropertyValue Variables = FAssetPropertyValueDecoder::Decode(*Document, *VariablesNode, BlueprintExport->SerialOffset);
+	if (!TestTrue(TEXT("The variables decode"), Variables.IsSuccess() && !Variables.Children.IsEmpty()))
+	{
+		return false;
+	}
+
+	FString VariableName;
+	for (const FAssetDecodedPropertyValue& Field : Variables.Children[0].Children)
+	{
+		if (Field.Name == TEXT("VarName"))
+		{
+			VariableName = Field.Value;
+		}
+	}
+
+	if (!TestFalse(TEXT("The first variable has a name"), VariableName.IsEmpty()))
+	{
+		return false;
+	}
+
+	FAssetArchetypeResolver Resolver(*Document, *Traces);
+
+	const FAssetOmittedPropertyDefault Declared = Resolver.DescribeOmittedProperty(ClassDefaultObject, VariableName, 0);
+	TestEqual(TEXT("A Blueprint variable the chain does not store is declared by the Blueprint"), Declared.Status, EAssetArchetypeValueStatus::DeclaredByBlueprint);
+	TestFalse(TEXT("It has a summary"), Declared.Summary.IsEmpty());
+	TestTrue(TEXT("The note says where the declaration is"), Declared.Note.Contains(TEXT("Blueprint")));
+
+	const FAssetOmittedPropertyDefault Other = Resolver.DescribeOmittedProperty(ClassDefaultObject, TEXT("NotAVariableOfThisBlueprint"), 0);
+	TestNotEqual(TEXT("A name the Blueprint does not declare is not"), Other.Status, EAssetArchetypeValueStatus::DeclaredByBlueprint);
 
 	return true;
 }
