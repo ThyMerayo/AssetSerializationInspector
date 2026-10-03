@@ -102,6 +102,13 @@ public:
 	bool ResolveFinalContainerValue(
 		int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex, const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutFinal, FString& OutMessage);
 
+	/**
+	 * The same for a set or map that is a field of a struct property (or of structs nested in it): FieldPath names the fields
+	 * from the top-level property down to the container. Its defaults are the same field of the struct on the archetype chain.
+	 */
+	bool ResolveFinalNestedContainerValue(int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex, const TArray<FString>& FieldPath, const FAssetDecodedPropertyValue& Serialized,
+		FAssetArchetypeValue& OutFinal, FString& OutMessage);
+
 private:
 	struct FLoadedPackage;
 
@@ -112,10 +119,13 @@ private:
 		int32 ExportIndex = INDEX_NONE;
 	};
 
-	EAssetArchetypeValueStatus ResolveEffectiveValue(const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage);
-	EAssetArchetypeValueStatus ResolveFromArchetype(const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage);
-	EAssetArchetypeValueStatus ApplyContainerToArchetype(
-		const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, int32 Depth, const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutValue, FString& OutMessage);
+	// FieldPath is empty for a top-level property; otherwise the struct fields below it, ending at the value wanted.
+	EAssetArchetypeValueStatus ResolveEffectiveValue(
+		const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, const TArray<FString>& FieldPath, int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage);
+	EAssetArchetypeValueStatus ResolveFromArchetype(
+		const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, const TArray<FString>& FieldPath, int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage);
+	EAssetArchetypeValueStatus ApplyContainerToArchetype(const FLocation& Location, const FString& PropertyName, int32 ArrayIndex, const TArray<FString>& FieldPath, int32 Depth,
+		const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutValue, FString& OutMessage);
 	bool LocateArchetype(const FLocation& Location, FLocation& OutArchetype, FString& OutMessage);
 	const FLoadedPackage* FindOrLoadPackage(const FString& PackageName, FString& OutMessage);
 

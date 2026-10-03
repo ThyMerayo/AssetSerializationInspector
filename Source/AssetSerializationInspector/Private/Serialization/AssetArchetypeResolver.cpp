@@ -123,7 +123,7 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveInheritedValue(
 	Root.Traces = &RootTraces;
 	Root.ExportIndex = ExportIndex;
 
-	return ResolveFromArchetype(Root, PropertyName, ArrayIndex, 0, OutValue, OutMessage);
+	return ResolveFromArchetype(Root, PropertyName, ArrayIndex, TArray<FString>(), 0, OutValue, OutMessage);
 }
 
 bool FAssetArchetypeResolver::LocateArchetype(const FLocation& Location, FLocation& OutArchetype, FString& OutMessage)
@@ -217,8 +217,8 @@ bool FAssetArchetypeResolver::LocateArchetype(const FLocation& Location, FLocati
 	return false;
 }
 
-EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(
-	const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
+EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
+	const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
 {
 	if (Depth >= MaximumArchetypeDepth)
 	{
@@ -246,11 +246,11 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(
 		return EAssetArchetypeValueStatus::Unavailable;
 	}
 
-	return ResolveEffectiveValue(Archetype, PropertyName, ArrayIndex, Depth + 1, OutValue, OutMessage);
+	return ResolveEffectiveValue(Archetype, PropertyName, ArrayIndex, FieldPath, Depth + 1, OutValue, OutMessage);
 }
 
-EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
-	const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
+EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
+	const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
 {
 	const FAssetPackageDocument& Document = *Location.Document;
 	const FAssetPackageExportEntry& Export = Document.ExportMap[Location.ExportIndex];
@@ -261,10 +261,40 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
 	if (Node == nullptr)
 	{
 		// This archetype does not override the property; keep looking further up.
-		return ResolveFromArchetype(Location, PropertyName, ArrayIndex, Depth, OutValue, OutMessage);
+		return ResolveFromArchetype(Location, PropertyName, ArrayIndex, FieldPath, Depth, OutValue, OutMessage);
 	}
 
-	FAssetDecodedPropertyValue Decoded = FAssetPropertyValueDecoder::Decode(Document, *Node, Export.SerialOffset);
+	FAssetDecodedPropertyValue DecodedProperty = FAssetPropertyValueDecoder::Decode(Document, *Node, Export.SerialOffset);
+	if (!DecodedProperty.IsSuccess())
+	{
+		OutMessage = FString::Printf(TEXT("The archetype's '%s' could not be decoded: %s"), *PropertyName, *DecodedProperty.Error);
+		return EAssetArchetypeValueStatus::Unavailable;
+	}
+
+	// For a field of a struct, follow the field names down. A struct that does not store the field leaves its value to the
+	// struct on the archetype's own archetype, so the search continues up the chain.
+	const FAssetDecodedPropertyValue* Field = &DecodedProperty;
+	for (const FString& FieldName : FieldPath)
+	{
+		const FAssetDecodedPropertyValue* Next = nullptr;
+		for (const FAssetDecodedPropertyValue& Child : Field->Children)
+		{
+			if (Child.Name == FieldName)
+			{
+				Next = &Child;
+				break;
+			}
+		}
+
+		if (Next == nullptr)
+		{
+			return ResolveFromArchetype(Location, PropertyName, ArrayIndex, FieldPath, Depth, OutValue, OutMessage);
+		}
+
+		Field = Next;
+	}
+
+	FAssetDecodedPropertyValue Decoded = *Field;
 	if (!Decoded.IsSuccess())
 	{
 		OutMessage = FString::Printf(TEXT("The archetype's '%s' could not be decoded: %s"), *PropertyName, *Decoded.Error);
@@ -276,7 +306,7 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
 
 	if (Decoded.Kind == EAssetDecodedValueKind::Set || Decoded.Kind == EAssetDecodedValueKind::Map)
 	{
-		const EAssetArchetypeValueStatus Status = ApplyContainerToArchetype(Location, PropertyName, ArrayIndex, Depth, Decoded, Result, OutMessage);
+		const EAssetArchetypeValueStatus Status = ApplyContainerToArchetype(Location, PropertyName, ArrayIndex, FieldPath, Depth, Decoded, Result, OutMessage);
 		if (Status != EAssetArchetypeValueStatus::Found)
 		{
 			return Status;
@@ -291,13 +321,13 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
 	return EAssetArchetypeValueStatus::Found;
 }
 
-EAssetArchetypeValueStatus FAssetArchetypeResolver::ApplyContainerToArchetype(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const int32 Depth,
-	const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutValue, FString& OutMessage)
+EAssetArchetypeValueStatus FAssetArchetypeResolver::ApplyContainerToArchetype(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
+	const int32 Depth, const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutValue, FString& OutMessage)
 {
 	// The container may be a delta on top of the value its own archetype has.
 	FAssetArchetypeValue Parent;
 	FString ParentMessage;
-	const EAssetArchetypeValueStatus ParentStatus = ResolveFromArchetype(Location, PropertyName, ArrayIndex, Depth, Parent, ParentMessage);
+	const EAssetArchetypeValueStatus ParentStatus = ResolveFromArchetype(Location, PropertyName, ArrayIndex, FieldPath, Depth, Parent, ParentMessage);
 
 	const FAssetDecodedPropertyValue* Defaults = nullptr;
 	FAssetDecodedPropertyValue AssumedEmptyDefaults;
@@ -343,6 +373,12 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ApplyContainerToArchetype(co
 bool FAssetArchetypeResolver::ResolveFinalContainerValue(
 	const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex, const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutFinal, FString& OutMessage)
 {
+	return ResolveFinalNestedContainerValue(ExportIndex, PropertyName, ArrayIndex, TArray<FString>(), Serialized, OutFinal, OutMessage);
+}
+
+bool FAssetArchetypeResolver::ResolveFinalNestedContainerValue(const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
+	const FAssetDecodedPropertyValue& Serialized, FAssetArchetypeValue& OutFinal, FString& OutMessage)
+{
 	FLocation Root;
 	Root.Document = &RootDocument;
 	Root.Traces = &RootTraces;
@@ -357,7 +393,7 @@ bool FAssetArchetypeResolver::ResolveFinalContainerValue(
 	FAssetArchetypeValue Result;
 	Result.Source = FString::Printf(TEXT("%s in %s"), *RootDocument.ResolveExportPath(ExportIndex), *FPaths::GetCleanFilename(RootDocument.Filename));
 
-	if (ApplyContainerToArchetype(Root, PropertyName, ArrayIndex, 0, Serialized, Result, OutMessage) != EAssetArchetypeValueStatus::Found)
+	if (ApplyContainerToArchetype(Root, PropertyName, ArrayIndex, FieldPath, 0, Serialized, Result, OutMessage) != EAssetArchetypeValueStatus::Found)
 	{
 		return false;
 	}
