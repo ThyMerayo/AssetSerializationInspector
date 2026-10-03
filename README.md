@@ -94,6 +94,7 @@ Decoded property values can be compared semantically instead of only as changed 
 - Float and double properties
 - Name and string properties
 - Byte and enum properties (enum values are decoded by name)
+- Natively serialized structs: gameplay tags and tag containers, single-precision 2D vectors
 - Text properties (empty/culture-invariant, base and string-table texts; formatted, number and date/time texts are reported as unsupported)
 - Hard UObject/package references, shown as stable paths rather than table indices
 - Soft object/class references (resolved through the package's soft object path table)
@@ -353,6 +354,16 @@ Recent monitored saves are retained by stable save ID. Semantic paths are aggreg
 ### Reports and runners
 
 `FAssetAnalysisReport` is the format-independent model of one comparison; the writers turn it into text or JSON. The no-op resave test, the batch runner (`AssetBatchResave`) and the folder comparison (`AssetFolderComparison`) each condense their per-asset results into small entries and have their own report writers, so large runs stay cheap and every result can be saved.
+
+### Decoder coverage scan
+
+`AssetDecoderCoverage` decodes every tagged property of every export under a folder and ranks what the decoder could not read (by how many assets and bytes it affects), plus the bytes that are native or custom serialized, by export class. Run it from the editor console:
+
+```text
+ASI.DecodeCoverage <Folder> [ReportFile]
+```
+
+It writes a text report (default `Saved/AssetSerializationInspector/Coverage/DecoderCoverage.txt`) and a JSON file beside it. Engine content is mostly saved with unversioned properties (no tags), so run it on project content to find real gaps.
 
 ### Slate UI
 

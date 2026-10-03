@@ -265,6 +265,54 @@ bool FAssetPropertyValueDecoder_DecodesMapReplaceMarker::RunTest(const FString& 
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesNativelySerializedStructs, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesNativelySerializedStructs",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesNativelySerializedStructs::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	const auto StructType = [](const TCHAR* StructName) {
+		FAssetSerializedPropertyType Type = MakeType(TEXT("StructProperty"));
+		Type.Parameters.Add(MakeType(StructName));
+		return Type;
+	};
+
+	// FGameplayTagContainer::Serialize writes an array of names, not tagged properties.
+	FAssetPackageDocument Container;
+	AppendValue<int32>(Container, 2);
+	AppendName(Container, AddName(Container, TEXT("Ability.Death")));
+	AppendName(Container, AddName(Container, TEXT("Ability.Melee")));
+
+	FAssetDecodedPropertyValue Result = DecodeWholeFile(Container, StructType(TEXT("GameplayTagContainer")));
+	TestTrue(TEXT("A tag container decodes"), Result.IsSuccess());
+	if (TestEqual(TEXT("Both tags are read"), Result.Children.Num(), 2))
+	{
+		TestEqual(TEXT("By name"), Result.Children[1].Value, FString(TEXT("Ability.Melee")));
+	}
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Container.FileData.Num()));
+
+	FAssetPackageDocument Tag;
+	AppendName(Tag, AddName(Tag, TEXT("Ability.Death")));
+	Result = DecodeWholeFile(Tag, StructType(TEXT("GameplayTag")));
+	TestEqual(TEXT("A tag is its name"), Result.Value, FString(TEXT("Ability.Death")));
+
+	FAssetPackageDocument Vector;
+	AppendValue<float>(Vector, 1.5f);
+	AppendValue<float>(Vector, -2.0f);
+	Result = DecodeWholeFile(Vector, StructType(TEXT("DeprecateSlateVector2D")));
+	TestTrue(TEXT("A single precision 2D vector decodes"), Result.IsSuccess());
+	TestEqual(TEXT("It is two floats"), Result.Size, static_cast<int64>(Vector.FileData.Num()));
+
+	FAssetPackageDocument Truncated;
+	AppendValue<int32>(Truncated, 3);
+	AppendName(Truncated, AddName(Truncated, TEXT("Ability.Death")));
+	Result = DecodeWholeFile(Truncated, StructType(TEXT("GameplayTagContainer")));
+	TestEqual(TEXT("A container cut short is invalid"), Result.Status, EAssetPropertyDecodeStatus::InvalidData);
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_FormatsValuesForDisplay, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.FormatsValuesForDisplay",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
