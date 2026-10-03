@@ -7,6 +7,7 @@
 #include "Curves/CurveFloat.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -16,6 +17,8 @@
 #include "UObject/SavePackage.h"
 
 #include "Coverage/AssetDecoderCoverage.h"
+#include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackageReader.h"
 
 namespace AssetDecoderCoverageTestUtils
 {
@@ -154,6 +157,55 @@ bool FAssetDecoderCoverage_ScansAFolder::RunTest(const FString& Parameters)
 	Package->SetDirtyFlag(false);
 	IFileManager::Get().Delete(*File, false, true, true);
 	IFileManager::Get().DeleteDirectory(*Root, false, true);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecoderCoverage_ReadsAPackageFromUE50, "AssetSerializationInspector.Coverage.AssetDecoderCoverage.ReadsAPackageFromUE50",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDecoderCoverage_ReadsAPackageFromUE50::RunTest(const FString& Parameters)
+{
+	// BP_BOX50 is a small Blueprint migrated from Unreal 5.0 (file version 1004, tags without complete type names, no script
+	// serialization offsets, no soft object path table). It is the fixture for the pre-5.4 package layouts.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	const FString Folder = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"));
+	const FString File = FPaths::Combine(Folder, TEXT("BP_BOX50.uasset"));
+	if (!TestTrue(TEXT("The fixture exists"), IFileManager::Get().FileExists(*File)))
+	{
+		return false;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(File, Error);
+	if (!TestTrue(TEXT("The package loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("It was saved by UE 5.0"), Document->PackageSummary.GetFileVersionUE().FileVersionUE5, 1004);
+	TestTrue(TEXT("Its name map decodes"), Document->NameMapError.IsEmpty());
+	TestTrue(TEXT("Its import map decodes"), Document->ImportMapError.IsEmpty());
+	TestTrue(TEXT("Its export map decodes"), Document->ExportMapError.IsEmpty());
+	TestEqual(TEXT("All its exports are read"), Document->ExportMap.Num(), 16);
+
+	const FAssetDecoderCoverageResult Result = AssetDecoderCoverage::Run(Folder, [](int32, int32, const FString&) { return true; });
+	TestEqual(TEXT("It is scanned"), Result.AssetsScanned, 1);
+	TestEqual(TEXT("Nothing is unreadable"), Result.AssetsUnreadable, 0);
+	TestEqual(TEXT("Every export has a property stream"), Result.ExportsScanned, 16);
+	TestEqual(TEXT("Its tagged properties are found"), Result.PropertiesScanned, 73);
+
+	// The one property left is a Map<Name, Guid>: packages before UE 5.4 do not store the struct type of a map value.
+	TestEqual(TEXT("All but one decode"), Result.PropertiesDecoded, 72);
+	if (TestEqual(TEXT("One kind of failure"), Result.Issues.Num(), 1))
+	{
+		TestTrue(TEXT("It is the map"), Result.Issues[0].TypeName.StartsWith(TEXT("MapProperty")));
+	}
 
 	return true;
 }
