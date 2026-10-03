@@ -341,7 +341,7 @@ bool FAssetPackageDocument::ResolveSoftObjectPath(const int32 Index, FString& Ou
 				Reader << PackageName;
 				Reader << AssetName;
 
-				if (Reader.IsError() || !AssetSerializationPrimitives::ReadSerializedString(Reader, SubPath, Error))
+				if (Reader.IsError() || !AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, SubPath, Error))
 				{
 					SoftObjectPathTable.Reset();
 					break;
