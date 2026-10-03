@@ -41,4 +41,4 @@ Planned next steps:
 - [ ] Verify the folder comparison on packages that really were saved by different engine versions
 - [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; GameplayEffectVersion and boxes done; FieldPath done, every tagged property in the project survey decodes; remaining gap: unversioned properties and native export data)
 - [ ] Persistent monitored-asset configuration
-- [ ] Support additional UE5 package versions
+- [x] Support additional package versions: property tags from packages before UE 5.4 (legacy layout); unverified on real older packages, value layouts of older versions not audited
