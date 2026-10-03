@@ -25,7 +25,7 @@ Planned next steps:
 - [x] Default-value reconstruction for omitted top-level properties, shown in the diff from the archetype chain (#5)
 - [x] Default values for properties omitted inside structs (struct properties only, not structs inside containers)
 - [x] Zero/empty default for Blueprint-declared properties omitted by their class default object (needs tagged properties; not for unversioned packages)
-- [ ] Live-reflection fallback for native defaults the package chain cannot provide
+- [x] Live-reflection fallback for native defaults of omitted top-level properties (containers still assume an empty default; unversioned-property schemas not done)
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
 - [ ] Real-asset fixture tests for the decoders and archetype resolution
 - [x] Search and state filtering for the structural diff (#6)
