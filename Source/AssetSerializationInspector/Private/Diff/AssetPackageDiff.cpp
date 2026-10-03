@@ -396,6 +396,13 @@ namespace
 			return;
 		}
 
+		if (Default.Status == EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection)
+		{
+			OutDecodedValue = TEXT("<not serialized>");
+			OutFinalValue = FString::Printf(TEXT("native default (live): %s"), *Default.Summary);
+			return;
+		}
+
 		if (Default.Status != EAssetArchetypeValueStatus::Found)
 		{
 			return;
