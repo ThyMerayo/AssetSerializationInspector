@@ -404,11 +404,21 @@ bool FAssetArchetypeResolver::ResolveFinalNestedContainerValue(const int32 Expor
 
 FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedProperty(const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex)
 {
+	return DescribeOmittedField(ExportIndex, PropertyName, ArrayIndex, TArray<FString>());
+}
+
+FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedField(const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath)
+{
 	FAssetOmittedPropertyDefault Result;
 	FAssetArchetypeValue Inherited;
 	FString Message;
 
-	Result.Status = ResolveInheritedValue(ExportIndex, PropertyName, ArrayIndex, Inherited, Message);
+	FLocation Root;
+	Root.Document = &RootDocument;
+	Root.Traces = &RootTraces;
+	Root.ExportIndex = ExportIndex;
+
+	Result.Status = ResolveFromArchetype(Root, PropertyName, ArrayIndex, FieldPath, 0, Inherited, Message);
 
 	if (Result.Status == EAssetArchetypeValueStatus::Found)
 	{
