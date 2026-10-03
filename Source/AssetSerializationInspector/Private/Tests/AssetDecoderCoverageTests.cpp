@@ -19,6 +19,8 @@
 #include "Coverage/AssetDecoderCoverage.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Trace/AssetPackageFieldDecoder.h"
+#include "Trace/AssetSerializationTrace.h"
 
 namespace AssetDecoderCoverageTestUtils
 {
@@ -194,7 +196,13 @@ bool FAssetDecoderCoverage_ReadsAPackageFromUE50::RunTest(const FString& Paramet
 	TestTrue(TEXT("Its export map decodes"), Document->ExportMapError.IsEmpty());
 	TestEqual(TEXT("All its exports are read"), Document->ExportMap.Num(), 16);
 
-	const FAssetDecoderCoverageResult Result = AssetDecoderCoverage::Run(Folder, [](int32, int32, const FString&) { return true; });
+	// The fixtures folder holds several packages; scan this one alone.
+	const FString ScanFolder = FPaths::Combine(FPaths::AutomationTransientDir(), TEXT("AssetSerializationInspector"), TEXT("UE50Fixture"));
+	IFileManager::Get().DeleteDirectory(*ScanFolder, false, true);
+	IFileManager::Get().Copy(*FPaths::Combine(ScanFolder, TEXT("BP_BOX50.uasset")), *File);
+
+	const FAssetDecoderCoverageResult Result = AssetDecoderCoverage::Run(ScanFolder, [](int32, int32, const FString&) { return true; });
+	IFileManager::Get().DeleteDirectory(*ScanFolder, false, true);
 	TestEqual(TEXT("It is scanned"), Result.AssetsScanned, 1);
 	TestEqual(TEXT("Nothing is unreadable"), Result.AssetsUnreadable, 0);
 	TestEqual(TEXT("Every export has a property stream"), Result.ExportsScanned, 16);
@@ -208,6 +216,59 @@ bool FAssetDecoderCoverage_ReadsAPackageFromUE50::RunTest(const FString& Paramet
 	}
 
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecoderCoverage_ReadsAnArrayOfTextsFromAnEditorPackage, "AssetSerializationInspector.Coverage.AssetDecoderCoverage.ReadsAnArrayOfTextsFromAnEditorPackage",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDecoderCoverage_ReadsAnArrayOfTextsFromAnEditorPackage::RunTest(const FString& Parameters)
+{
+	// BP_Box1 has NewVar_11, an array of three texts: the first and third have values, the second is the default (empty).
+	// Editor packages store developer notes after the source string of a text, which keeps the next element aligned.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_Box1.uasset")), Error);
+	if (!TestTrue(TEXT("The fixture loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		const FAssetSerializationTrace* Trace = Traces->FindExportTrace(Export.Index);
+		if (Trace == nullptr || !Trace->Root.IsValid())
+		{
+			continue;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		{
+			if (!Node.IsValid() || Node->Name != TEXT("NewVar_11"))
+			{
+				continue;
+			}
+
+			const FAssetDecodedPropertyValue Texts = FAssetPropertyValueDecoder::Decode(*Document, *Node, Export.SerialOffset);
+			TestTrue(TEXT("The array of texts decodes"), Texts.IsSuccess());
+			if (TestEqual(TEXT("It has three elements"), Texts.Children.Num(), 3))
+			{
+				TestEqual(TEXT("The first has its value"), Texts.Children[0].Value, FString(TEXT("test111")));
+				TestEqual(TEXT("The second is the default, an empty text"), Texts.Children[1].Value, FString());
+				TestEqual(TEXT("The third has its value"), Texts.Children[2].Value, FString(TEXT("Other1")));
+			}
+			return true;
+		}
+	}
+
+	AddError(TEXT("NewVar_11 was not found in the fixture."));
+	return false;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

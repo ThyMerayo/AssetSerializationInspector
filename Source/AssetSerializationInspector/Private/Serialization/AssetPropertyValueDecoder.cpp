@@ -8,6 +8,7 @@
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/ObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 
@@ -1332,6 +1333,14 @@ static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAs
 		}
 
 		OutValue.Value = OutValue.Children.Last().Value;
+
+		// Editor packages also store the developer notes of the text: a string, written after the source string. It is what
+		// keeps the next element of an array of texts aligned.
+		if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDevNotesToFText && (Context.Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0 &&
+			!ReadTextString(TEXT("DevNotes")))
+		{
+			return Fail(TEXT("Could not decode FText developer notes"));
+		}
 	}
 	else if (HistoryType == 11)
 	{
