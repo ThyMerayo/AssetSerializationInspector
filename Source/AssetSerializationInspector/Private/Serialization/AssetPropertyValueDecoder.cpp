@@ -487,7 +487,27 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 		return false;
 	}
 
-	const FAssetSerializedPropertyType& InnerType = Type.Parameters[0];
+	FAssetSerializedPropertyType InnerType = Type.Parameters[0];
+
+	// Before PROPERTY_TAG_COMPLETE_TYPE_NAME an array of structs carries a tag for the inner struct right after the count.
+	if (Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME && Reader.UEVer() >= VER_UE4_INNER_ARRAY_TAG_INFO && InnerType.Name == TEXT("StructProperty"))
+	{
+		FAssetSerializedPropertyTag InnerTag;
+		FText InnerError;
+
+		if (!FAssetPropertyTagDecoder::ReadTag(Context.Document, Reader, InnerTag, InnerError) || Reader.Tell() > ValueEnd)
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = TEXT("Could not read the array's inner struct tag.");
+			return false;
+		}
+
+		// The array's own tag only says "StructProperty"; the inner tag names the struct.
+		if (InnerType.Parameters.IsEmpty())
+		{
+			InnerType = InnerTag.Type;
+		}
+	}
 
 	OutValue.Children.Reserve(Count);
 

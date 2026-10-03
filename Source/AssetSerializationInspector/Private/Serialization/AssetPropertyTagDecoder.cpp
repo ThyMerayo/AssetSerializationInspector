@@ -39,18 +39,6 @@ namespace
 	ENUM_CLASS_FLAGS(EAssetPropertyTagExtension);
 } // namespace
 
-static bool ReadLegacyPropertyType(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyTag& OutTag, FText& OutError)
-{
-	FString TypeName;
-	if (!Reader.ReadResolvedName(TypeName))
-	{
-		OutError = NSLOCTEXT("AssetPropertyTagDecoder", "PropertyTypeReadFailed", "Could not read property type.");
-		return false;
-	}
-
-	return true;
-}
-
 static bool ConvertPropertyTypeName(const UE::FPropertyTypeName& InType, FAssetSerializedPropertyType& OutType, FText& OutError, const int32 Depth = 0)
 {
 	constexpr int32 MaxDepth = 32;
@@ -266,6 +254,146 @@ static bool ReadModernTagRemainder(const FAssetPackageDocument& Document, FAsset
 	return true;
 }
 
+static FAssetSerializedPropertyType MakeNamedType(const FString& Name)
+{
+	FAssetSerializedPropertyType Type;
+	Type.Name = Name;
+	return Type;
+}
+
+/**
+ * Packages saved before PROPERTY_TAG_COMPLETE_TYPE_NAME (UE4 and UE5 up to 5.3) write a different tag: the type name alone, the
+ * size and array index, then only the extra fields that type needs (struct name and GUID, bool value, enum name, inner types),
+ * a property GUID, and, in later versions, tag extensions. This builds the same complete type the newer format stores. The layout
+ * is that of LoadPropertyTagNoFullType in the engine's PropertyTag.cpp; the engine's own FPropertyTag is not exported to plugins.
+ */
+static bool ReadLegacyTagRemainder(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyTag& OutTag, FText& OutError)
+{
+	const FPackageFileVersion Version = Reader.UEVer();
+
+	FName TypeName;
+	Reader << TypeName;
+	Reader << OutTag.Size;
+	Reader << OutTag.ArrayIndex;
+
+	if (Reader.IsError())
+	{
+		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyHeaderReadFailed", "Could not read the tag of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
+		return false;
+	}
+
+	const auto ReadName = [&Reader](FString& OutName) {
+		FName Name;
+		Reader << Name;
+		OutName = Name.ToString();
+		return !Reader.IsError();
+	};
+
+	OutTag.Type = MakeNamedType(TypeName.ToString());
+
+	bool bTypeFieldsRead = true;
+	FString Text;
+
+	if (TypeName == NAME_StructProperty)
+	{
+		FGuid StructGuid;
+		bTypeFieldsRead = ReadName(Text);
+		OutTag.Type.Parameters.Add(MakeNamedType(Text));
+
+		if (bTypeFieldsRead && Version >= VER_UE4_STRUCT_GUID_IN_PROPERTY_TAG)
+		{
+			Reader << StructGuid;
+			bTypeFieldsRead = !Reader.IsError();
+			if (StructGuid.IsValid())
+			{
+				OutTag.Type.Parameters.Add(MakeNamedType(StructGuid.ToString(EGuidFormats::DigitsWithHyphens)));
+			}
+		}
+	}
+	else if (TypeName == NAME_BoolProperty)
+	{
+		uint8 BoolValue = 0;
+		Reader << BoolValue;
+		bTypeFieldsRead = !Reader.IsError();
+		OutTag.bBoolValue = BoolValue != 0;
+	}
+	else if (TypeName == NAME_ByteProperty)
+	{
+		bTypeFieldsRead = ReadName(Text);
+		if (Text != TEXT("None"))
+		{
+			OutTag.Type.Parameters.Add(MakeNamedType(Text));
+		}
+	}
+	else if (TypeName == NAME_EnumProperty)
+	{
+		bTypeFieldsRead = ReadName(Text);
+		OutTag.Type.Parameters.Add(MakeNamedType(Text));
+		OutTag.Type.Parameters.Add(MakeNamedType(TEXT("ByteProperty")));
+	}
+	else if (TypeName == NAME_ArrayProperty || TypeName == NAME_OptionalProperty || (TypeName == NAME_SetProperty && Version >= VER_UE4_PROPERTY_TAG_SET_MAP_SUPPORT))
+	{
+		if (TypeName != NAME_ArrayProperty || Version >= VAR_UE4_ARRAY_PROPERTY_INNER_TAGS)
+		{
+			bTypeFieldsRead = ReadName(Text);
+			OutTag.Type.Parameters.Add(MakeNamedType(Text));
+		}
+		else
+		{
+			OutTag.Type.Parameters.Add(MakeNamedType(TEXT("None")));
+		}
+	}
+	else if (TypeName == NAME_MapProperty && Version >= VER_UE4_PROPERTY_TAG_SET_MAP_SUPPORT)
+	{
+		bTypeFieldsRead = ReadName(Text);
+		OutTag.Type.Parameters.Add(MakeNamedType(Text));
+		bTypeFieldsRead = bTypeFieldsRead && ReadName(Text);
+		OutTag.Type.Parameters.Add(MakeNamedType(Text));
+	}
+
+	if (!bTypeFieldsRead)
+	{
+		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyTypeReadFailed", "Could not read the type of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
+		return false;
+	}
+
+	if (Version >= VER_UE4_PROPERTY_GUID_IN_PROPERTY_TAG)
+	{
+		uint8 bHasPropertyGuid = 0;
+		Reader << bHasPropertyGuid;
+		OutTag.bHasPropertyGuid = bHasPropertyGuid != 0;
+
+		if (OutTag.bHasPropertyGuid)
+		{
+			Reader << OutTag.PropertyGuid;
+		}
+
+		if (Reader.IsError())
+		{
+			OutError = NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyGuidReadFailed", "Could not read the property GUID (older package format).");
+			return false;
+		}
+	}
+
+	if (Version >= EUnrealEngineObjectUE5Version::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION && !ReadPropertyExtensions(Document, Reader, OutTag, OutError))
+	{
+		return false;
+	}
+
+	OutTag.SerializeType = EAssetPropertyTagSerializeType::Property;
+	OutTag.ValueOffset = Reader.Tell();
+	OutTag.TagSize = OutTag.ValueOffset - OutTag.TagOffset;
+
+	if (OutTag.Size < 0 || OutTag.Size > Reader.GetRegionEnd() - OutTag.ValueOffset)
+	{
+		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyValueOutOfRange", "Property '{0}' declares {1} value bytes, which extend beyond the script serialization range."),
+			FText::FromString(OutTag.ResolvedName), FText::AsNumber(OutTag.Size));
+		return false;
+	}
+
+	return true;
+}
+
 bool FAssetPropertyTagDecoder::ReadTag(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyTag& OutTag, FText& OutError)
 {
 	OutTag = {};
@@ -306,11 +434,9 @@ bool FAssetPropertyTagDecoder::ReadTag(const FAssetPackageDocument& Document, FA
 		return true;
 	}
 
-	const FPackageFileVersion Version = Reader.UEVer();
-
-	if (Version < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
+	if (Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
 	{
-		return ReadLegacyPropertyType(Document, Reader, OutTag, OutError);
+		return ReadLegacyTagRemainder(Document, Reader, OutTag, OutError);
 	}
 
 	if (!ReadCompletePropertyType(Document, Reader, OutTag.Type, OutError))
