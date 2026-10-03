@@ -249,6 +249,8 @@ The same test runs on many assets: select several assets, or use *Run No-op Resa
 
 *Window -> Compare Asset Folders...* compares two folders of `.uasset` files on disk, for example a copy of a project from before an engine upgrade and the upgraded one. Files are paired by relative path; each pair is identical, changed, only in one folder, or could not be compared (with the reason, such as a package version this editor cannot read). The report groups what changed: totals, how many files went from which engine version to which, changes found in several files, and then the files themselves.
 
+Packages saved before UE 5.4 (UE4 and UE5.0 to 5.3) store property tags in an older layout, with only the type name and the extra fields each type needs. The inspector reads both layouts, including the inner struct tag that older arrays of structs carry, so their properties decode like newer ones. This is covered by unit tests built from the engine's layout, not yet by packages saved by those engine versions.
+
 In the two-file diff, differences in the engine, file or custom versions are explained, including that some differences can come from the format rather than from edits.
 
 ---
