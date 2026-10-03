@@ -359,6 +359,23 @@ bool FAssetPropertyValueDecoder_DecodesDelegates::RunTest(const FString& Paramet
 	Result = DecodeWholeFile(Single, MakeType(TEXT("DelegateProperty")));
 	TestEqual(TEXT("An unbound delegate is None"), Result.Value, FString(TEXT("None")));
 
+	// An FFieldPath: the names below the owner, then the owner (0 is a null package index).
+	FAssetPackageDocument Path;
+	AppendValue<int32>(Path, 2);
+	AppendName(Path, AddName(Path, TEXT("Inner")));
+	AppendName(Path, AddName(Path, TEXT("Value")));
+	AppendValue<int32>(Path, 0);
+	Result = DecodeWholeFile(Path, MakeType(TEXT("FieldPathProperty")));
+	TestTrue(TEXT("A field path decodes"), Result.IsSuccess());
+	TestTrue(TEXT("Its names are joined"), Result.Value.Contains(TEXT("Inner.Value")));
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Path.FileData.Num()));
+
+	FAssetPackageDocument EmptyPath;
+	AppendValue<int32>(EmptyPath, 0);
+	AppendValue<int32>(EmptyPath, 0);
+	Result = DecodeWholeFile(EmptyPath, MakeType(TEXT("FieldPathProperty")));
+	TestEqual(TEXT("An empty field path is None"), Result.Value, FString(TEXT("None")));
+
 	FAssetPackageDocument Truncated;
 	AppendValue<int32>(Truncated, 2);
 	AppendValue<int32>(Truncated, 0);

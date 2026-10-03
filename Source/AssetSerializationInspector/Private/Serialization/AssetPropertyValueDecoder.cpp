@@ -1149,6 +1149,49 @@ static bool DecodeMulticastDelegateFromReader(const FAssetPropertyDecodeContext&
 	return true;
 }
 
+/** An FFieldPath is the names of the path down from its owner, followed by the owner (a package index). */
+static bool DecodeFieldPathFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	int32 Count = 0;
+	if (!ReadBounded(Reader, ValueEnd, Count) || !IsValidContainerCount(Context, Count))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not read the field path length.");
+		return false;
+	}
+
+	TArray<FString> Names;
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FAssetDecodedPropertyValue Element;
+		if (!DecodeNameFromReader(Context, Reader, ValueEnd, Element))
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = FString::Printf(TEXT("Could not decode field path name %d."), Index);
+			return false;
+		}
+
+		Names.Add(Element.Value);
+	}
+
+	FAssetDecodedPropertyValue Owner;
+	if (!DecodePackageIndexFromReader(Context, Reader, ValueEnd, Owner))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not decode the field path owner.");
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
+	OutValue.Value = Names.IsEmpty() ? FString(TEXT("None")) : FString::Printf(TEXT("%s:%s"), *Owner.Value, *FString::Join(Names, TEXT(".")));
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool DecodeByteFromReader(
 	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
@@ -1244,6 +1287,11 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 	if (Type.Name == TEXT("SoftObjectProperty") || Type.Name == TEXT("SoftClassProperty"))
 	{
 		return DecodeSoftObjectPathFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("FieldPathProperty"))
+	{
+		return DecodeFieldPathFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (Type.Name == TEXT("DelegateProperty"))

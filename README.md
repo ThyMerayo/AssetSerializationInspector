@@ -94,6 +94,7 @@ Decoded property values can be compared semantically instead of only as changed 
 - Float and double properties
 - Name and string properties
 - Byte and enum properties (enum values are decoded by name)
+- Field paths (`FieldPathProperty`), shown as owner and property path
 - Delegates (single and multicast; bindings with payloads are not decoded)
 - Natively serialized structs: gameplay tags and tag containers, single-precision 2D vectors, boxes, gameplay effect versions
 - Text properties (empty/culture-invariant, base and string-table texts; formatted, number and date/time texts are reported as unsupported)
