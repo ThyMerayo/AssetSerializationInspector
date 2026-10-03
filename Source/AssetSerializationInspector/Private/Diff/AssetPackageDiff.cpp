@@ -289,10 +289,74 @@ namespace
 		FAssetArchetypeResolver* ArchetypeResolver = nullptr;
 	};
 
-	/** Reconstructs the final contents of a set or map that may have been stored as a delta against its archetype. */
+	/**
+	 * Replaces, inside a copy of a struct value, every set or map reached through struct fields with its final contents.
+	 * FieldPath names the fields from the top-level property down to Value. Returns whether anything was replaced.
+	 */
+	bool ReplaceNestedContainersWithFinalValues(const FPropertyDiffNodeData& Data, TArray<FString>& FieldPath, FAssetDecodedPropertyValue& Value, FString& InOutNote)
+	{
+		bool bReplaced = false;
+
+		for (FAssetDecodedPropertyValue& Child : Value.Children)
+		{
+			if (Child.Kind == EAssetDecodedValueKind::Struct)
+			{
+				FieldPath.Add(Child.Name);
+				bReplaced |= ReplaceNestedContainersWithFinalValues(Data, FieldPath, Child, InOutNote);
+				FieldPath.Pop();
+			}
+			else if (Child.Kind == EAssetDecodedValueKind::Set || Child.Kind == EAssetDecodedValueKind::Map)
+			{
+				FieldPath.Add(Child.Name);
+
+				FAssetArchetypeValue Final;
+				FString Message;
+				if (Data.ArchetypeResolver->ResolveFinalNestedContainerValue(Data.Export.Index, Data.Node->Name, Data.Node->ArrayIndex, FieldPath, Child, Final, Message))
+				{
+					const FString FinalName = Child.Name;
+					Child = MoveTemp(Final.Value);
+					Child.Name = FinalName;
+					bReplaced = true;
+
+					if (!Final.Note.IsEmpty() && !InOutNote.Contains(Final.Note))
+					{
+						InOutNote += (InOutNote.IsEmpty() ? TEXT("") : TEXT(" ")) + Final.Note;
+					}
+				}
+
+				FieldPath.Pop();
+			}
+		}
+
+		return bReplaced;
+	}
+
+	/**
+	 * Reconstructs the final contents of a set or map that may have been stored as a delta against its archetype, and of
+	 * the sets and maps inside a struct property.
+	 */
 	void ResolveFinalValue(const FPropertyDiffNodeData& Data, const FAssetDecodedPropertyValue& Decoded, FString& OutFinalValue, FString& OutNote)
 	{
-		if (Data.ArchetypeResolver == nullptr || Data.Node == nullptr || (Decoded.Kind != EAssetDecodedValueKind::Set && Decoded.Kind != EAssetDecodedValueKind::Map))
+		if (Data.ArchetypeResolver == nullptr || Data.Node == nullptr)
+		{
+			return;
+		}
+
+		if (Decoded.Kind == EAssetDecodedValueKind::Struct)
+		{
+			FAssetDecodedPropertyValue Copy = Decoded;
+			TArray<FString> FieldPath;
+			FString Note;
+			if (ReplaceNestedContainersWithFinalValues(Data, FieldPath, Copy, Note))
+			{
+				OutFinalValue = FAssetPropertyValueDecoder::FormatForDisplay(Copy);
+				OutNote = Note;
+			}
+
+			return;
+		}
+
+		if (Decoded.Kind != EAssetDecodedValueKind::Set && Decoded.Kind != EAssetDecodedValueKind::Map)
 		{
 			return;
 		}

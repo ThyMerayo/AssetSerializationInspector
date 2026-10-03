@@ -6,7 +6,9 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetArchetypeResolver.h"
+#include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+#include "UObject/ObjectVersion.h"
 
 namespace AssetArchetypeResolverTestUtils
 {
@@ -252,6 +254,111 @@ bool FAssetArchetypeResolver_DescribesOmittedProperties::RunTest(const FString& 
 
 	const FAssetOmittedPropertyDefault Wrong = Resolver.DescribeOmittedProperty(Child, TEXT("Other"), 0);
 	TestNotEqual(TEXT("A different property name is not found on the chain"), Wrong.Status, EAssetArchetypeValueStatus::Found);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_ResolvesSetNestedInStruct, "AssetSerializationInspector.Serialization.AssetArchetypeResolver.ResolvesSetNestedInStruct",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetArchetypeResolver_ResolvesSetNestedInStruct::RunTest(const FString& Parameters)
+{
+	using namespace AssetArchetypeResolverTestUtils;
+
+	FTestPackage Package;
+	Package.Document.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::INITIAL_VERSION), 0);
+
+	const FAssetSerializedPropertyType StructType = MakeType(TEXT("StructProperty"), { TEXT("MySettings") });
+
+	// Adds an export that stores a "Settings" struct. The struct holds a "Tags" set written with the given words (no field when
+	// empty), in the layout used before complete type names. A null Words pointer leaves "Settings" out altogether.
+	const auto AddExportWithStruct = [&](const FString& Name, const int32 TemplateRawIndex, const TArray<int32>* Words) {
+		FAssetPackageExportEntry Export;
+		Export.Index = Package.Document.ExportMap.Num();
+		Export.ObjectName.NameIndex = Package.AddName(Name);
+		Export.TemplateIndex.RawIndex = TemplateRawIndex;
+		Export.SerialOffset = Package.Document.FileData.Num();
+
+		const auto AppendName = [&Package](const FString& Text) {
+			Package.AppendInt32(Package.AddName(Text));
+			Package.AppendInt32(0);
+		};
+
+		if (Words != nullptr)
+		{
+			if (!Words->IsEmpty())
+			{
+				AppendName(TEXT("Tags"));
+				AppendName(TEXT("SetProperty"));
+				Package.AppendInt32(Words->Num() * 4);
+				Package.AppendInt32(0);
+				AppendName(TEXT("IntProperty"));
+				Package.Document.FileData.Add(0); // no property GUID
+				for (const int32 Word : *Words)
+				{
+					Package.AppendInt32(Word);
+				}
+			}
+			AppendName(TEXT("None"));
+		}
+
+		Export.SerialSize = Package.Document.FileData.Num() - Export.SerialOffset;
+		Package.Document.ExportMap.Add(Export);
+
+		if (Words != nullptr)
+		{
+			TSharedPtr<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
+			Node->Kind = EAssetSerializationTraceKind::Property;
+			Node->Name = TEXT("Settings");
+			Node->PropertyType = StructType;
+			Node->Offset = 0;
+			Node->Size = Export.SerialSize;
+
+			FAssetSerializationTrace Trace;
+			Trace.Root = MakeShared<FAssetSerializationTraceNode>();
+			Trace.Root->Children.Add(Node);
+			Package.Traces.ExportTraces.Add(Export.Index, MoveTemp(Trace));
+		}
+
+		return Export.Index;
+	};
+
+	const TArray<int32> GrandparentTags = { 0, 3, 1, 2, 3 };
+	const TArray<int32> ChildTags = { 1, 2, 1, 4 };
+	const TArray<int32> NoFields;
+
+	const int32 Grandparent = AddExportWithStruct(TEXT("Grandparent"), 0, &GrandparentTags);
+	// The parent stores the struct but not the field, so the field's value still comes from the grandparent.
+	const int32 Parent = AddExportWithStruct(TEXT("Parent"), Grandparent + 1, &NoFields);
+	// The child removes 2 and adds 4.
+	const int32 Child = AddExportWithStruct(TEXT("Child"), Parent + 1, &ChildTags);
+
+	const FAssetPackageExportEntry& ChildExport = Package.Document.ExportMap[Child];
+	const FAssetSerializationTraceNode& ChildNode = *Package.Traces.FindExportTrace(Child)->Root->Children[0];
+	const FAssetDecodedPropertyValue ChildStruct = FAssetPropertyValueDecoder::Decode(Package.Document, ChildNode, ChildExport.SerialOffset);
+
+	if (!TestTrue(TEXT("The child's struct decodes"), ChildStruct.IsSuccess()) || !TestEqual(TEXT("With its set field"), ChildStruct.Children.Num(), 1))
+	{
+		return false;
+	}
+
+	FAssetArchetypeResolver Resolver(Package.Document, Package.Traces);
+	FAssetArchetypeValue Final;
+	FString Message;
+
+	if (TestTrue(TEXT("The nested set resolves"), Resolver.ResolveFinalNestedContainerValue(Child, TEXT("Settings"), 0, { TEXT("Tags") }, ChildStruct.Children[0], Final, Message)))
+	{
+		TestEqual(TEXT("The delta applies to the grandparent's field, through the parent that stores none"), Describe(Final.Value), FString(TEXT("1,3,4")));
+	}
+
+	// With no archetype providing the field, removals prove its defaults were not empty, so they cannot be assumed away.
+	const int32 Lone = AddExportWithStruct(TEXT("Lone"), 0, &ChildTags);
+	const FAssetSerializationTraceNode& LoneNode = *Package.Traces.FindExportTrace(Lone)->Root->Children[0];
+	const FAssetDecodedPropertyValue LoneStruct = FAssetPropertyValueDecoder::Decode(Package.Document, LoneNode, Package.Document.ExportMap[Lone].SerialOffset);
+
+	// Removing an element the defaults do not have is inconsistent, so the delta is refused rather than guessed.
+	FAssetArchetypeResolver LoneResolver(Package.Document, Package.Traces);
+	TestFalse(TEXT("A delta that removes what the defaults lack is refused"), LoneResolver.ResolveFinalNestedContainerValue(Lone, TEXT("Settings"), 0, { TEXT("Tags") }, LoneStruct.Children[0], Final, Message));
 
 	return true;
 }
