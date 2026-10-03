@@ -110,6 +110,8 @@ bool FAssetDecoderCoverage_ScansAFolder::RunTest(const FString& Parameters)
 		IFileManager::Get().Copy(*FPaths::Combine(Root, TEXT("Sub"), TEXT("Curve.uasset")), *File);
 
 		// A file that is not a package.
+		// The engine logs a warning when it opens it.
+		AddExpectedMessage(TEXT("is too small"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 0);
 		FFileHelper::SaveStringToFile(TEXT("not a package"), *FPaths::Combine(Root, TEXT("Broken.uasset")));
 
 		int32 Calls = 0;
