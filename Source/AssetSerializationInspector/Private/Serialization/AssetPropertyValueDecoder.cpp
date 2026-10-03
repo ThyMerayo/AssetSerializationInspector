@@ -174,6 +174,34 @@ static bool DecodePodStructFromReader(
 	return true;
 }
 
+/** A box is its minimum and maximum corners followed by a one byte "is valid" flag. */
+template <typename TVector>
+static bool DecodeBoxFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	if (Start + static_cast<int64>(2 * sizeof(TVector) + sizeof(uint8)) > ValueEnd)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding a box");
+		return false;
+	}
+
+	TVector Min;
+	TVector Max;
+	uint8 bIsValid = 0;
+	Reader << Min;
+	Reader << Max;
+	Reader << bIsValid;
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Value = FString::Printf(TEXT("Min=(%s) Max=(%s) IsValid=%d"), *Min.ToString(), *Max.ToString(), bIsValid != 0 ? 1 : 0);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	const int64 Start = Reader.Tell();
@@ -330,6 +358,32 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	if (StructName == TEXT("GameplayTagContainer"))
 	{
 		return DecodeNameArrayStructFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Box2f"))
+	{
+		return DecodeBoxFromReader<FVector2f>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Box2D"))
+	{
+		return DecodeBoxFromReader<FVector2D>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Box3f"))
+	{
+		return DecodeBoxFromReader<FVector3f>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("Box"))
+	{
+		return DecodeBoxFromReader<FVector>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("GameplayEffectVersion"))
+	{
+		// FGameplayEffectVersion::Serialize writes only its enum, as a raw byte and without property tags.
+		return DecodePrimitiveFromReader<uint8>(Reader, ValueEnd, OutValue);
 	}
 
 	if (StructName == TEXT("Vector4"))

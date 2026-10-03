@@ -304,6 +304,23 @@ bool FAssetPropertyValueDecoder_DecodesNativelySerializedStructs::RunTest(const 
 	TestTrue(TEXT("A single precision 2D vector decodes"), Result.IsSuccess());
 	TestEqual(TEXT("It is two floats"), Result.Size, static_cast<int64>(Vector.FileData.Num()));
 
+	FAssetPackageDocument Box;
+	AppendValue<float>(Box, 0.0f);
+	AppendValue<float>(Box, 1.0f);
+	AppendValue<float>(Box, 2.0f);
+	AppendValue<float>(Box, 3.0f);
+	AppendValue<uint8>(Box, 1);
+	Result = DecodeWholeFile(Box, StructType(TEXT("Box2f")));
+	TestTrue(TEXT("A box decodes"), Result.IsSuccess());
+	TestEqual(TEXT("It is two corners and a flag"), Result.Size, static_cast<int64>(Box.FileData.Num()));
+	TestTrue(TEXT("The flag is shown"), Result.Value.Contains(TEXT("IsValid=1")));
+
+	FAssetPackageDocument Version;
+	AppendValue<uint8>(Version, 1);
+	Result = DecodeWholeFile(Version, StructType(TEXT("GameplayEffectVersion")));
+	TestTrue(TEXT("A gameplay effect version decodes"), Result.IsSuccess());
+	TestEqual(TEXT("As its byte"), Result.Value, FString(TEXT("1")));
+
 	FAssetPackageDocument Truncated;
 	AppendValue<int32>(Truncated, 3);
 	AppendName(Truncated, AddName(Truncated, TEXT("Ability.Death")));
