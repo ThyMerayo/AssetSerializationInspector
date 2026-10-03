@@ -219,7 +219,7 @@ Unreal omits a property that equals its default and stores sets and maps as chan
 - **Omitted properties**: where one side of a comparison does not serialize a property, the diff shows the value it inherits (`<not serialized>  ->  inherited: 42`) and where it came from, and notes when that value equals the serialized value on the other side, so only the serialization changed.
 - **Delta sets and maps**: the final contents are computed as `(defaults - removed) + added` and shown next to the stored delta. A container written without defaults is told apart from a delta by the writer's own rule (a delta never repeats an element that equals its default). Results that rest on an assumption, such as an empty default for a container declared in a Blueprint, are marked *inferred* with the reason.
 
-Values that come from native C++ defaults cannot be read from package files, and are reported as unavailable instead of guessed. Sets and maps that are fields of a struct property (also in nested structs) get their final contents the same way, from the same field of the struct on the archetype chain; omitted properties are still described only at the top level, and sets and maps inside arrays are not resolved.
+Values that come from native C++ defaults cannot be read from package files, and are reported as unavailable instead of guessed. Sets and maps that are fields of a struct property (also in nested structs) get their final contents the same way, from the same field of the struct on the archetype chain; sets and maps inside arrays are not resolved. A field of a struct that one side leaves out is described like an omitted top-level property: it shows the value the same field has on the archetype chain.
 
 ### Package header diff
 
@@ -580,7 +580,7 @@ The decoder is intentionally conservative and validates ranges aggressively to a
 Known limitations:
 
 - Only `.uasset` packages are read; levels (`.umap`) are not.
-- Properties omitted inside structs, and defaults that live in native C++ code, are not reconstructed.
+- Defaults that live in native C++ code are not reconstructed, and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
 - Text values with arguments (formatted, number, date/time) are not decoded.
 - Package versions this editor build cannot read are reported as failed rather than guessed.
 - Batch, project-wide and folder runs produce reports; there is no results window to browse them yet.

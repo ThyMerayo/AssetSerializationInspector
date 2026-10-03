@@ -351,6 +351,15 @@ bool FAssetArchetypeResolver_ResolvesSetNestedInStruct::RunTest(const FString& P
 		TestEqual(TEXT("The delta applies to the grandparent's field, through the parent that stores none"), Describe(Final.Value), FString(TEXT("1,3,4")));
 	}
 
+	// The parent stores the struct without the field, so the field has the grandparent's value.
+	const FAssetOmittedPropertyDefault Omitted = Resolver.DescribeOmittedField(Parent, TEXT("Settings"), 0, { TEXT("Tags") });
+	TestEqual(TEXT("An omitted struct field takes the archetype's value"), Omitted.Status, EAssetArchetypeValueStatus::Found);
+	TestEqual(TEXT("Which is the grandparent's set"), Describe(Omitted.Value), FString(TEXT("1,2,3")));
+	TestTrue(TEXT("And says where it came from"), Omitted.Note.Contains(TEXT("Grandparent")));
+
+	const FAssetOmittedPropertyDefault OtherField = Resolver.DescribeOmittedField(Parent, TEXT("Settings"), 0, { TEXT("Missing") });
+	TestNotEqual(TEXT("A field no archetype stores is not found"), OtherField.Status, EAssetArchetypeValueStatus::Found);
+
 	// With no archetype providing the field, removals prove its defaults were not empty, so they cannot be assumed away.
 	const int32 Lone = AddExportWithStruct(TEXT("Lone"), 0, &ChildTags);
 	const FAssetSerializationTraceNode& LoneNode = *Package.Traces.FindExportTrace(Lone)->Root->Children[0];

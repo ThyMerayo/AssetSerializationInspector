@@ -92,6 +92,12 @@ public:
 	FAssetOmittedPropertyDefault DescribeOmittedProperty(int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex);
 
 	/**
+	 * The same for a field of a struct property that the struct stored on the export leaves out (or whose whole struct is left
+	 * out). FieldPath names the fields from the top-level property down to the omitted one.
+	 */
+	FAssetOmittedPropertyDefault DescribeOmittedField(int32 ExportIndex, const FString& PropertyName, int32 ArrayIndex, const TArray<FString>& FieldPath);
+
+	/**
 	 * Reconstructs the final contents of a set or map stored on an export, by applying its serialized delta to the value
 	 * inherited from the export's archetype chain.
 	 *

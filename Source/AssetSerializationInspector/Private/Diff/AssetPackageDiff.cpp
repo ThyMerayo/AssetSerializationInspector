@@ -429,7 +429,39 @@ namespace
 		return FMemory::Memcmp(OldData.Document.FileData.GetData() + OldAbsoluteOffset, NewData.Document.FileData.GetData() + NewAbsoluteOffset, OldData.Node->Size) == 0;
 	}
 
-	void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent)
+	/**
+	 * Describes a struct field that one side stores and the other leaves out: Unreal omits fields equal to their defaults, so
+	 * the omitted side has the value the same field has on the archetype chain.
+	 */
+	void DescribeOmittedStructField(const FPropertyDiffNodeData& OmittedData, const TArray<FString>& FieldPath, bool& bOutHasValue, FString& OutDecodedValue, FString& OutFinalValue, FString& OutNote)
+	{
+		bOutHasValue = true;
+		OutDecodedValue = TEXT("<not serialized; likely default>");
+
+		if (OmittedData.ArchetypeResolver == nullptr || OmittedData.Node == nullptr)
+		{
+			return;
+		}
+
+		const FAssetOmittedPropertyDefault Default = OmittedData.ArchetypeResolver->DescribeOmittedField(OmittedData.Export.Index, OmittedData.Node->Name, OmittedData.Node->ArrayIndex, FieldPath);
+		OutNote = Default.Note;
+
+		if (Default.Status == EAssetArchetypeValueStatus::Found)
+		{
+			OutDecodedValue = TEXT("<not serialized>");
+			OutFinalValue = FString::Printf(TEXT("inherited: %s"), *Default.Summary);
+		}
+	}
+
+	/** The property nodes of the two exports whose value is being compared, with the struct field path of the entry being built. */
+	struct FStructFieldContext
+	{
+		const FPropertyDiffNodeData* OldData = nullptr;
+		const FPropertyDiffNodeData* NewData = nullptr;
+		TArray<FString> FieldPath;
+	};
+
+	void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent, FStructFieldContext* Context = nullptr, const bool bParentIsStruct = false)
 	{
 		for (const FAssetDecodedValueDiff& Child : ValueDiff.Children)
 		{
@@ -478,7 +510,30 @@ namespace
 				Entry.NewValue = Child.NewValue;
 			}
 
-			AppendDecodedValueDiffChildren(Child, Entry);
+			// A field one side leaves out has the value its archetype chain gives it.
+			const bool bIsStructField = Context != nullptr && bParentIsStruct;
+			if (bIsStructField)
+			{
+				Context->FieldPath.Add(Child.Name);
+
+				if (Child.State == EAssetDecodedValueDiffState::Added && Context->OldData != nullptr)
+				{
+					Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
+					DescribeOmittedStructField(*Context->OldData, Context->FieldPath, Entry.bHasOldDecodedValue, Entry.OldDecodedValue, Entry.OldFinalValue, Entry.OldFinalValueNote);
+				}
+				else if (Child.State == EAssetDecodedValueDiffState::Removed && Context->NewData != nullptr)
+				{
+					Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
+					DescribeOmittedStructField(*Context->NewData, Context->FieldPath, Entry.bHasNewDecodedValue, Entry.NewDecodedValue, Entry.NewFinalValue, Entry.NewFinalValueNote);
+				}
+			}
+
+			AppendDecodedValueDiffChildren(Child, Entry, Context, Child.TypeName.StartsWith(TEXT("StructProperty")));
+
+			if (bIsStructField)
+			{
+				Context->FieldPath.Pop();
+			}
 
 			Parent.Children.Add(MoveTemp(Entry));
 		}
@@ -580,7 +635,12 @@ namespace
 		if (OldPtr != nullptr || NewPtr != nullptr)
 		{
 			const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);
-			AppendDecodedValueDiffChildren(ValueDiff, Entry);
+
+			FStructFieldContext FieldContext;
+			FieldContext.OldData = &OldData;
+			FieldContext.NewData = &NewData;
+			const bool bIsStruct = (OldPtr != nullptr && OldPtr->Kind == EAssetDecodedValueKind::Struct) || (NewPtr != nullptr && NewPtr->Kind == EAssetDecodedValueKind::Struct);
+			AppendDecodedValueDiffChildren(ValueDiff, Entry, &FieldContext, bIsStruct);
 		}
 
 		PayloadEntry.Children.Add(MoveTemp(Entry));
