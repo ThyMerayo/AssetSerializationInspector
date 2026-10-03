@@ -39,6 +39,6 @@ Planned next steps:
 - [x] Cross-engine/version comparison: compare two folders of assets with a grouped text/JSON report, and version-aware explanations in the two-file diff (#14)
 - [ ] Results window for a folder comparison (browse pairs, open one pair's diff)
 - [ ] Verify the folder comparison on packages that really were saved by different engine versions
-- [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; remaining gaps: GameplayEffectVersion, FieldPath, Box2f, unversioned properties)
+- [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; GameplayEffectVersion and boxes done; remaining gaps: FieldPath, unversioned properties)
 - [ ] Persistent monitored-asset configuration
 - [ ] Support additional UE5 package versions
