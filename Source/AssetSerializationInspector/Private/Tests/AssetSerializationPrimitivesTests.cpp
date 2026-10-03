@@ -182,4 +182,38 @@ bool FAssetSerializationPrimitives_RejectsMinInt32Length::RunTest(const FString&
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSerializationPrimitives_ReadsUtf8StringWithoutTerminator, "AssetSerializationInspector.Serialization.Primitives.ReadsUtf8StringWithoutTerminator",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSerializationPrimitives_ReadsUtf8StringWithoutTerminator::RunTest(const FString& Parameters)
+{
+	using namespace AssetSerializationPrimitivesTestUtils;
+
+	// Soft object path sub paths are saved as UTF-8 strings that may or may not end in a null.
+	const auto ReadBytes = [](const TArray<uint8>& Bytes, FString& OutResult) {
+		TArray64<uint8> Buffer;
+		AppendInt32(Buffer, Bytes.Num());
+		Buffer.Append(Bytes.GetData(), Bytes.Num());
+
+		FAssetPackageMemoryReader Reader(Buffer, 0, Buffer.Num());
+		FText Error;
+		return AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, OutResult, Error);
+	};
+
+	FString Result;
+	TestTrue(TEXT("A string without a terminator reads"), ReadBytes({ 'a', 'b', 'c' }, Result));
+	TestEqual(TEXT("As written"), Result, FString(TEXT("abc")));
+
+	TestTrue(TEXT("A string with a terminator reads"), ReadBytes({ 'a', 'b', 'c', 0 }, Result));
+	TestEqual(TEXT("Without the terminator"), Result, FString(TEXT("abc")));
+
+	TArray64<uint8> Truncated;
+	AppendInt32(Truncated, 10);
+	FAssetPackageMemoryReader Reader(Truncated, 0, Truncated.Num());
+	FText Error;
+	TestFalse(TEXT("A string longer than its range is refused"), AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, Result, Error));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

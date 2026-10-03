@@ -103,3 +103,71 @@ bool AssetSerializationPrimitives::ReadSerializedString(FAssetPackageMemoryReade
 
 	return true;
 }
+
+bool AssetSerializationPrimitives::ReadUtf8SerializedString(FAssetPackageMemoryReader& Reader, FString& OutString, FText& OutError)
+{
+	OutString.Reset();
+
+	int32 SerializedLength = 0;
+	Reader << SerializedLength;
+
+	if (Reader.IsError() || SerializedLength == MIN_int32)
+	{
+		OutError = NSLOCTEXT("AssetPackageReader", "Utf8LengthReadFailed", "Could not read the serialized string length.");
+		return false;
+	}
+
+	if (SerializedLength == 0)
+	{
+		return true;
+	}
+
+	const bool bIsWide = SerializedLength < 0;
+	const int64 CharacterCount = bIsWide ? -static_cast<int64>(SerializedLength) : static_cast<int64>(SerializedLength);
+	const int64 ByteCount = CharacterCount * (bIsWide ? sizeof(UTF16CHAR) : sizeof(UTF8CHAR));
+
+	if (CharacterCount > MaximumReasonableNameLength || !Reader.CanRead(ByteCount))
+	{
+		OutError = NSLOCTEXT("AssetPackageReader", "Utf8OutsideRegion", "The string extends beyond its range.");
+		return false;
+	}
+
+	if (bIsWide)
+	{
+		TArray<UTF16CHAR> Characters;
+		Characters.SetNumUninitialized(static_cast<int32>(CharacterCount));
+		Reader.Serialize(Characters.GetData(), ByteCount);
+
+		int32 Length = Characters.Num();
+		while (Length > 0 && Characters[Length - 1] == 0)
+		{
+			--Length;
+		}
+
+		const auto Converted = StringCast<TCHAR>(Characters.GetData(), Length);
+		OutString = FString(Converted.Length(), Converted.Get());
+	}
+	else
+	{
+		TArray<UTF8CHAR> Characters;
+		Characters.SetNumUninitialized(static_cast<int32>(CharacterCount));
+		Reader.Serialize(Characters.GetData(), ByteCount);
+
+		int32 Length = Characters.Num();
+		while (Length > 0 && Characters[Length - 1] == 0)
+		{
+			--Length;
+		}
+
+		const auto Converted = StringCast<TCHAR>(Characters.GetData(), Length);
+		OutString = FString(Converted.Length(), Converted.Get());
+	}
+
+	if (Reader.IsError())
+	{
+		OutError = NSLOCTEXT("AssetPackageReader", "Utf8ReadFailed", "Could not read the string.");
+		return false;
+	}
+
+	return true;
+}

@@ -1035,6 +1035,66 @@ static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Co
 	return true;
 }
 
+/** A bound delegate is the object it is bound to (a package index) followed by the name of the function. Delegates carrying a payload are not decoded. */
+static bool DecodeBoundDelegateFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	FAssetDecodedPropertyValue Object;
+	FAssetDecodedPropertyValue Function;
+	if (!DecodePackageIndexFromReader(Context, Reader, ValueEnd, Object) || !DecodeNameFromReader(Context, Reader, ValueEnd, Function))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not read a bound delegate.");
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Scalar;
+	OutValue.Value = Function.Value.IsEmpty() || Function.Value == TEXT("None") ? FString(TEXT("None")) : FString::Printf(TEXT("%s::%s"), *Object.Value, *Function.Value);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+static bool DecodeMulticastDelegateFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	int32 Count = 0;
+	if (!ReadBounded(Reader, ValueEnd, Count) || !IsValidContainerCount(Context, Count))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Could not read the delegate count.");
+		return false;
+	}
+
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FAssetDecodedPropertyValue Element;
+		Element.Name = FString::Printf(TEXT("[%d]"), Index);
+		Element.TypeName = TEXT("DelegateProperty");
+
+		if (!DecodeBoundDelegateFromReader(Context, Reader, ValueEnd, Element))
+		{
+			OutValue.Children.Add(MoveTemp(Element));
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = FString::Printf(TEXT("Could not decode delegate %d."), Index);
+			return false;
+		}
+
+		Element.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Element);
+		OutValue.Children.Add(MoveTemp(Element));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Kind = EAssetDecodedValueKind::Array;
+	OutValue.Value = FString::Printf(TEXT("%d bound"), Count);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool DecodeByteFromReader(
 	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
@@ -1130,6 +1190,16 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 	if (Type.Name == TEXT("SoftObjectProperty") || Type.Name == TEXT("SoftClassProperty"))
 	{
 		return DecodeSoftObjectPathFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("DelegateProperty"))
+	{
+		return DecodeBoundDelegateFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (Type.Name == TEXT("MulticastInlineDelegateProperty"))
+	{
+		return DecodeMulticastDelegateFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (Type.Name == TEXT("FloatProperty"))

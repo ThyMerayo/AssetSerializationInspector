@@ -313,6 +313,44 @@ bool FAssetPropertyValueDecoder_DecodesNativelySerializedStructs::RunTest(const 
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesDelegates, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesDelegates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesDelegates::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	FAssetPackageDocument Empty;
+	AppendValue<int32>(Empty, 0);
+	FAssetDecodedPropertyValue Result = DecodeWholeFile(Empty, MakeType(TEXT("MulticastInlineDelegateProperty")));
+	TestTrue(TEXT("A multicast delegate with no bindings decodes"), Result.IsSuccess());
+	TestEqual(TEXT("It has no bindings"), Result.Children.Num(), 0);
+
+	FAssetPackageDocument Bound;
+	AppendValue<int32>(Bound, 1);
+	AppendValue<int32>(Bound, 0);
+	AppendName(Bound, AddName(Bound, TEXT("OnChanged")));
+	Result = DecodeWholeFile(Bound, MakeType(TEXT("MulticastInlineDelegateProperty")));
+	if (TestTrue(TEXT("A bound delegate decodes"), Result.IsSuccess()) && TestEqual(TEXT("One binding"), Result.Children.Num(), 1))
+	{
+		TestTrue(TEXT("The function is named"), Result.Children[0].Value.Contains(TEXT("OnChanged")));
+	}
+
+	FAssetPackageDocument Single;
+	AppendValue<int32>(Single, 0);
+	AppendName(Single, AddName(Single, TEXT("None")));
+	Result = DecodeWholeFile(Single, MakeType(TEXT("DelegateProperty")));
+	TestEqual(TEXT("An unbound delegate is None"), Result.Value, FString(TEXT("None")));
+
+	FAssetPackageDocument Truncated;
+	AppendValue<int32>(Truncated, 2);
+	AppendValue<int32>(Truncated, 0);
+	Result = DecodeWholeFile(Truncated, MakeType(TEXT("MulticastInlineDelegateProperty")));
+	TestEqual(TEXT("Missing bindings are invalid"), Result.Status, EAssetPropertyDecodeStatus::InvalidData);
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_FormatsValuesForDisplay, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.FormatsValuesForDisplay",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
