@@ -24,7 +24,7 @@ Planned next steps:
 - [x] Final values for containers nested in structs (arrays of structs not covered); newly serialized containers use the stated empty-default assumption
 - [x] Default-value reconstruction for omitted top-level properties, shown in the diff from the archetype chain (#5)
 - [x] Default values for properties omitted inside structs (struct properties only, not structs inside containers)
-- [ ] Zero/empty default for Blueprint-declared properties omitted by their class default object
+- [x] Zero/empty default for Blueprint-declared properties omitted by their class default object (needs tagged properties; not for unversioned packages)
 - [ ] Live-reflection fallback for native defaults the package chain cannot provide
 - [ ] Text histories that carry arguments (formatted, number, date/time, transform, generator)
 - [ ] Real-asset fixture tests for the decoders and archetype resolution
