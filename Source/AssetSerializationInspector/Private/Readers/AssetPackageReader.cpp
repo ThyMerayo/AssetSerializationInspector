@@ -254,6 +254,7 @@ namespace
 		}
 
 		FAssetPackageMemoryReader Reader(Document.FileData, NameMapStart, RegionSize);
+		Reader.ApplyPackageSummary(Document.PackageSummary);
 
 		if (Reader.IsError())
 		{
@@ -282,6 +283,14 @@ namespace
 				Document.NameMap.Reset();
 
 				return false;
+			}
+
+			// Packages saved before VER_UE4_NAME_HASHES_SERIALIZED store the string alone.
+			if (Reader.UEVer() < VER_UE4_NAME_HASHES_SERIALIZED)
+			{
+				Entry.Size = Reader.Tell() - EntryStart;
+				Document.NameMap.Add(MoveTemp(Entry));
+				continue;
 			}
 
 			if (!Reader.CanRead(sizeof(uint16) * 2))
@@ -425,6 +434,7 @@ namespace
 			const int64 EntryStart = ImportMapStart + static_cast<int64>(ImportIndex) * EntryStride;
 
 			FAssetPackageMemoryReader EntryReader(Document.FileData, EntryStart, EntryStride);
+			EntryReader.ApplyPackageSummary(Document.PackageSummary);
 
 			if (EntryReader.IsError())
 			{
@@ -594,6 +604,7 @@ namespace
 			const int64 EntryStart = ExportMapStart + static_cast<int64>(ExportIndex) * EntryStride;
 
 			FAssetPackageMemoryReader EntryReader(Document.FileData, EntryStart, EntryStride);
+			EntryReader.ApplyPackageSummary(Document.PackageSummary);
 
 			if (EntryReader.IsError())
 			{

@@ -125,7 +125,7 @@ namespace
 			return false;
 		}
 
-		const FAssetPackageExportEntry& Export = Document.ExportMap[ExportIndex];
+		FAssetPackageExportEntry Export = Document.ExportMap[ExportIndex];
 		if (Export.SerialSize <= 0 || !Document.IsValidExportPayload(Export))
 		{
 			return false;
@@ -139,6 +139,18 @@ namespace
 		OutTrace.Root->Name = OutTrace.ObjectPath;
 		OutTrace.Root->Offset = 0;
 		OutTrace.Root->Size = Export.SerialSize;
+
+		/*
+		 * Before SCRIPT_SERIALIZATION_OFFSET the export map does not say where the tagged properties are. For most objects
+		 * they are the first thing in the export, so try the whole export; the tag reader stops and reports whatever is left as
+		 * undecoded when it is not a property stream (classes and other objects with a native header first).
+		 */
+		if (!Export.HasScriptSerializationRange() && (Document.PackageSummary.GetPackageFlags() & PKG_UnversionedProperties) == 0 && Document.PackageSummary.GetFileVersionUE() < EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET &&
+			LooksLikeTaggedPropertyStream(Document, Export))
+		{
+			Export.ScriptSerializationStartOffset = 0;
+			Export.ScriptSerializationEndOffset = Export.SerialSize;
+		}
 
 		if (!Export.HasScriptSerializationRange())
 		{

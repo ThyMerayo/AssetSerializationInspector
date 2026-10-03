@@ -4,6 +4,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "UObject/ObjectVersion.h"
+
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -230,7 +232,7 @@ bool FAssetPropertyValueDecoder_DecodesSoftObjectPaths::RunTest(const FString& P
 	NoTable.PackageSummary.SoftObjectPathsCount = 0;
 	Node.Offset = 0;
 	Result = FAssetPropertyValueDecoder::Decode(NoTable, Node, 0);
-	TestEqual(TEXT("Inline soft object paths are reported as unsupported"), Result.Status, EAssetPropertyDecodeStatus::Unsupported);
+	TestFalse(TEXT("Bytes that are not an inline soft object path do not decode"), Result.IsSuccess());
 
 	return true;
 }
@@ -381,6 +383,115 @@ bool FAssetPropertyValueDecoder_DecodesDelegates::RunTest(const FString& Paramet
 	AppendValue<int32>(Truncated, 0);
 	Result = DecodeWholeFile(Truncated, MakeType(TEXT("MulticastInlineDelegateProperty")));
 	TestEqual(TEXT("Missing bindings are invalid"), Result.Status, EAssetPropertyDecodeStatus::InvalidData);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesLegacyPropertyTags, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesLegacyPropertyTags",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesLegacyPropertyTags::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	// A package saved before PROPERTY_TAG_COMPLETE_TYPE_NAME: type name only, size, array index, the type's extra fields, then a property GUID flag.
+	FAssetPackageDocument Document;
+	Document.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::INITIAL_VERSION), 0);
+
+	const auto AddHeader = [&Document](const TCHAR* Name, const TCHAR* Type, const int32 Size) {
+		AppendName(Document, AddName(Document, Name));
+		AppendName(Document, AddName(Document, Type));
+		AppendValue<int32>(Document, Size);
+		AppendValue<int32>(Document, 0);
+	};
+
+	AddHeader(TEXT("Count"), TEXT("IntProperty"), 4);
+	AppendValue<uint8>(Document, 0); // no property GUID
+	AppendValue<int32>(Document, 7);
+
+	AddHeader(TEXT("Enabled"), TEXT("BoolProperty"), 0);
+	AppendValue<uint8>(Document, 1); // the value lives in the tag
+	AppendValue<uint8>(Document, 0);
+
+	AddHeader(TEXT("Items"), TEXT("ArrayProperty"), 12);
+	AppendName(Document, AddName(Document, TEXT("IntProperty"))); // inner type
+	AppendValue<uint8>(Document, 0);
+	AppendValue<int32>(Document, 2);
+	AppendValue<int32>(Document, 10);
+	AppendValue<int32>(Document, 20);
+
+	// An array of structs starts with a tag for its inner struct, which has no value of its own.
+	AddHeader(TEXT("Points"), TEXT("ArrayProperty"), 0);
+	const int32 PointsSizeOffset = Document.FileData.Num() - 8;
+	AppendName(Document, AddName(Document, TEXT("StructProperty")));
+	AppendValue<uint8>(Document, 0);
+	const int32 PointsStart = Document.FileData.Num();
+	AppendValue<int32>(Document, 1);
+	AppendName(Document, AddName(Document, TEXT("Points")));
+	AppendName(Document, AddName(Document, TEXT("StructProperty")));
+	AppendValue<int32>(Document, 0); // the inner tag's size, only informative
+	AppendValue<int32>(Document, 0);
+	AppendName(Document, AddName(Document, TEXT("MyPoint")));
+	AppendValue<FGuid>(Document, FGuid());
+	AppendValue<uint8>(Document, 0);
+	AddHeader(TEXT("X"), TEXT("IntProperty"), 4);
+	AppendValue<uint8>(Document, 0);
+	AppendValue<int32>(Document, 5);
+	AppendName(Document, AddName(Document, TEXT("None")));
+	const int32 PointsSize = Document.FileData.Num() - PointsStart;
+	FMemory::Memcpy(Document.FileData.GetData() + PointsSizeOffset, &PointsSize, sizeof(int32));
+
+	AppendName(Document, AddName(Document, TEXT("None")));
+
+	FAssetSerializedPropertyType StructType = MakeType(TEXT("StructProperty"));
+	StructType.Parameters.Add(MakeType(TEXT("MyStruct")));
+
+	const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, StructType);
+	if (TestTrue(TEXT("A struct with older tags decodes"), Result.IsSuccess()) && TestEqual(TEXT("Every field is found"), Result.Children.Num(), 4))
+	{
+		TestEqual(TEXT("An int"), Result.Children[0].Value, FString(TEXT("7")));
+		TestEqual(TEXT("A bool held in the tag"), Result.Children[1].Value, FString(TEXT("true")));
+		TestEqual(TEXT("An array of ints"), Result.Children[2].Children.Num(), 2);
+		TestTrue(TEXT("An array of structs decodes"), Result.Children[3].IsSuccess());
+		if (TestEqual(TEXT("With its element"), Result.Children[3].Children.Num(), 1))
+		{
+			TestEqual(TEXT("Holding its field"), Result.Children[3].Children[0].Children.Num(), 1);
+		}
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesInlineSoftObjectPaths, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesInlineSoftObjectPaths",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesInlineSoftObjectPaths::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	FAssetSerializedPropertyType PathType = MakeType(TEXT("StructProperty"));
+	PathType.Parameters.Add(MakeType(TEXT("SoftObjectPath")));
+
+	// Before the soft object path table (UE5.0): the asset path as a name, then the sub path as a string.
+	FAssetPackageDocument Old;
+	Old.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES), 0);
+	AppendName(Old, AddName(Old, TEXT("/Game/Box.Box")));
+	AppendAnsiString(Old, TEXT("Sub"));
+
+	FAssetDecodedPropertyValue Result = DecodeWholeFile(Old, PathType);
+	TestTrue(TEXT("An inline soft object path decodes"), Result.IsSuccess());
+	TestEqual(TEXT("With its sub path"), Result.Value, FString(TEXT("/Game/Box.Box:Sub")));
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Old.FileData.Num()));
+
+	// From FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES: package and asset names, then a UTF-8 sub path.
+	FAssetPackageDocument Newer;
+	Newer.PackageSummary.SetFileVersions(522, static_cast<int32>(EUnrealEngineObjectUE5Version::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES), 0);
+	AppendName(Newer, AddName(Newer, TEXT("/Game/Box")));
+	AppendName(Newer, AddName(Newer, TEXT("Box")));
+	AppendValue<int32>(Newer, 0);
+
+	Result = DecodeWholeFile(Newer, PathType);
+	TestEqual(TEXT("Names are joined"), Result.Value, FString(TEXT("/Game/Box.Box")));
 
 	return true;
 }

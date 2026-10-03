@@ -289,6 +289,7 @@ bool DecodeEdGraphPinTypeFromReader(FAssetPackagePayloadReader& Reader, FAssetDe
 }
 
 static bool DecodeNameFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue);
+static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue);
 
 static bool IsValidContainerCount(const FAssetPropertyDecodeContext& Context, const int32 Count);
 
@@ -358,6 +359,11 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	if (StructName == TEXT("GameplayTagContainer"))
 	{
 		return DecodeNameArrayStructFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("SoftObjectPath") || StructName == TEXT("SoftClassPath"))
+	{
+		return DecodeSoftObjectPathFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (StructName == TEXT("Box2f"))
@@ -446,6 +452,26 @@ static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, F
 {
 	if (Type.Parameters.IsEmpty())
 	{
+		// Older packages do not name the struct of a map or set element. Try it as a tagged struct; one saved natively (a GUID,
+		// for example) cannot be told apart without the class, which this reader does not have.
+		if (Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
+		{
+			const int64 StructStart = Reader.Tell();
+			FAssetDecodedPropertyValue Tagged;
+			Tagged.TypeName = OutValue.TypeName;
+
+			if (DecodeTaggedStruct(Context, Reader, ValueEnd, Tagged, Depth))
+			{
+				OutValue = MoveTemp(Tagged);
+				return true;
+			}
+
+			Reader.Seek(StructStart);
+			OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+			OutValue.Error = TEXT("The struct type of this element is not stored in packages saved before UE 5.4, and it is not a tagged struct.");
+			return false;
+		}
+
 		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 		OutValue.Error = TEXT("StructProperty has no struct type.");
 		return false;
@@ -487,7 +513,27 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 		return false;
 	}
 
-	const FAssetSerializedPropertyType& InnerType = Type.Parameters[0];
+	FAssetSerializedPropertyType InnerType = Type.Parameters[0];
+
+	// Before PROPERTY_TAG_COMPLETE_TYPE_NAME an array of structs carries a tag for the inner struct right after the count.
+	if (Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME && Reader.UEVer() >= VER_UE4_INNER_ARRAY_TAG_INFO && InnerType.Name == TEXT("StructProperty"))
+	{
+		FAssetSerializedPropertyTag InnerTag;
+		FText InnerError;
+
+		if (!FAssetPropertyTagDecoder::ReadTag(Context.Document, Reader, InnerTag, InnerError) || Reader.Tell() > ValueEnd)
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = TEXT("Could not read the array's inner struct tag.");
+			return false;
+		}
+
+		// The array's own tag only says "StructProperty"; the inner tag names the struct.
+		if (InnerType.Parameters.IsEmpty())
+		{
+			InnerType = InnerTag.Type;
+		}
+	}
 
 	OutValue.Children.Reserve(Count);
 
@@ -1056,13 +1102,65 @@ static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Co
 
 	/*
 	 * FLinkerLoad::operator<<(FSoftObjectPath&) reads an index into the header table only when the
-	 * table is non-empty; otherwise the path is written inline, which is not decoded here.
+	 * table is non-empty; otherwise the path is written inline, in the layout of FSoftObjectPath::SerializePathWithoutFixup.
 	 */
 	if (Context.Document.PackageSummary.SoftObjectPathsCount <= 0)
 	{
-		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
-		OutValue.Error = TEXT("Inline soft object paths (no soft object path table) are not supported.");
-		return false;
+		const FPackageFileVersion Version = Reader.UEVer();
+		FString Path;
+		FString SubPath;
+		FText Error;
+
+		if (Version < VER_UE4_ADDED_SOFT_OBJECT_PATH)
+		{
+			// The whole path is a single string.
+			if (!AssetSerializationPrimitives::ReadSerializedString(Reader, Path, Error))
+			{
+				OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+				OutValue.Error = TEXT("Could not read an inline soft object path.");
+				return false;
+			}
+		}
+		else if (Version < EUnrealEngineObjectUE5Version::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES)
+		{
+			// An asset path name, then the sub path as a string.
+			FAssetDecodedPropertyValue AssetPath;
+			if (!DecodeNameFromReader(Context, Reader, ValueEnd, AssetPath) || !AssetSerializationPrimitives::ReadSerializedString(Reader, SubPath, Error))
+			{
+				OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+				OutValue.Error = TEXT("Could not read an inline soft object path.");
+				return false;
+			}
+
+			Path = AssetPath.Value;
+		}
+		else
+		{
+			// The package and asset names of the top level asset, then the sub path as a UTF-8 string.
+			FAssetDecodedPropertyValue PackageName;
+			FAssetDecodedPropertyValue AssetName;
+			if (!DecodeNameFromReader(Context, Reader, ValueEnd, PackageName) || !DecodeNameFromReader(Context, Reader, ValueEnd, AssetName) ||
+				!AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, SubPath, Error))
+			{
+				OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+				OutValue.Error = TEXT("Could not read an inline soft object path.");
+				return false;
+			}
+
+			Path = PackageName.Value == TEXT("None") && AssetName.Value == TEXT("None") ? FString() : FString::Printf(TEXT("%s.%s"), *PackageName.Value, *AssetName.Value);
+		}
+
+		if (!SubPath.IsEmpty())
+		{
+			Path += TEXT(":") + SubPath;
+		}
+
+		OutValue.Status = EAssetPropertyDecodeStatus::Success;
+		OutValue.Kind = EAssetDecodedValueKind::Scalar;
+		OutValue.Value = Path.IsEmpty() ? FString(TEXT("None")) : Path;
+		OutValue.AbsoluteOffset = Start;
+		OutValue.Size = Reader.Tell() - Start;
+		return true;
 	}
 
 	int32 PathIndex = INDEX_NONE;
