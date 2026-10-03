@@ -24,6 +24,12 @@ enum class EAssetArchetypeValueStatus : uint8
 	 */
 	DeclaredByBlueprint,
 
+	/**
+	 * The chain ends in a native class and the value was read from that class's default object in the running editor. It is
+	 * what this editor build's C++ gives the property, which can differ from the build that saved the asset.
+	 */
+	NativeDefaultFromLiveReflection,
+
 	/** The chain leaves the packages that can be read (native class, missing or unreadable file), or is malformed. */
 	Unavailable
 };
@@ -64,10 +70,10 @@ struct FAssetOmittedPropertyDefault
  * from disk. Containers stored as deltas are resolved through their own archetype first, so the returned value is final.
  *
  * Values that come from native C++ defaults (a /Script/ class, or a property no package in the chain overrides) cannot be
- * recovered from package files alone. If that turns out to matter, the fallback is to reflect the property from the class
- * default object of the running editor (FProperty on UClass::GetDefaultObject()), labelling the value as coming from live
- * reflection rather than from a package, since editor state can differ from what was saved. That fallback is intentionally
- * not implemented here; see the Unavailable and NotSerializedInChain results, which are where it would plug in.
+ * recovered from package files alone. For top-level properties DescribeOmittedField falls back on reflecting the property
+ * from the class default object of the running editor (FProperty on UClass::GetDefaultObject()), and labels the result
+ * NativeDefaultFromLiveReflection, since editor state can differ from what was saved. Set and map deltas still assume an
+ * empty native default (see ApplyContainerToArchetype).
  */
 class FAssetArchetypeResolver
 {

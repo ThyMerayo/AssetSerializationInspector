@@ -221,7 +221,7 @@ Unreal omits a property that equals its default and stores sets and maps as chan
 
 A property the archetype chain does not store but that the Blueprint of the export's class declares as a variable (in its `NewVariables`) is zero or empty unless the variable carries a default value; the diff shows it as *Blueprint default* with the reason. This needs the Blueprint's properties to be readable, so it does not apply to packages saved with unversioned properties.
 
-Values that come from native C++ defaults cannot be read from package files, and are reported as unavailable instead of guessed. Sets and maps that are fields of a struct property (also in nested structs) get their final contents the same way, from the same field of the struct on the archetype chain; sets and maps inside arrays are not resolved. A field of a struct that one side leaves out is described like an omitted top-level property: it shows the value the same field has on the archetype chain.
+Values that come from native C++ defaults cannot be read from package files. For an omitted top-level property whose chain ends in a native class, the inspector reads the value from that class's default object in the running editor and shows it as *native default (live)*, with a note: it is what this editor build's C++ gives the property, which can differ from the engine that saved the asset. Anything else that cannot be determined is reported as unavailable instead of guessed. Sets and maps that are fields of a struct property (also in nested structs) get their final contents the same way, from the same field of the struct on the archetype chain; sets and maps inside arrays are not resolved. A field of a struct that one side leaves out is described like an omitted top-level property: it shows the value the same field has on the archetype chain.
 
 ### Package header diff
 
@@ -582,7 +582,7 @@ The decoder is intentionally conservative and validates ranges aggressively to a
 Known limitations:
 
 - Only `.uasset` packages are read; levels (`.umap`) are not.
-- Defaults that live in native C++ code are not reconstructed, and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
+- Native C++ defaults are read from the running editor (top-level properties only; set and map deltas still assume an empty default), and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
 - Text values with arguments (formatted, number, date/time) are not decoded.
 - Package versions this editor build cannot read are reported as failed rather than guessed.
 - Batch, project-wide and folder runs produce reports; there is no results window to browse them yet.

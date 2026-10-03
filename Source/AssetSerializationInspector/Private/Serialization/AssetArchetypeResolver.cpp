@@ -4,6 +4,8 @@
 
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "UObject/Class.h"
+#include "UObject/UnrealType.h"
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
@@ -14,6 +16,9 @@
 namespace
 {
 	constexpr int32 MaximumArchetypeDepth = 32;
+
+	/** Part of the message FindOrLoadPackage gives when an archetype is a native class default object. */
+	const TCHAR* const NativePackageMessage = TEXT("is a native package");
 
 	/** Names of an export and its outers up to the package, joined with '.'. Empty when the chain leaves the package. */
 	FString BuildExportRelativePath(const FAssetPackageDocument& Document, int32 ExportIndex)
@@ -135,6 +140,71 @@ namespace
 
 		return false;
 	}
+
+	/**
+	 * Follows an export's class (through the Blueprint classes generated in the package) to the native class it derives from and
+	 * returns the class when the running editor has it loaded.
+	 */
+	UClass* FindNativeClass(const FAssetPackageDocument& Document, const int32 ExportIndex)
+	{
+		if (!Document.ExportMap.IsValidIndex(ExportIndex))
+		{
+			return nullptr;
+		}
+
+		FAssetPackageIndexReference Index = Document.ExportMap[ExportIndex].ClassIndex;
+
+		for (int32 Guard = 0; Guard < MaximumArchetypeDepth; ++Guard)
+		{
+			if (Index.GetKind() == EAssetPackageIndexKind::Export)
+			{
+				if (!Document.ExportMap.IsValidIndex(Index.GetArrayIndex()))
+				{
+					return nullptr;
+				}
+
+				Index = Document.ExportMap[Index.GetArrayIndex()].SuperIndex;
+				continue;
+			}
+
+			FString Path;
+			if (Index.GetKind() != EAssetPackageIndexKind::Import || !Document.ResolvePackageIndexPath(Index, Path) || !Path.StartsWith(TEXT("/Script/")))
+			{
+				return nullptr;
+			}
+
+			return FindObject<UClass>(nullptr, *Path);
+		}
+
+		return nullptr;
+	}
+
+	/** Exports a property's value on the class default object of the native class an export derives from. */
+	bool ReflectNativeDefault(const FAssetPackageDocument& Document, const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex, FString& OutText, FString& OutClassName)
+	{
+		UClass* Class = FindNativeClass(Document, ExportIndex);
+		if (Class == nullptr)
+		{
+			return false;
+		}
+
+		const FProperty* Property = FindFProperty<FProperty>(Class, *PropertyName);
+		if (Property == nullptr || ArrayIndex < 0 || ArrayIndex >= Property->ArrayDim)
+		{
+			return false;
+		}
+
+		const UObject* DefaultObject = Class->GetDefaultObject();
+		if (DefaultObject == nullptr)
+		{
+			return false;
+		}
+
+		const void* Value = Property->ContainerPtrToValuePtr<void>(DefaultObject, ArrayIndex);
+		Property->ExportText_Direct(OutText, Value, Value, nullptr, PPF_None);
+		OutClassName = Property->GetOwnerClass() != nullptr ? Property->GetOwnerClass()->GetName() : Class->GetName();
+		return true;
+	}
 } // namespace
 
 struct FAssetArchetypeResolver::FLoadedPackage
@@ -159,7 +229,7 @@ const FAssetArchetypeResolver::FLoadedPackage* FAssetArchetypeResolver::FindOrLo
 	// Native classes live in /Script/ modules and have no package file. Their defaults come from C++ constructors.
 	if (PackageName.StartsWith(TEXT("/Script/")))
 	{
-		OutMessage = FString::Printf(TEXT("'%s' is a native package; its defaults come from C++ and are not stored in a package file."), *PackageName);
+		OutMessage = FString::Printf(TEXT("'%s' %s; its defaults come from C++ and are not stored in a package file."), *PackageName, NativePackageMessage);
 		return nullptr;
 	}
 
@@ -514,6 +584,19 @@ FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedField(const
 			Result.Summary = DefaultText.IsEmpty() ? FString(TEXT("zero / empty")) : FString::Printf(TEXT("\"%s\""), *DefaultText);
 			Result.Note = DefaultText.IsEmpty() ? TEXT("Declared as a variable of the Blueprint with no default value, so it is zero or empty (inferred from the Blueprint's NewVariables).")
 												: FString::Printf(TEXT("Declared as a variable of the Blueprint with the default value text \"%s\" (from the Blueprint's NewVariables)."), *DefaultText);
+		}
+		else if (FieldPath.IsEmpty() && (Result.Status == EAssetArchetypeValueStatus::NotSerializedInChain || Message.Contains(NativePackageMessage)))
+		{
+			// The chain ends in native code. Only then is the running editor's class default object a fair stand-in: an archetype
+			// that merely could not be read might hold a different value.
+			FString Text;
+			FString OwnerClass;
+			if (ReflectNativeDefault(RootDocument, ExportIndex, PropertyName, ArrayIndex, Text, OwnerClass))
+			{
+				Result.Status = EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection;
+				Result.Summary = Text.IsEmpty() ? FString(TEXT("(empty)")) : Text;
+				Result.Note = FString::Printf(TEXT("Native default of %s, read from the running editor's class default object (live reflection); the editor that saved the asset may have used another value."), *OwnerClass);
+			}
 		}
 	}
 

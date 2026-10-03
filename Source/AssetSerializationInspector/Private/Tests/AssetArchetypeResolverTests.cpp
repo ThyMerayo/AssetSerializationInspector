@@ -462,4 +462,53 @@ bool FAssetArchetypeResolver_DescribesBlueprintVariableDefaults::RunTest(const F
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection, "AssetSerializationInspector.Serialization.AssetArchetypeResolver.ReadsNativeDefaultsFromLiveReflection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection::RunTest(const FString& Parameters)
+{
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
+	if (!TestTrue(TEXT("The fixture loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+
+	// The Blueprint's StaticMeshComponent template derives from a native component, whose defaults live in C++.
+	int32 Component = INDEX_NONE;
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		FString ClassPath;
+		if (Document->ResolvePackageIndexPath(Export.ClassIndex, ClassPath) && ClassPath == TEXT("/Script/Engine.StaticMeshComponent"))
+		{
+			Component = Export.Index;
+		}
+	}
+
+	if (!TestTrue(TEXT("The package has a static mesh component"), Component != INDEX_NONE))
+	{
+		return false;
+	}
+
+	FAssetArchetypeResolver Resolver(*Document, *Traces);
+
+	const FAssetOmittedPropertyDefault Hidden = Resolver.DescribeOmittedProperty(Component, TEXT("bHiddenInGame"), 0);
+	TestEqual(TEXT("A native default comes from live reflection"), Hidden.Status, EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection);
+	TestEqual(TEXT("It is the class default object's value"), Hidden.Summary, FString(TEXT("False")));
+	TestTrue(TEXT("The note says it was read live"), Hidden.Note.Contains(TEXT("live reflection")));
+
+	const FAssetOmittedPropertyDefault Missing = Resolver.DescribeOmittedProperty(Component, TEXT("NotAProperty"), 0);
+	TestNotEqual(TEXT("A property the native class lacks is not reflected"), Missing.Status, EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
