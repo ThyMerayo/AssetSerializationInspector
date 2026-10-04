@@ -35,7 +35,7 @@ Planned next steps:
 - [x] No-op resave test mode: two temporary resaves per asset with a stable / normalized / unstable verdict (#8)
 - [x] Exportable text/JSON analysis reports for a comparison (#7); reports for batches of assets reuse `FAssetAnalysisReport`
 - [x] Batch/project-wide save analysis: the no-op resave test over selected assets, folders or the whole project, with a text/JSON report (#13)
-- [ ] Results window for a batch run (browse assets, open one asset's diff)
+- [x] Results window for a batch run (browse assets, filter, open one asset's first or second resave diff)
 - [x] Cross-engine/version comparison: compare two folders of assets with a grouped text/JSON report, and version-aware explanations in the two-file diff (#14)
 - [ ] Results window for a folder comparison (browse pairs, open one pair's diff)
 - [ ] Verify the folder comparison on packages that really were saved by different engine versions
