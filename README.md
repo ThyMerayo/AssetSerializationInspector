@@ -247,7 +247,7 @@ The structural diff has a search box (several terms must all match; names, paths
 
 ### Batch and project-wide analysis
 
-The same test runs on many assets: select several assets, or use *Run No-op Resave Test on Folder* (Content Browser folder menu), or *Window -> Run No-op Resave Test on Project* (everything under `/Game`). A progress dialog with cancel is shown, and each result is condensed as soon as it is produced so memory does not grow with the project. The saved text/JSON report lists unstable assets first and groups **changes found in several assets**, which points at causes that are not about any one asset (for example every asset losing its thumbnails).
+The same test runs on many assets: select several assets, or use *Run No-op Resave Test on Folder* (Content Browser folder menu), or *Window -> Run No-op Resave Test on Project* (everything under `/Game`). A progress dialog with cancel is shown, and each result is condensed as soon as it is produced so memory does not grow with the project. When a run finishes, a **results window** opens (and *Window -> Show Last No-op Resave Results* reopens it): every asset with its outcome (unstable, normalized on the first save, failed, skipped, stable), most worrying first, with outcome filters and a search box. Selecting an asset shows what its first and second resaves changed, and *Open First Resave* / *Open Second Resave* open the comparison in the diff window (the asset is tested again to produce it, since a run keeps only condensed results). The saved text/JSON report lists unstable assets first and groups **changes found in several assets**, which points at causes that are not about any one asset (for example every asset losing its thumbnails).
 
 ### Folder comparison and engine versions
 
@@ -586,7 +586,7 @@ Known limitations:
 - Only `.uasset` packages are read; levels (`.umap`) are not.
 - Native C++ defaults are read from the running editor (top-level properties only; set and map deltas still assume an empty default), and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
 - Package versions this editor build cannot read are reported as failed rather than guessed.
-- Batch, project-wide and folder runs produce reports; there is no results window to browse them yet.
+- Folder comparisons produce a report; there is no results window to browse their pairs yet.
 - Most of the UI has been exercised through automation tests and manual use on small assets. Large projects and assets saved by several different engine versions deserve more real-world testing.
 
 ---
