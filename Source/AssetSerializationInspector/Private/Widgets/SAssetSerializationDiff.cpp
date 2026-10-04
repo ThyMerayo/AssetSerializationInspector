@@ -857,6 +857,21 @@ FString SAssetSerializationDiff::MakeCompactHistoryValue(const FString& Value) c
 	return Value.Left(MaximumLength - 3) + TEXT("...");
 }
 
+TSharedRef<FAssetSerializationDiffSession> FAssetSerializationDiffSession::FromObservedSave(const FObservedAssetSave& Save)
+{
+	TSharedRef<FAssetSerializationDiffSession> Session = MakeShared<FAssetSerializationDiffSession>();
+	Session->Old.Document = Save.Before;
+	Session->Old.Traces = Save.BeforeFields;
+	Session->New.Document = Save.After;
+	Session->New.Traces = Save.AfterFields;
+	Session->DiffResult = Save.Diff;
+	Session->Analysis = Save.Analysis;
+	Session->ObservedSaveId = Save.SaveId;
+	Session->PackageName = Save.PackageName;
+
+	return Session;
+}
+
 void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath)
 {
 	const TSharedPtr<const FObservedAssetSave> Save = FAssetSaveHistoryManager::Get().FindSave(SaveId);
@@ -865,7 +880,7 @@ void SAssetSerializationDiff::OpenHistorySave(const FObservedSaveId SaveId, cons
 		return;
 	}
 
-	TSharedRef<FAssetSerializationDiffSession> Session = MakeDiffSession(*Save);
+	TSharedRef<FAssetSerializationDiffSession> Session = FAssetSerializationDiffSession::FromObservedSave(*Save);
 	SetSession(Session);
 
 	NavigateToSemanticPath(SemanticPath);

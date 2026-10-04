@@ -590,21 +590,6 @@ void FAssetSerializationInspectorModule::ShowNoOpResaveNotification(const FNoOpR
 	}
 }
 
-static TSharedRef<FAssetSerializationDiffSession> MakeDiffSession(const FObservedAssetSave& Save)
-{
-	TSharedRef<FAssetSerializationDiffSession> Session = MakeShared<FAssetSerializationDiffSession>();
-	Session->Old.Document = Save.Before;
-	Session->Old.Traces = Save.BeforeFields;
-	Session->New.Document = Save.After;
-	Session->New.Traces = Save.AfterFields;
-	Session->DiffResult = Save.Diff;
-	Session->Analysis = Save.Analysis;
-	Session->ObservedSaveId = Save.SaveId;
-	Session->PackageName = Save.PackageName;
-
-	return Session;
-}
-
 void FAssetSerializationInspectorModule::OpenObservedSaveDiff(TSharedPtr<FObservedAssetSave> Save)
 {
 	if (!Save.IsValid())
@@ -612,7 +597,7 @@ void FAssetSerializationInspectorModule::OpenObservedSaveDiff(TSharedPtr<FObserv
 		return;
 	}
 
-	PendingDiffSession = MakeDiffSession(*Save);
+	PendingDiffSession = FAssetSerializationDiffSession::FromObservedSave(*Save);
 
 	TSharedPtr<SDockTab> Tab = FGlobalTabmanager::Get()->TryInvokeTab(DiffTabName);
 

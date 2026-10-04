@@ -2,6 +2,8 @@
 
 #include "Serialization/AssetSerializationPrimitives.h"
 
+#include "Readers/AssetPackageMemoryReader.h"
+
 namespace
 {
 	constexpr int32 MaximumReasonableNameLength = 1024 * 1024;
