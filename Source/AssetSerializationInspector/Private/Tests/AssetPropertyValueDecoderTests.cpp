@@ -5,8 +5,12 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/DateTime.h"
+#include "UObject/CoreObjectVersion.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/FrameworkObjectVersion.h"
 #include "UObject/ObjectVersion.h"
+#include "UObject/SequencerObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
@@ -696,6 +700,176 @@ bool FAssetPropertyValueDecoder_DecodesTextHistoriesWithArguments::RunTest(const
 		AppendValue<int64>(Truncated, 1);
 		TestEqual(TEXT("Missing arguments are invalid"), DecodeWholeFile(Truncated, TextType).Status, EAssetPropertyDecodeStatus::InvalidData);
 	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesOtherNativeLayouts, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesOtherNativeLayouts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesOtherNativeLayouts::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	const auto StructType = [](const TCHAR* StructName) {
+		FAssetSerializedPropertyType Type = MakeType(TEXT("StructProperty"));
+		Type.Parameters.Add(MakeType(StructName));
+		return Type;
+	};
+
+	const auto MakeDocument = []() {
+		FAssetPackageDocument Document;
+		Document.PackageSummary.SetFileVersions(GPackageFileUEVersion.FileVersionUE4, GPackageFileUEVersion.FileVersionUE5, 0);
+		FCustomVersionContainer& Versions = const_cast<FCustomVersionContainer&>(Document.PackageSummary.GetCustomVersionContainer());
+		Versions.SetVersion(FCoreObjectVersion::GUID, FCoreObjectVersion::LatestVersion, TEXT("Core"));
+		Versions.SetVersion(FFrameworkObjectVersion::GUID, FFrameworkObjectVersion::LatestVersion, TEXT("Framework"));
+		Versions.SetVersion(FSequencerObjectVersion::GUID, FSequencerObjectVersion::LatestVersion, TEXT("Sequencer"));
+		Versions.SetVersion(FFortniteMainBranchObjectVersion::GUID, FFortniteMainBranchObjectVersion::LatestVersion, TEXT("FortniteMain"));
+		return Document;
+	};
+
+	// A material input: expression (package index), output index, input name, five mask ints, then (typed inputs) use-constant and the constant.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendValue<int32>(Document, 0);
+		AppendValue<int32>(Document, 2);
+		AppendName(Document, AddName(Document, TEXT("A")));
+		for (int32 Mask = 0; Mask < 5; ++Mask)
+		{
+			AppendValue<int32>(Document, Mask);
+		}
+		AppendValue<uint32>(Document, 1);
+		for (const float Number : { 1.0f, 0.5f, 0.25f, 1.0f })
+		{
+			AppendValue<float>(Document, Number);
+		}
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, StructType(TEXT("ColorMaterialInput")));
+		TestTrue(TEXT("A color material input decodes"), Result.IsSuccess());
+		TestEqual(TEXT("It is not connected"), Result.Value, FString(TEXT("(not connected)")));
+		TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Document.FileData.Num()));
+	}
+
+	// A frame range: a bound type byte and a frame number, twice.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendValue<uint8>(Document, 1);
+		AppendValue<int32>(Document, 10);
+		AppendValue<uint8>(Document, 0);
+		AppendValue<int32>(Document, 20);
+		TestEqual(TEXT("A closed-open frame range"), DecodeWholeFile(Document, StructType(TEXT("MovieSceneFrameRange"))).Value, FString(TEXT("[10, 20)")));
+	}
+
+	// A float channel: extrapolation modes, key times and values as raw arrays, the default, the tick resolution and the show-curve flag.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendValue<uint8>(Document, 0);
+		AppendValue<uint8>(Document, 0);
+		AppendValue<int32>(Document, 4);
+		AppendValue<int32>(Document, 2);
+		AppendValue<int32>(Document, 0);
+		AppendValue<int32>(Document, 24000);
+		AppendValue<int32>(Document, 8); // each value: a float and a spare float here
+		AppendValue<int32>(Document, 2);
+		AppendValue<float>(Document, 1.5f);
+		AppendValue<float>(Document, 0.0f);
+		AppendValue<float>(Document, 3.5f);
+		AppendValue<float>(Document, 0.0f);
+		AppendValue<float>(Document, 0.0f);
+		AppendValue<uint32>(Document, 0);
+		AppendValue<int32>(Document, 24000);
+		AppendValue<int32>(Document, 1);
+		AppendValue<uint32>(Document, 0);
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, StructType(TEXT("MovieSceneFloatChannel")));
+		TestTrue(TEXT("A float channel decodes"), Result.IsSuccess());
+		TestEqual(TEXT("It has two keys"), Result.Value, FString(TEXT("2 keys")));
+		TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Document.FileData.Num()));
+		if (TestEqual(TEXT("Its parts are the modes, the keys, the default and the resolution"), Result.Children.Num(), 5))
+		{
+			TestEqual(TEXT("The second key has its time and value"), Result.Children[2].Children[1].Value, FString(TEXT("frame 24000: 3.5")));
+		}
+	}
+
+	// An optional: a 32 bit flag and, when set, the value.
+	{
+		FAssetSerializedPropertyType OptionalInt = MakeType(TEXT("OptionalProperty"));
+		OptionalInt.Parameters.Add(MakeType(TEXT("IntProperty")));
+
+		FAssetPackageDocument Set = MakeDocument();
+		AppendValue<uint32>(Set, 1);
+		AppendValue<int32>(Set, 9);
+		TestEqual(TEXT("A set optional is its value"), DecodeWholeFile(Set, OptionalInt).Value, FString(TEXT("9")));
+
+		FAssetPackageDocument Unset = MakeDocument();
+		AppendValue<uint32>(Unset, 0);
+		TestEqual(TEXT("An unset optional says so"), DecodeWholeFile(Unset, OptionalInt).Value, FString(TEXT("(not set)")));
+	}
+
+	// Small native structs.
+	{
+		FAssetPackageDocument Frame = MakeDocument();
+		AppendValue<int32>(Frame, 48);
+		TestEqual(TEXT("A frame number"), DecodeWholeFile(Frame, StructType(TEXT("FrameNumber"))).Value, FString(TEXT("48")));
+
+		FAssetPackageDocument Point = MakeDocument();
+		AppendValue<int32>(Point, 3);
+		AppendValue<int32>(Point, 4);
+		TestEqual(TEXT("A 2D integer vector"), DecodeWholeFile(Point, StructType(TEXT("IntVector2"))).Value, FString(TEXT("X=3 Y=4")));
+
+		FAssetPackageDocument Vector = MakeDocument();
+		for (const float Number : { 1.0f, 2.0f, 3.0f })
+		{
+			AppendValue<float>(Vector, Number);
+		}
+		TestTrue(TEXT("A single precision 3D vector"), DecodeWholeFile(Vector, StructType(TEXT("Vector3f"))).IsSuccess());
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_HandlesStructsThatSerializeThemselves,
+	"AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.HandlesStructsThatSerializeThemselves", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_HandlesStructsThatSerializeThemselves::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	FAssetSerializedPropertyType Type = MakeType(TEXT("StructProperty"));
+	Type.Parameters.Add(MakeType(TEXT("SomeNativeStruct")));
+
+	const auto Decode = [&Type](FAssetPackageDocument& Document, const bool bNative) {
+		FAssetSerializationTraceNode Node;
+		Node.PropertyType = Type;
+		Node.Offset = 0;
+		Node.Size = Document.FileData.Num();
+		Node.bBinaryOrNative = bNative;
+		return FAssetPropertyValueDecoder::Decode(Document, Node, 0);
+	};
+
+	const auto MakeDocument = []() {
+		FAssetPackageDocument Document;
+		Document.PackageSummary.SetFileVersions(GPackageFileUEVersion.FileVersionUE4, GPackageFileUEVersion.FileVersionUE5, 0);
+		return Document;
+	};
+
+	// Bytes that are not a tagged property stream: the struct is reported as native instead of being read as garbage.
+	FAssetPackageDocument Opaque = MakeDocument();
+	for (int32 Index = 0; Index < 12; ++Index)
+	{
+		AppendValue<uint32>(Opaque, 0x7FFFFFF0u + Index);
+	}
+
+	const FAssetDecodedPropertyValue Native = Decode(Opaque, true);
+	TestEqual(TEXT("An unknown native struct is unsupported"), Native.Status, EAssetPropertyDecodeStatus::Unsupported);
+	TestTrue(TEXT("It says it is serialized by its own code"), Native.Error.Contains(TEXT("serialized by its own native code")));
+
+	// A native serializer that writes tagged properties after all (here just the terminator) is read as such.
+	FAssetPackageDocument Tagged = MakeDocument();
+	AppendName(Tagged, AddName(Tagged, TEXT("Count")));
+	AppendName(Tagged, AddName(Tagged, TEXT("IntProperty")));
+	AppendValue<int32>(Tagged, 0); // placeholder: the modern tag is not built here, so this is not a clean stream
+	TestEqual(TEXT("An unclean stream is still refused"), Decode(Tagged, true).Status, EAssetPropertyDecodeStatus::Unsupported);
 
 	return true;
 }

@@ -7,9 +7,12 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
+#include "UObject/CoreObjectVersion.h"
 #include "UObject/EditorObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/FrameworkObjectVersion.h"
 #include "UObject/ObjectVersion.h"
+#include "UObject/SequencerObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 AbsoluteOffset)
@@ -81,6 +84,9 @@ struct FAssetPropertyDecodeContext
 
 	int32 MaximumDepth = 32;
 	int32 MaximumContainerElements = 100000;
+
+	/** Set by whoever read the property's tag for the next value decoded: the tag says its type writes the value itself. */
+	mutable bool bNextValueIsNativelySerialized = false;
 };
 
 static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
@@ -134,6 +140,7 @@ static bool DecodeTaggedStruct(const FAssetPropertyDecodeContext& Context, FAsse
 		else
 		{
 			Reader.Seek(Tag.ValueOffset);
+			Context.bNextValueIsNativelySerialized = Tag.SerializeType == EAssetPropertyTagSerializeType::BinaryOrNative;
 			DecodeValueFromReader(Context, Reader, Tag.Type, ChildValueEnd, Child, Depth);
 		}
 
@@ -294,6 +301,7 @@ static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Co
 
 static bool IsValidContainerCount(const FAssetPropertyDecodeContext& Context, const int32 Count);
 static FAssetDecodedPropertyValue MakeTextChild(const FString& Name, const FString& TypeName, const FString& Value, const int64 Offset, const int64 Size);
+static bool DecodePackageIndexFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue);
 
 /** FGameplayTagContainer::Serialize writes its tags as an array of names, not as tagged properties. */
 static bool DecodeNameArrayStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
@@ -437,6 +445,340 @@ static bool DecodeRichCurveKeyFromReader(const FAssetPropertyDecodeContext& Cont
 	return true;
 }
 
+/** The constants a material input stores after the expression it is connected to, by input kind. */
+enum class EMaterialInputConstant : uint8
+{
+	None,
+	LinearColor,
+	Float,
+	Vector3,
+	Vector2,
+	UInt32
+};
+
+/**
+ * FExpressionInput and the material inputs derived from it (SerializeExpressionInput in MaterialShared.cpp): the expression
+ * (a package index), the output index, the input name and five mask ints, then for the typed inputs a 32 bit "use constant"
+ * flag and the constant. Packages older than the native serialization store them as tagged properties, which is not handled.
+ */
+static bool DecodeExpressionInputFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const EMaterialInputConstant Constant)
+{
+	const int64 Start = Reader.Tell();
+
+	if (Reader.CustomVer(FCoreObjectVersion::GUID) < FCoreObjectVersion::MaterialInputNativeSerialize || Reader.CustomVer(FFrameworkObjectVersion::GUID) < FFrameworkObjectVersion::PinsStoreFName)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = TEXT("This material input was saved before it had its own serialization.");
+		return false;
+	}
+
+	const auto Fail = [&OutValue](const TCHAR* Message) {
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Message;
+		return false;
+	};
+
+	FAssetDecodedPropertyValue Expression;
+	FAssetDecodedPropertyValue InputName;
+	int32 OutputIndex = 0;
+	int32 Masks[5] = { 0, 0, 0, 0, 0 };
+
+	if (!DecodePackageIndexFromReader(Context, Reader, ValueEnd, Expression) || !ReadBounded(Reader, ValueEnd, OutputIndex) || !DecodeNameFromReader(Context, Reader, ValueEnd, InputName))
+	{
+		return Fail(TEXT("Could not read a material input."));
+	}
+
+	for (int32& Mask : Masks)
+	{
+		if (!ReadBounded(Reader, ValueEnd, Mask))
+		{
+			return Fail(TEXT("Could not read a material input."));
+		}
+	}
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Children.Add(MakeTextChild(TEXT("Expression"), TEXT("ObjectProperty"), Expression.Value, Expression.AbsoluteOffset, Expression.Size));
+	OutValue.Children.Add(MakeTextChild(TEXT("OutputIndex"), TEXT("IntProperty"), LexToString(OutputIndex), Start, sizeof(int32)));
+	OutValue.Children.Add(MakeTextChild(TEXT("InputName"), TEXT("NameProperty"), InputName.Value, InputName.AbsoluteOffset, InputName.Size));
+
+	static const TCHAR* const MaskNames[] = { TEXT("Mask"), TEXT("MaskR"), TEXT("MaskG"), TEXT("MaskB"), TEXT("MaskA") };
+	for (int32 Index = 0; Index < 5; ++Index)
+	{
+		OutValue.Children.Add(MakeTextChild(MaskNames[Index], TEXT("IntProperty"), LexToString(Masks[Index]), INDEX_NONE, sizeof(int32)));
+	}
+
+	if (Constant != EMaterialInputConstant::None)
+	{
+		uint32 bUseConstant = 0;
+		if (!ReadBounded(Reader, ValueEnd, bUseConstant))
+		{
+			return Fail(TEXT("Could not read a material input."));
+		}
+
+		FString ConstantText;
+		bool bRead = true;
+
+		const auto Floats = [&](const int32 Count) {
+			TArray<FString> Parts;
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				float Number = 0.0f;
+				bRead = bRead && ReadBounded(Reader, ValueEnd, Number);
+				Parts.Add(LexToString(Number));
+			}
+			return FString::Join(Parts, TEXT(", "));
+		};
+
+		switch (Constant)
+		{
+			case EMaterialInputConstant::LinearColor:
+				// Inputs saved before MaterialInputUsesLinearColor hold an 8 bit color.
+				if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::MaterialInputUsesLinearColor)
+				{
+					uint32 Color = 0;
+					bRead = ReadBounded(Reader, ValueEnd, Color);
+					ConstantText = FString::Printf(TEXT("0x%08X"), Color);
+				}
+				else
+				{
+					ConstantText = Floats(4);
+				}
+				break;
+
+			case EMaterialInputConstant::Float:
+				ConstantText = Floats(1);
+				break;
+
+			case EMaterialInputConstant::Vector3:
+				ConstantText = Floats(3);
+				break;
+
+			case EMaterialInputConstant::Vector2:
+				ConstantText = Floats(2);
+				break;
+
+			default:
+			{
+				uint32 Value = 0;
+				bRead = ReadBounded(Reader, ValueEnd, Value);
+				ConstantText = LexToString(Value);
+				break;
+			}
+		}
+
+		if (!bRead)
+		{
+			return Fail(TEXT("Could not read a material input."));
+		}
+
+		OutValue.Children.Add(MakeTextChild(TEXT("UseConstant"), TEXT("BoolProperty"), bUseConstant != 0 ? TEXT("true") : TEXT("false"), INDEX_NONE, sizeof(uint32)));
+		OutValue.Children.Add(MakeTextChild(TEXT("Constant"), TEXT("ScalarProperty"), ConstantText, INDEX_NONE, 0));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Expression.Value == TEXT("None") ? FString(TEXT("(not connected)")) : FString::Printf(TEXT("%s [output %d]"), *Expression.Value, OutputIndex);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+/** FMovieSceneFrameRange::Serialize writes a TRange<FFrameNumber>: each bound is a bound-type byte and a frame number. */
+static bool DecodeFrameRangeFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	uint8 LowerType = 0;
+	int32 Lower = 0;
+	uint8 UpperType = 0;
+	int32 Upper = 0;
+	if (!ReadBounded(Reader, ValueEnd, LowerType) || !ReadBounded(Reader, ValueEnd, Lower) || !ReadBounded(Reader, ValueEnd, UpperType) || !ReadBounded(Reader, ValueEnd, Upper))
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding a frame range.");
+		return false;
+	}
+
+	// ERangeBoundTypes: 0 exclusive, 1 inclusive, 2 open.
+	const FString LowerText = LowerType == 2 ? FString(TEXT("(-inf")) : FString::Printf(TEXT("%s%d"), LowerType == 1 ? TEXT("[") : TEXT("("), Lower);
+	const FString UpperText = UpperType == 2 ? FString(TEXT("+inf)")) : FString::Printf(TEXT("%d%s"), Upper, UpperType == 1 ? TEXT("]") : TEXT(")"));
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("%s, %s"), *LowerText, *UpperText);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+/**
+ * FMovieSceneFloatChannel / FMovieSceneDoubleChannel (TMovieSceneCurveChannelImpl::Serialize): the extrapolation modes, the key
+ * times and key values as raw arrays (each prefixed with its element size), the default value and the tick resolution. Only
+ * each key's own value is read; the tangents and modes that follow it in the element are skipped.
+ */
+template <typename TValue>
+static bool DecodeMovieSceneChannelFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	const auto Fail = [&OutValue](const TCHAR* Message) {
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Message;
+		return false;
+	};
+
+	if (Reader.CustomVer(FSequencerObjectVersion::GUID) < FSequencerObjectVersion::SerializeFloatChannelCompletely
+		&& Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = TEXT("This channel was saved before it was serialized completely.");
+		return false;
+	}
+
+	uint8 PreExtrapolation = 0;
+	uint8 PostExtrapolation = 0;
+	int32 TimeSize = 0;
+	int32 TimeCount = 0;
+	if (!ReadBounded(Reader, ValueEnd, PreExtrapolation) || !ReadBounded(Reader, ValueEnd, PostExtrapolation) || !ReadBounded(Reader, ValueEnd, TimeSize) || !ReadBounded(Reader, ValueEnd, TimeCount)
+		|| TimeSize != sizeof(int32) || !IsValidContainerCount(Context, TimeCount) || Reader.Tell() + static_cast<int64>(TimeCount) * TimeSize > ValueEnd)
+	{
+		return Fail(TEXT("Could not read the key times of a channel."));
+	}
+
+	TArray<int32> Times;
+	Times.SetNumUninitialized(TimeCount);
+	if (TimeCount > 0)
+	{
+		Reader.Serialize(Times.GetData(), static_cast<int64>(TimeCount) * TimeSize);
+	}
+
+	int32 ValueSize = 0;
+	int32 ValueCount = 0;
+	if (!ReadBounded(Reader, ValueEnd, ValueSize) || !ReadBounded(Reader, ValueEnd, ValueCount) || ValueSize < static_cast<int32>(sizeof(TValue)) || ValueCount != TimeCount
+		|| Reader.Tell() + static_cast<int64>(ValueCount) * ValueSize > ValueEnd)
+	{
+		return Fail(TEXT("Could not read the key values of a channel."));
+	}
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+
+	FAssetDecodedPropertyValue Keys;
+	Keys.Status = EAssetPropertyDecodeStatus::Success;
+	Keys.Kind = EAssetDecodedValueKind::Array;
+	Keys.Name = TEXT("Keys");
+	Keys.TypeName = TEXT("ArrayProperty");
+	Keys.Value = FString::Printf(TEXT("%d keys"), TimeCount);
+	Keys.AbsoluteOffset = Reader.Tell();
+
+	for (int32 Index = 0; Index < TimeCount; ++Index)
+	{
+		TValue Value{};
+		FMemory::Memcpy(&Value, Reader.Tell() + Context.Document.FileData.GetData(), sizeof(TValue));
+		Reader.Seek(Reader.Tell() + ValueSize);
+
+		FAssetDecodedPropertyValue Key = MakeTextChild(
+			FString::Printf(TEXT("[%d]"), Index), TEXT("KeyProperty"), FString::Printf(TEXT("frame %d: %s"), Times[Index], *FString::SanitizeFloat(static_cast<double>(Value))), INDEX_NONE, ValueSize);
+		Key.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Key);
+		Keys.Children.Add(MoveTemp(Key));
+	}
+
+	Keys.Size = Reader.Tell() - Keys.AbsoluteOffset;
+
+	TValue Default{};
+	uint32 bHasDefault = 0;
+	int32 Numerator = 0;
+	int32 Denominator = 0;
+	if (!ReadBounded(Reader, ValueEnd, Default) || !ReadBounded(Reader, ValueEnd, bHasDefault) || !ReadBounded(Reader, ValueEnd, Numerator) || !ReadBounded(Reader, ValueEnd, Denominator))
+	{
+		return Fail(TEXT("Could not read the default value of a channel."));
+	}
+
+	if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve)
+	{
+		uint32 bShowCurve = 0;
+		if (!ReadBounded(Reader, ValueEnd, bShowCurve))
+		{
+			return Fail(TEXT("Could not read a channel."));
+		}
+	}
+
+	OutValue.Children.Add(MakeTextChild(TEXT("PreInfinityExtrap"), TEXT("ByteProperty"), LexToString(static_cast<uint32>(PreExtrapolation)), INDEX_NONE, 1));
+	OutValue.Children.Add(MakeTextChild(TEXT("PostInfinityExtrap"), TEXT("ByteProperty"), LexToString(static_cast<uint32>(PostExtrapolation)), INDEX_NONE, 1));
+	OutValue.Children.Add(MoveTemp(Keys));
+	OutValue.Children.Add(
+		MakeTextChild(TEXT("DefaultValue"), TEXT("ScalarProperty"), bHasDefault != 0 ? FString::SanitizeFloat(static_cast<double>(Default)) : FString(TEXT("none")), INDEX_NONE, sizeof(TValue)));
+	OutValue.Children.Add(MakeTextChild(TEXT("TickResolution"), TEXT("FrameRate"), FString::Printf(TEXT("%d/%d"), Numerator, Denominator), INDEX_NONE, 8));
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("%d keys"), TimeCount);
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+/**
+ * FNiagaraVariableBase / FNiagaraVariable / FNiagaraVariableWithOffset: the name, the type definition (a stream of tagged
+ * properties ending in "None"), then for a variable its data as a byte array, or for the one with an offset the offset.
+ */
+static bool DecodeNiagaraVariableFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Kind)
+{
+	const int64 Start = Reader.Tell();
+
+	const auto Fail = [&OutValue](const TCHAR* Message) {
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Message;
+		return false;
+	};
+
+	FAssetDecodedPropertyValue Name;
+	if (!DecodeNameFromReader(Context, Reader, ValueEnd, Name))
+	{
+		return Fail(TEXT("Could not read the name of a Niagara variable."));
+	}
+
+	FAssetDecodedPropertyValue TypeDefinition;
+	TypeDefinition.Name = TEXT("TypeDefinition");
+	TypeDefinition.TypeName = TEXT("StructProperty(NiagaraTypeDefinition)");
+	if (!DecodeTaggedStruct(Context, Reader, ValueEnd, TypeDefinition, 1))
+	{
+		return Fail(TEXT("Could not read the type of a Niagara variable."));
+	}
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Children.Add(MakeTextChild(TEXT("Name"), TEXT("NameProperty"), Name.Value, Name.AbsoluteOffset, Name.Size));
+	OutValue.Children.Add(MoveTemp(TypeDefinition));
+
+	if (Kind == 1)
+	{
+		const int64 DataStart = Reader.Tell();
+		int32 DataSize = 0;
+		if (!ReadBounded(Reader, ValueEnd, DataSize) || DataSize < 0 || Reader.Tell() + DataSize > ValueEnd)
+		{
+			return Fail(TEXT("Could not read the data of a Niagara variable."));
+		}
+
+		Reader.Seek(Reader.Tell() + DataSize);
+		OutValue.Children.Add(MakeTextChild(TEXT("VarData"), TEXT("ByteProperty"), FString::Printf(TEXT("%d bytes"), DataSize), DataStart, Reader.Tell() - DataStart));
+	}
+	else if (Kind == 2)
+	{
+		int32 Offset = 0;
+		if (!ReadBounded(Reader, ValueEnd, Offset))
+		{
+			return Fail(TEXT("Could not read the offset of a Niagara variable."));
+		}
+
+		OutValue.Children.Add(MakeTextChild(TEXT("Offset"), TEXT("IntProperty"), LexToString(Offset), Reader.Tell() - sizeof(int32), sizeof(int32)));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Name.Value;
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FString& StructName, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	if (StructName == TEXT("Vector"))
@@ -457,6 +799,107 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	if (StructName == TEXT("GameplayTag"))
 	{
 		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("IntVector2") || StructName == TEXT("Int32Vector2"))
+	{
+		return DecodePodStructFromReader<FIntPoint>(Context, Reader, ValueEnd, OutValue, [](const FIntPoint& Value) { return FString::Printf(TEXT("X=%d Y=%d"), Value.X, Value.Y); });
+	}
+
+	if (StructName == TEXT("IntVector4") || StructName == TEXT("Int32Vector4"))
+	{
+		return DecodePodStructFromReader<FInt32Vector4>(
+			Context, Reader, ValueEnd, OutValue, [](const FInt32Vector4& Value) { return FString::Printf(TEXT("X=%d Y=%d Z=%d W=%d"), Value.X, Value.Y, Value.Z, Value.W); });
+	}
+
+	if (StructName == TEXT("FrameNumber"))
+	{
+		return DecodePodStructFromReader<int32>(Context, Reader, ValueEnd, OutValue, [](const int32 Value) { return LexToString(Value); });
+	}
+
+	if (StructName == TEXT("DateTime"))
+	{
+		return DecodePodStructFromReader<int64>(Context, Reader, ValueEnd, OutValue, [](const int64 Ticks) { return FDateTime(Ticks).ToIso8601(); });
+	}
+
+	if (StructName == TEXT("Vector3f"))
+	{
+		return DecodePodStructFromReader<FVector3f>(Context, Reader, ValueEnd, OutValue, [](const FVector3f& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Vector4f"))
+	{
+		return DecodePodStructFromReader<FVector4f>(Context, Reader, ValueEnd, OutValue, [](const FVector4f& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Quat4f"))
+	{
+		return DecodePodStructFromReader<FQuat4f>(Context, Reader, ValueEnd, OutValue, [](const FQuat4f& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("Rotator3f"))
+	{
+		return DecodePodStructFromReader<FRotator3f>(Context, Reader, ValueEnd, OutValue, [](const FRotator3f& Value) { return Value.ToString(); });
+	}
+
+	if (StructName == TEXT("ExpressionInput") || StructName == TEXT("MaterialAttributesInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::None);
+	}
+
+	if (StructName == TEXT("ColorMaterialInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::LinearColor);
+	}
+
+	if (StructName == TEXT("ScalarMaterialInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::Float);
+	}
+
+	if (StructName == TEXT("VectorMaterialInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::Vector3);
+	}
+
+	if (StructName == TEXT("Vector2MaterialInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::Vector2);
+	}
+
+	if (StructName == TEXT("ShadingModelMaterialInput") || StructName == TEXT("SubstrateMaterialInput"))
+	{
+		return DecodeExpressionInputFromReader(Context, Reader, ValueEnd, OutValue, EMaterialInputConstant::UInt32);
+	}
+
+	if (StructName == TEXT("MovieSceneFrameRange"))
+	{
+		return DecodeFrameRangeFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("MovieSceneFloatChannel"))
+	{
+		return DecodeMovieSceneChannelFromReader<float>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("MovieSceneDoubleChannel"))
+	{
+		return DecodeMovieSceneChannelFromReader<double>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("NiagaraVariableBase"))
+	{
+		return DecodeNiagaraVariableFromReader(Context, Reader, ValueEnd, OutValue, 0);
+	}
+
+	if (StructName == TEXT("NiagaraVariable"))
+	{
+		return DecodeNiagaraVariableFromReader(Context, Reader, ValueEnd, OutValue, 1);
+	}
+
+	if (StructName == TEXT("NiagaraVariableWithOffset"))
+	{
+		return DecodeNiagaraVariableFromReader(Context, Reader, ValueEnd, OutValue, 2);
 	}
 
 	if (StructName == TEXT("PerPlatformInt"))
@@ -572,7 +1015,7 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 }
 
 static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
-	FAssetDecodedPropertyValue& OutValue, const int32 Depth)
+	FAssetDecodedPropertyValue& OutValue, const int32 Depth, const bool bNativelySerialized = false)
 {
 	if (Type.Parameters.IsEmpty())
 	{
@@ -605,6 +1048,30 @@ static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, F
 	if (TryDecodeKnownStruct(Context, Reader, StructName, ValueEnd, OutValue))
 	{
 		return true;
+	}
+
+	if (bNativelySerialized)
+	{
+		// The type writes itself with its own serializer. Many of those serializers write the struct's properties as tagged
+		// properties after all (to add a version fix-up, for example), so try that first, and accept it only when it reads
+		// cleanly: every field decodes and the stream ends exactly where the value does. Anything else would be garbage.
+		const int64 NativeStart = Reader.Tell();
+		FAssetDecodedPropertyValue Tagged;
+		Tagged.TypeName = OutValue.TypeName;
+
+		if (DecodeTaggedStruct(Context, Reader, ValueEnd, Tagged, Depth) && Reader.Tell() == ValueEnd && !Tagged.Children.IsEmpty()
+			&& !Tagged.Children.ContainsByPredicate([](const FAssetDecodedPropertyValue& Child) { return !Child.IsSuccess(); }))
+		{
+			OutValue = MoveTemp(Tagged);
+			return true;
+		}
+
+		Reader.Seek(NativeStart);
+
+		// The type writes itself; reading that as tagged properties would only produce garbage.
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = FString::Printf(TEXT("%s is serialized by its own native code, whose layout this inspector does not know."), *StructName);
+		return false;
 	}
 
 	return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, Depth);
@@ -1952,6 +2419,10 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 
 	const int64 Start = Reader.Tell();
 
+	// The flag is about this value only; nested values read their own tags.
+	const bool bNativelySerialized = Context.bNextValueIsNativelySerialized;
+	Context.bNextValueIsNativelySerialized = false;
+
 	if (Start > ValueEnd)
 	{
 		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
@@ -2032,7 +2503,44 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 		return DecodeBoundDelegateFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
-	if (Type.Name == TEXT("MulticastInlineDelegateProperty"))
+	if (Type.Name == TEXT("OptionalProperty") && Type.Parameters.Num() == 1)
+	{
+		// A 32 bit "is set" flag, then the value when it is.
+		uint32 bIsSet = 0;
+		if (!ReadBounded(Reader, ValueEnd, bIsSet))
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = TEXT("Could not read an optional value.");
+			return false;
+		}
+
+		if (bIsSet == 0)
+		{
+			OutValue.Status = EAssetPropertyDecodeStatus::Success;
+			OutValue.Kind = EAssetDecodedValueKind::Scalar;
+			OutValue.Value = TEXT("(not set)");
+			OutValue.AbsoluteOffset = Start;
+			OutValue.Size = Reader.Tell() - Start;
+			return true;
+		}
+
+		FAssetDecodedPropertyValue Inner;
+		Inner.TypeName = Type.Parameters[0].ToString();
+		if (!DecodeValueFromReader(Context, Reader, Type.Parameters[0], ValueEnd, Inner, Depth + 1))
+		{
+			OutValue.Status = Inner.Status == EAssetPropertyDecodeStatus::Unsupported ? EAssetPropertyDecodeStatus::Unsupported : EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = Inner.Error;
+			return false;
+		}
+
+		OutValue = MoveTemp(Inner);
+		OutValue.TypeName = Type.ToString();
+		OutValue.AbsoluteOffset = Start;
+		OutValue.Size = Reader.Tell() - Start;
+		return true;
+	}
+
+	if (Type.Name == TEXT("MulticastInlineDelegateProperty") || Type.Name == TEXT("MulticastSparseDelegateProperty"))
 	{
 		return DecodeMulticastDelegateFromReader(Context, Reader, ValueEnd, OutValue);
 	}
@@ -2064,7 +2572,7 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 
 	if (Type.Name == TEXT("StructProperty"))
 	{
-		return DecodeStructFromReader(Context, Reader, Type, ValueEnd, OutValue, Depth + 1);
+		return DecodeStructFromReader(Context, Reader, Type, ValueEnd, OutValue, Depth + 1, bNativelySerialized);
 	}
 
 	if (Type.Name == TEXT("ArrayProperty"))
@@ -2129,7 +2637,9 @@ FAssetDecodedPropertyValue FAssetPropertyValueDecoder::Decode(const FAssetPackag
 	{
 		return DecodeBool(Document, Node, AbsoluteOffset);
 	}
-	else if (!DecodeValueFromReader(Context, Reader, Node.PropertyType, ValueEnd, Result, 0))
+
+	Context.bNextValueIsNativelySerialized = Node.bBinaryOrNative;
+	if (!DecodeValueFromReader(Context, Reader, Node.PropertyType, ValueEnd, Result, 0))
 	{
 		return Result;
 	}
