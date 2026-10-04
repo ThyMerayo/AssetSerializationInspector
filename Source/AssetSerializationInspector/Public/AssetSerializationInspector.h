@@ -43,6 +43,8 @@ private:
 	void SaveFolderComparisonReport();
 	void ShowFolderComparisonWindow();
 	void OpenFolderComparisonPairDiff(const FString& RelativePath);
+	void CompareWithSourceControlRevision(FName PackageName);
+	void OpenRevisionDiff(FName PackageName, FString Filename, TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> Revision);
 	void ShowDiffSession(TSharedPtr<FAssetSerializationDiffSession> Session);
 
 private:
