@@ -53,7 +53,7 @@ Next steps, in order:
 - [x] Containers inside arrays of structs: final values and omitted-field defaults
 - [x] Headless commandlet for the no-op resave test and the folder comparison, with a report file, for CI and engine upgrades
 - [x] Compare an asset with a source-control revision (Perforce, git) using the Save Analysis
-- [ ] HTML report alongside the text and JSON ones
+- [x] HTML report alongside the text and JSON ones
 - [ ] Window listing all monitored assets, with a way to add a folder
 - [ ] Show the elements that did decode when one element of an array fails, instead of only "the parent changed"
 - [ ] Infer the engine version from the package file version when the package does not name one (source builds)
