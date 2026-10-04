@@ -27,7 +27,7 @@ Planned next steps:
 - [x] Zero/empty default for Blueprint-declared properties omitted by their class default object (needs tagged properties; not for unversioned packages)
 - [x] Live-reflection fallback for native defaults of omitted top-level properties (containers still assume an empty default; unversioned-property schemas not done)
 - [x] Text histories that carry arguments (formatted, number, date/time, transform; generators shown opaquely); only unit-tested, no real asset yet
-- [ ] Real-asset fixture tests for the decoders and archetype resolution
+- [x] Real-asset fixture tests for the decoders and archetype resolution (BP_BOX50 from UE 5.0, BP_Box1 from this engine; found that only class default objects had their properties decoded)
 - [x] Search and state filtering for the structural diff (#6)
 - [x] Package header diff: every summary field plus per-region byte comparison with hex view (#9)
 - [ ] Describe header changes in the Save Analysis (for example which tables grew)
