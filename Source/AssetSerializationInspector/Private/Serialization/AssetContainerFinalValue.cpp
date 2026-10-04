@@ -300,3 +300,41 @@ bool AssetContainerFinalValue::CanAssumeEmptyDefaults(const FAssetDecodedPropert
 
 	return Serialized.Kind == EAssetDecodedValueKind::Set || Serialized.Kind == EAssetDecodedValueKind::Map;
 }
+
+bool AssetContainerFinalValue::ResolveContainersInArrayElements(FAssetDecodedPropertyValue& Value, FString& InOutNote, const bool bInsideElement)
+{
+	bool bReplaced = false;
+
+	for (FAssetDecodedPropertyValue& Child : Value.Children)
+	{
+		const bool bContainer = Child.Kind == EAssetDecodedValueKind::Set || Child.Kind == EAssetDecodedValueKind::Map;
+		if (bContainer)
+		{
+			FAssetDecodedPropertyValue EmptyDefaults;
+			EmptyDefaults.Status = EAssetPropertyDecodeStatus::Success;
+			EmptyDefaults.Kind = Child.Kind;
+
+			FAssetContainerFinalValue Final;
+			FString Error;
+			if (bInsideElement && CanAssumeEmptyDefaults(Child) && Compute(Child, &EmptyDefaults, Final, Error))
+			{
+				const FString Name = Child.Name;
+				Child = MoveTemp(Final.Value);
+				Child.Name = Name;
+				bReplaced = true;
+
+				const FString Note = TEXT("Containers inside array elements are shown against the empty defaults of their struct.");
+				if (!InOutNote.Contains(Note))
+				{
+					InOutNote += (InOutNote.IsEmpty() ? TEXT("") : TEXT(" ")) + Note;
+				}
+			}
+		}
+		else if (Child.Kind == EAssetDecodedValueKind::Array || Child.Kind == EAssetDecodedValueKind::Struct)
+		{
+			bReplaced |= ResolveContainersInArrayElements(Child, InOutNote, bInsideElement || Value.Kind == EAssetDecodedValueKind::Array);
+		}
+	}
+
+	return bReplaced;
+}

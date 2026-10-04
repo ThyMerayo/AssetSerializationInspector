@@ -30,4 +30,12 @@ namespace AssetSchemaReflection
 	 * has no such property or when its type does not match the tag's. Returns true when a name was added.
 	 */
 	bool CompleteType(const UStruct* Owner, const FString& PropertyName, FAssetSerializedPropertyType& Type);
+
+	/**
+	 * The value a field of a native struct has when the struct is default constructed, as the engine exports it as text. Struct
+	 * elements of arrays are saved against these defaults (fields equal to them are left out), not against the owning object's
+	 * archetype. FieldPath names the fields from the struct down, through nested structs. Returns false when the struct or a field
+	 * is not known to the running editor.
+	 */
+	bool ExportStructFieldDefault(const FString& StructName, const TArray<FString>& FieldPath, FString& OutText);
 } // namespace AssetSchemaReflection

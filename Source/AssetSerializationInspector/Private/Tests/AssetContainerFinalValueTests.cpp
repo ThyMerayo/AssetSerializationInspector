@@ -261,4 +261,62 @@ bool FAssetContainerFinalValue_MapDetectsReplaceAndFullContainers::RunTest(const
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetContainerFinalValue_ResolvesContainersInArrayElements, "AssetSerializationInspector.Serialization.AssetContainerFinalValue.ResolvesContainersInArrayElements",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetContainerFinalValue_ResolvesContainersInArrayElements::RunTest(const FString& Parameters)
+{
+	using namespace AssetContainerFinalValueTestUtils;
+
+	const auto MakeElement = [](const FAssetDecodedPropertyValue& Container) {
+		FAssetDecodedPropertyValue Field = Container;
+		Field.Name = TEXT("Tags");
+
+		FAssetDecodedPropertyValue Element;
+		Element.Status = EAssetPropertyDecodeStatus::Success;
+		Element.Kind = EAssetDecodedValueKind::Struct;
+		Element.Name = TEXT("[0]");
+		Element.Children.Add(MoveTemp(Field));
+		return Element;
+	};
+
+	const auto MakeArray = [](const FAssetDecodedPropertyValue& Element) {
+		FAssetDecodedPropertyValue Array;
+		Array.Status = EAssetPropertyDecodeStatus::Success;
+		Array.Kind = EAssetDecodedValueKind::Array;
+		Array.Children.Add(Element);
+		return Array;
+	};
+
+	// A set without removals inside an array element is complete against the struct's empty defaults.
+	{
+		FAssetDecodedPropertyValue Array = MakeArray(MakeElement(MakeSet({ TEXT("3"), TEXT("4") })));
+		FString Note;
+		TestTrue(TEXT("The set is resolved"), AssetContainerFinalValue::ResolveContainersInArrayElements(Array, Note));
+		TestTrue(TEXT("The note says what was assumed"), Note.Contains(TEXT("empty defaults")));
+
+		const FAssetDecodedPropertyValue& Tags = Array.Children[0].Children[0];
+		TestEqual(TEXT("It keeps its name"), Tags.Name, FString(TEXT("Tags")));
+		TestEqual(TEXT("Its elements no longer carry operations"), Tags.Children.Num(), 2);
+		TestEqual(TEXT("The first element is no longer an addition"), Tags.Children[0].ContainerOperation, EAssetDecodedContainerOperation::None);
+	}
+
+	// A map with a removal proves the struct's defaults were not empty: it is left alone.
+	{
+		FAssetDecodedPropertyValue Array = MakeArray(MakeElement(MakeMap({ TEXT("-1"), TEXT("2=b") })));
+		FString Note;
+		TestFalse(TEXT("A map with removals is not resolved"), AssetContainerFinalValue::ResolveContainersInArrayElements(Array, Note));
+		TestTrue(TEXT("Nothing is noted"), Note.IsEmpty());
+	}
+
+	// A set outside an array element is the archetype's business, not this function's.
+	{
+		FAssetDecodedPropertyValue Struct = MakeElement(MakeSet({ TEXT("3") }));
+		FString Note;
+		TestFalse(TEXT("A set in a plain struct is not touched"), AssetContainerFinalValue::ResolveContainersInArrayElements(Struct, Note));
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

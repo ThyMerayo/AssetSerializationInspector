@@ -109,3 +109,44 @@ bool AssetSchemaReflection::CompleteType(const UStruct* Owner, const FString& Pr
 
 	return CompleteFromProperty(FindFProperty<FProperty>(Owner, *PropertyName), Type);
 }
+
+bool AssetSchemaReflection::ExportStructFieldDefault(const FString& StructName, const TArray<FString>& FieldPath, FString& OutText)
+{
+	const UScriptStruct* Struct = Cast<UScriptStruct>(FindNativeStruct(StructName));
+	if (Struct == nullptr || FieldPath.IsEmpty())
+	{
+		return false;
+	}
+
+	FStructOnScope Instance(Struct);
+	const UStruct* Owner = Struct;
+	const void* Container = Instance.GetStructMemory();
+
+	for (int32 Index = 0; Index < FieldPath.Num(); ++Index)
+	{
+		const FProperty* Property = FindFProperty<FProperty>(Owner, *FieldPath[Index]);
+		if (Property == nullptr)
+		{
+			return false;
+		}
+
+		const void* Value = Property->ContainerPtrToValuePtr<void>(Container);
+		if (Index == FieldPath.Num() - 1)
+		{
+			OutText.Reset();
+			Property->ExportText_Direct(OutText, Value, Value, nullptr, PPF_None);
+			return true;
+		}
+
+		const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+		if (StructProperty == nullptr || StructProperty->Struct == nullptr)
+		{
+			return false;
+		}
+
+		Owner = StructProperty->Struct;
+		Container = Value;
+	}
+
+	return false;
+}

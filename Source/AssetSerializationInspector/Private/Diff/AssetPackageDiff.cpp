@@ -9,7 +9,9 @@
 #include "Diff/AssetDecodedValueDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetArchetypeResolver.h"
+#include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Serialization/AssetSchemaReflection.h"
 #include "Summary/AssetExportSummary.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -290,6 +292,19 @@ namespace
 		FAssetArchetypeResolver* ArchetypeResolver = nullptr;
 	};
 
+	/** The struct name of "StructProperty(Name)", or empty. */
+	FString StructNameOfType(const FString& TypeName)
+	{
+		int32 Open = INDEX_NONE;
+		int32 Close = INDEX_NONE;
+		if (!TypeName.StartsWith(TEXT("StructProperty(")) || !TypeName.FindChar(TEXT('('), Open) || !TypeName.FindLastChar(TEXT(')'), Close) || Close <= Open + 1)
+		{
+			return FString();
+		}
+
+		return TypeName.Mid(Open + 1, Close - Open - 1);
+	}
+
 	/**
 	 * Replaces, inside a copy of a struct value, every set or map reached through struct fields with its final contents.
 	 * FieldPath names the fields from the top-level property down to Value. Returns whether anything was replaced.
@@ -327,6 +342,10 @@ namespace
 
 				FieldPath.Pop();
 			}
+			else if (Child.Kind == EAssetDecodedValueKind::Array)
+			{
+				bReplaced |= AssetContainerFinalValue::ResolveContainersInArrayElements(Child, InOutNote);
+			}
 		}
 
 		return bReplaced;
@@ -338,7 +357,25 @@ namespace
 	 */
 	void ResolveFinalValue(const FPropertyDiffNodeData& Data, const FAssetDecodedPropertyValue& Decoded, FString& OutFinalValue, FString& OutNote)
 	{
-		if (Data.ArchetypeResolver == nullptr || Data.Node == nullptr)
+		if (Data.Node == nullptr)
+		{
+			return;
+		}
+
+		if (Decoded.Kind == EAssetDecodedValueKind::Array)
+		{
+			FAssetDecodedPropertyValue Copy = Decoded;
+			FString Note;
+			if (AssetContainerFinalValue::ResolveContainersInArrayElements(Copy, Note))
+			{
+				OutFinalValue = FAssetPropertyValueDecoder::FormatForDisplay(Copy);
+				OutNote = Note;
+			}
+
+			return;
+		}
+
+		if (Data.ArchetypeResolver == nullptr)
 		{
 			return;
 		}
@@ -448,6 +485,21 @@ namespace
 	 * Describes a struct field that one side stores and the other leaves out: Unreal omits fields equal to their defaults, so
 	 * the omitted side has the value the same field has on the archetype chain.
 	 */
+	void DescribeOmittedElementField(const FString& StructName, const TArray<FString>& FieldPath, bool& bOutHasValue, FString& OutDecodedValue, FString& OutFinalValue, FString& OutNote)
+	{
+		bOutHasValue = true;
+		OutDecodedValue = TEXT("<not serialized; likely default>");
+
+		FString Text;
+		if (AssetSchemaReflection::ExportStructFieldDefault(StructName, FieldPath, Text))
+		{
+			OutDecodedValue = TEXT("<not serialized>");
+			OutFinalValue = FString::Printf(TEXT("struct default (live): %s"), Text.IsEmpty() ? TEXT("(empty)") : *Text);
+			OutNote = FString::Printf(
+				TEXT("Elements of an array are saved against the defaults of their struct, so a field left out has the default of %s, read from the running editor (live reflection)."), *StructName);
+		}
+	}
+
 	void DescribeOmittedStructField(const FPropertyDiffNodeData& OmittedData, const TArray<FString>& FieldPath, bool& bOutHasValue, FString& OutDecodedValue, FString& OutFinalValue, FString& OutNote)
 	{
 		bOutHasValue = true;
@@ -474,6 +526,10 @@ namespace
 		const FPropertyDiffNodeData* OldData = nullptr;
 		const FPropertyDiffNodeData* NewData = nullptr;
 		TArray<FString> FieldPath;
+
+		/** Inside the struct element of an array: the element's struct and where its fields start in FieldPath. */
+		FString ElementStruct;
+		int32 ElementPathStart = 0;
 	};
 
 	void AppendDecodedValueDiffChildren(const FAssetDecodedValueDiff& ValueDiff, FAssetPackageDiffEntry& Parent, FStructFieldContext* Context = nullptr, const bool bParentIsStruct = false)
@@ -534,16 +590,51 @@ namespace
 				if (Child.State == EAssetDecodedValueDiffState::Added && Context->OldData != nullptr)
 				{
 					Entry.OldPresence = EAssetSerializedPropertyPresence::NotSerialized;
-					DescribeOmittedStructField(*Context->OldData, Context->FieldPath, Entry.bHasOldDecodedValue, Entry.OldDecodedValue, Entry.OldFinalValue, Entry.OldFinalValueNote);
+					if (!Context->ElementStruct.IsEmpty())
+					{
+						DescribeOmittedElementField(Context->ElementStruct, TArray<FString>(MakeArrayView(Context->FieldPath).RightChop(Context->ElementPathStart)), Entry.bHasOldDecodedValue,
+							Entry.OldDecodedValue, Entry.OldFinalValue, Entry.OldFinalValueNote);
+					}
+					else
+					{
+						DescribeOmittedStructField(*Context->OldData, Context->FieldPath, Entry.bHasOldDecodedValue, Entry.OldDecodedValue, Entry.OldFinalValue, Entry.OldFinalValueNote);
+					}
 				}
 				else if (Child.State == EAssetDecodedValueDiffState::Removed && Context->NewData != nullptr)
 				{
 					Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
-					DescribeOmittedStructField(*Context->NewData, Context->FieldPath, Entry.bHasNewDecodedValue, Entry.NewDecodedValue, Entry.NewFinalValue, Entry.NewFinalValueNote);
+					if (!Context->ElementStruct.IsEmpty())
+					{
+						DescribeOmittedElementField(Context->ElementStruct, TArray<FString>(MakeArrayView(Context->FieldPath).RightChop(Context->ElementPathStart)), Entry.bHasNewDecodedValue,
+							Entry.NewDecodedValue, Entry.NewFinalValue, Entry.NewFinalValueNote);
+					}
+					else
+					{
+						DescribeOmittedStructField(*Context->NewData, Context->FieldPath, Entry.bHasNewDecodedValue, Entry.NewDecodedValue, Entry.NewFinalValue, Entry.NewFinalValueNote);
+					}
+				}
+			}
+
+			// The fields of a struct element of an array are saved against the struct's defaults.
+			const FString SavedElementStruct = Context != nullptr ? Context->ElementStruct : FString();
+			const int32 SavedElementPathStart = Context != nullptr ? Context->ElementPathStart : 0;
+			if (Context != nullptr && !bParentIsStruct && Child.Name.StartsWith(TEXT("[")))
+			{
+				const FString ElementStruct = StructNameOfType(Child.TypeName);
+				if (!ElementStruct.IsEmpty())
+				{
+					Context->ElementStruct = ElementStruct;
+					Context->ElementPathStart = Context->FieldPath.Num();
 				}
 			}
 
 			AppendDecodedValueDiffChildren(Child, Entry, Context, Child.TypeName.StartsWith(TEXT("StructProperty")));
+
+			if (Context != nullptr)
+			{
+				Context->ElementStruct = SavedElementStruct;
+				Context->ElementPathStart = SavedElementPathStart;
+			}
 
 			if (bIsStructField)
 			{
