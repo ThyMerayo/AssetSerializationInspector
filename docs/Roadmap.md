@@ -38,7 +38,7 @@ Planned next steps:
 - [x] Results window for a batch run (browse assets, filter, open one asset's first or second resave diff)
 - [x] Cross-engine/version comparison: compare two folders of assets with a grouped text/JSON report, and version-aware explanations in the two-file diff (#14)
 - [x] Results window for a folder comparison (browse pairs, filter, open one pair's diff)
-- [ ] Verify the folder comparison on packages that really were saved by different engine versions
+- [x] Verify the folder comparison on packages that really were saved by different engine versions (UE 5.0 vs 5.8 Blueprint; a real before/after of one asset still wanted)
 - [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; GameplayEffectVersion and boxes done; FieldPath done, every tagged property in the project survey decodes; remaining gap: unversioned properties and native export data)
 - [ ] Persistent monitored-asset configuration
 - [x] Support additional package versions: property tags from packages before UE 5.4 (legacy layout); unverified on real older packages, value layouts of older versions not audited
