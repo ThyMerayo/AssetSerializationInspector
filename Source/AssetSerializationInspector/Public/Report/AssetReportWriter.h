@@ -9,7 +9,8 @@ struct FAssetAnalysisReport;
 enum class EAssetReportFormat : uint8
 {
 	Text,
-	Json
+	Json,
+	Html
 };
 
 namespace AssetReportWriter
@@ -33,6 +34,12 @@ namespace AssetReportWriter
 	 */
 	FString ToJson(const FAssetAnalysisReport& Report);
 
+	/**
+	 * A self-contained HTML page (styles inline, no scripts) with the same content as the text report: the save analysis, and the
+	 * differences as a tree that folds. Values are escaped, so they cannot inject markup. Follows the browser's light or dark theme.
+	 */
+	FString ToHtml(const FAssetAnalysisReport& Report);
+
 	FString Write(const FAssetAnalysisReport& Report, EAssetReportFormat Format);
 
 	/** File-dialog extension (without a dot) for a format. */
@@ -47,7 +54,7 @@ namespace AssetReportWriter
 	 */
 	FString MakeDefaultFilename(const FString& AssetFilename, const FDateTime& Time, EAssetReportFormat Format);
 
-	/** Picks the format from a filename's extension, defaulting to text. */
+	/** Picks the format from a filename's extension (.json, .html or .htm), defaulting to text. */
 	EAssetReportFormat GetFormatForFilename(const FString& Filename);
 
 	/** Writes the report to disk as UTF-8, in the format implied by the filename's extension. */

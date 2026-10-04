@@ -301,7 +301,7 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 				.Padding(8.0f, 0.0f, 0.0f, 0.0f)[SNew(SButton)
 						.Text(LOCTEXT("ExportReport", "Export report..."))
 						.ToolTipText(LOCTEXT("ExportReportTooltip",
-							"Save the comparison, save analysis and repeated-save patterns as a text or JSON report. The report always lists every changed entry, whatever the search and filters in this view are."))
+							"Save the comparison, save analysis and repeated-save patterns as a text, JSON or HTML report. The report always lists every changed entry, whatever the search and filters in this view are."))
 						.OnClicked(this, &SAssetSerializationDiff::HandleExportReportClicked)]]
 
 		// Search and state filters
@@ -1015,7 +1015,7 @@ bool SAssetSerializationDiff::BrowseForReportFile(const FString& DefaultFilename
 
 	TArray<FString> SelectedFiles;
 	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(), DefaultFilename,
-		TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles);
+		TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles);
 
 	if (!bSelected || SelectedFiles.IsEmpty())
 	{

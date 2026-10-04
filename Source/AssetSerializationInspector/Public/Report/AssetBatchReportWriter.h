@@ -30,6 +30,9 @@ namespace AssetBatchReportWriter
 	 */
 	FString ToJson(const FAssetBatchResaveResult& Result);
 
+	/** A self-contained HTML page with the same content as the text report; the groups of assets fold. */
+	FString ToHtml(const FAssetBatchResaveResult& Result);
+
 	FString Write(const FAssetBatchResaveResult& Result, EAssetReportFormat Format);
 
 	/** A suggested filename such as "NoOpResave_Characters_20261001-140743.txt". */

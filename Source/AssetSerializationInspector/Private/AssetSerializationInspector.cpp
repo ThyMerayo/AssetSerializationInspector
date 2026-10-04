@@ -402,7 +402,7 @@ void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAsse
 		LOCTEXT("ViewBatchResultsTooltip", "Browse the assets of this run, see what resaving changed in each and open its comparison."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveBatchReportButton", "Save Report..."),
-		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text or JSON report."),
+		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text, JSON or HTML report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport), SNotificationItem::CS_None));
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
@@ -424,8 +424,8 @@ void FAssetSerializationInspectorModule::SaveBatchResaveReport()
 
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report").ToString(), FPaths::ProjectSavedDir(),
-			AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"),
-			EFileDialogFlags::None, SelectedFiles)
+			AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text),
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;
@@ -652,7 +652,7 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const 
 		LOCTEXT("ViewFolderComparisonTooltip", "Browse the files of this comparison, see what differs in each and open the comparison of a changed pair."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveFolderComparisonButton", "Save Report..."),
-		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text or JSON report."),
+		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text, JSON or HTML report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport), SNotificationItem::CS_None));
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
@@ -676,7 +676,7 @@ void FAssetSerializationInspectorModule::SaveFolderComparisonReport()
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report").ToString(), FPaths::ProjectSavedDir(),
 			AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text),
-			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles)
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;

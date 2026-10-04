@@ -10,6 +10,7 @@
 
 #include "Compare/AssetFolderComparison.h"
 #include "Report/AssetAnalysisReport.h"
+#include "Report/AssetHtmlReport.h"
 
 #define LOCTEXT_NAMESPACE "AssetFolderComparisonReportWriter"
 
@@ -195,6 +196,118 @@ FString AssetFolderComparisonReportWriter::ToText(const FAssetFolderComparisonRe
 	return FString::Join(Lines, TEXT("\n")) + TEXT("\n");
 }
 
+FString AssetFolderComparisonReportWriter::ToHtml(const FAssetFolderComparisonResult& Result)
+{
+	using namespace AssetHtmlReport;
+
+	const FAssetFolderComparisonSummary Summary = Result.Summarize();
+	const FString ToolVersion = AssetAnalysisReport::GetToolVersion();
+
+	FString Body = TEXT("<h1>Asset Serialization Inspector: folder comparison</h1>\n");
+	Body += KeyValues({ { TEXT("Tool version"), ToolVersion.IsEmpty() ? FString(TEXT("unknown")) : ToolVersion }, { TEXT("Old folder"), Result.OldFolder }, { TEXT("New folder"), Result.NewFolder },
+		{ TEXT("Started"), Result.StartedAt.ToIso8601() },
+		{ TEXT("Finished"), Result.FinishedAt.ToIso8601() + (Result.bCancelled ? TEXT(" (cancelled before every file was compared)") : TEXT("")) } });
+
+	Body += FString::Printf(TEXT("<p class=\"chips\">%s%s%s%s%s%s</p>\n"), *Chip(FString::Printf(TEXT("%d identical"), Summary.Identical), TEXT("ok")),
+		*Chip(FString::Printf(TEXT("%d changed (%d with different versions)"), Summary.Changed, Summary.ChangedWithDifferentVersions), TEXT("modified")),
+		*Chip(FString::Printf(TEXT("%d only in the old folder"), Summary.OnlyInOldFolder), TEXT("removed")),
+		*Chip(FString::Printf(TEXT("%d only in the new folder"), Summary.OnlyInNewFolder), TEXT("added")), *Chip(FString::Printf(TEXT("%d failed"), Summary.Failed), TEXT("bad")),
+		*Chip(FString::Printf(TEXT("%d files"), Result.Entries.Num()), TEXT("info")));
+
+	const TArray<FAssetEngineVersionPair> VersionPairs = Result.FindEngineVersionPairs();
+	if (!VersionPairs.IsEmpty())
+	{
+		TArray<TArray<FString>> Rows;
+		for (const FAssetEngineVersionPair& Pair : VersionPairs)
+		{
+			Rows.Add({ Escape(FString::FromInt(Pair.AssetCount)), Escape(Pair.OldEngineVersion.IsEmpty() ? FString(TEXT("unknown")) : Pair.OldEngineVersion),
+				Escape(Pair.NewEngineVersion.IsEmpty() ? FString(TEXT("unknown")) : Pair.NewEngineVersion) });
+		}
+
+		Body += TEXT("<h2>Engine versions of the files present in both folders</h2>\n") + Table({ TEXT("Files"), TEXT("Saved by"), TEXT("Now saved by") }, Rows);
+	}
+
+	const TArray<FAssetBatchRecurringChange> Recurring = Result.FindRecurringChanges();
+	if (!Recurring.IsEmpty())
+	{
+		TArray<TArray<FString>> Rows;
+		for (const FAssetBatchRecurringChange& Change : Recurring)
+		{
+			Rows.Add({ Escape(FString::FromInt(Change.AssetCount)), Escape(Change.Category), Escape(Change.Name) });
+		}
+
+		Body += TEXT("<h2>Changes found in several files</h2>\n") + Table({ TEXT("Files"), TEXT("Category"), TEXT("Name") }, Rows);
+	}
+
+	const auto AddGroup = [&](const TCHAR* Heading, const EAssetFolderComparisonStatus Status) {
+		FString Group;
+		int32 Count = 0;
+		for (const FAssetFolderComparisonEntry& Entry : Result.Entries)
+		{
+			if (Entry.Status != Status)
+			{
+				continue;
+			}
+
+			++Count;
+			const FString Name = FString::Printf(TEXT("<strong>%s</strong>"), *Escape(Entry.RelativePath));
+			if (Entry.Status == EAssetFolderComparisonStatus::Failed)
+			{
+				Group += FString::Printf(TEXT("<div class=\"row\">%s <span class=\"muted\">%s</span></div>\n"), *Name, *Escape(Entry.Message));
+				continue;
+			}
+
+			const FString OldVersion = VersionText(Entry.OldEngineVersion, Entry.OldFileVersion);
+			const FString NewVersion = VersionText(Entry.NewEngineVersion, Entry.NewFileVersion);
+
+			if (Entry.Status != EAssetFolderComparisonStatus::Changed)
+			{
+				const FString& Version = Entry.Status == EAssetFolderComparisonStatus::OnlyInOldFolder ? OldVersion : NewVersion;
+				Group += FString::Printf(
+					TEXT("<div class=\"row\">%s%s</div>\n"), *Name, Version.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" <span class=\"muted\">saved by %s</span>"), *Escape(Version)));
+				continue;
+			}
+
+			FString Details;
+			if (Entry.bVersionsDiffer)
+			{
+				Details += FString::Printf(TEXT("<p class=\"note\">saved by %s &rarr; %s</p>"), *Escape(OldVersion), *Escape(NewVersion));
+			}
+
+			TArray<TArray<FString>> Rows;
+			for (const FAssetBatchResaveChange& Change : Entry.Changes)
+			{
+				Rows.Add({ Escape(Change.Category), Escape(Change.Name), Change.Detail.IsEmpty() ? FString() : Code(Change.Detail) });
+			}
+
+			if (!Rows.IsEmpty())
+			{
+				Details += Table({ TEXT("Category"), TEXT("Name"), TEXT("Detail") }, Rows);
+			}
+
+			if (Entry.ChangesOmitted > 0)
+			{
+				Details += FString::Printf(TEXT("<p class=\"muted\">... and %d more</p>"), Entry.ChangesOmitted);
+			}
+
+			const FString Head = FString::Printf(TEXT("%s <span class=\"muted\">%lld &rarr; %lld bytes</span>"), *Name, Entry.OldFileSize, Entry.NewFileSize);
+			Group += Details.IsEmpty() ? FString::Printf(TEXT("<div class=\"row\">%s</div>\n"), *Head) : AssetHtmlReport::Details(Head, Details, false);
+		}
+
+		if (Count > 0)
+		{
+			Body += FString::Printf(TEXT("<h2>%s (%d)</h2>\n"), *Escape(Heading), Count) + Group;
+		}
+	};
+
+	AddGroup(TEXT("Changed"), EAssetFolderComparisonStatus::Changed);
+	AddGroup(TEXT("Failed"), EAssetFolderComparisonStatus::Failed);
+	AddGroup(TEXT("Only in the old folder"), EAssetFolderComparisonStatus::OnlyInOldFolder);
+	AddGroup(TEXT("Only in the new folder"), EAssetFolderComparisonStatus::OnlyInNewFolder);
+
+	return Page(TEXT("Asset Serialization Inspector: folder comparison"), Body);
+}
+
 FString AssetFolderComparisonReportWriter::ToJson(const FAssetFolderComparisonResult& Result)
 {
 	const FAssetFolderComparisonSummary Summary = Result.Summarize();
@@ -287,7 +400,15 @@ FString AssetFolderComparisonReportWriter::ToJson(const FAssetFolderComparisonRe
 
 FString AssetFolderComparisonReportWriter::Write(const FAssetFolderComparisonResult& Result, const EAssetReportFormat Format)
 {
-	return Format == EAssetReportFormat::Json ? ToJson(Result) : ToText(Result);
+	switch (Format)
+	{
+		case EAssetReportFormat::Json:
+			return ToJson(Result);
+		case EAssetReportFormat::Html:
+			return ToHtml(Result);
+		default:
+			return ToText(Result);
+	}
 }
 
 FString AssetFolderComparisonReportWriter::MakeDefaultFilename(const FString& OldFolder, const FString& NewFolder, const FDateTime& Time, const EAssetReportFormat Format)
