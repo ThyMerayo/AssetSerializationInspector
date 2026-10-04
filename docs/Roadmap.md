@@ -42,3 +42,19 @@ Planned next steps:
 - [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; GameplayEffectVersion and boxes done; FieldPath done, every tagged property in the project survey decodes; remaining gap: unversioned properties and native export data)
 - [x] Persistent monitored-asset configuration (per-user setting, edits apply at once, follows renames and deletions)
 - [x] Support additional package versions: property tags from packages before UE 5.4 (legacy layout); unverified on real older packages, value layouts of older versions not audited
+
+Next steps, in order:
+
+- [ ] Close the remaining decode failures found by the coverage scan (`ExpressionInput`, `MovieSceneFloatChannel`, `MovieSceneFrameRange`, Niagara variable maps, properties with an empty/unknown type)
+- [ ] Summaries for native export data (texture size and format, mesh LOD counts, DNA, import data) instead of opaque bytes
+- [ ] Class schemas from live reflection: untyped struct elements in older packages' maps and sets, and packages saved with unversioned properties
+- [ ] Levels (`.umap`) and cooked/split packages (`.uexp`, `.ubulk`)
+- [ ] Containers inside arrays of structs: final values and omitted-field defaults
+- [ ] Headless commandlet for the no-op resave test and the folder comparison, with a report file, for CI and engine upgrades
+- [ ] Compare an asset with a source-control revision (Perforce, git) using the Save Analysis
+- [ ] HTML report alongside the text and JSON ones
+- [ ] Window listing all monitored assets, with a way to add a folder
+- [ ] Show the elements that did decode when one element of an array fails, instead of only "the parent changed"
+- [ ] Infer the engine version from the package file version when the package does not name one (source builds)
+- [ ] Track header changes in the repeated-save analysis; sortable columns and multi-select in the two results windows
+- [ ] Run the automation suite in CI on a self-hosted runner
