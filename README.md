@@ -261,6 +261,18 @@ The same test runs on many assets: select several assets, or use *Run No-op Resa
 
 Packages saved before UE 5.4 (UE4 and UE5.0 to 5.3) store property tags in an older layout, with only the type name and the extra fields each type needs. The inspector reads both layouts, including the inner struct tag that older arrays of structs carry, so their properties decode like newer ones. The tables and exports are read with the versions the package was saved with, which also covers older name maps (no hashes before UE 4.4x), exports without a script serialization range (their properties are looked for from the start of the export) and soft object paths stored inline instead of in the header table. Checked on a package migrated from UE 5.0 and on UE4-era starter content. Those versions also do not store the struct type of a map or set element (a `Map<Name, Guid>`, for example), and a native struct cannot be told from a tagged one without its definition, so the type is read from the property of the same name on the class (or struct) in the running editor. When the editor does not have the class, as with variables a Blueprint declares, such an element that is not a tagged struct is reported as unsupported.
 
+### Running the checks without the editor UI
+
+The plugin has a commandlet for build machines. It runs the no-op resave test, the folder comparison and the decode coverage scan headless and writes the same reports as the windows (JSON when the report file ends in `.json`, text otherwise):
+
+```
+UnrealEditor-Cmd.exe Project.uproject -run=AssetSerializationInspector -Mode=NoOpResave -Path=/Game/Characters,/Game/Props -Report=Saved/NoOp.json -FailOnUnstable
+UnrealEditor-Cmd.exe Project.uproject -run=AssetSerializationInspector -Mode=CompareFolders -Old=D:/Before/Content -New=Content -Report=Saved/Compare.txt -FailOnChanges
+UnrealEditor-Cmd.exe Project.uproject -run=AssetSerializationInspector -Mode=DecodeCoverage -Folder=Content -Report=Saved/Coverage.txt
+```
+
+`-Path` takes content folders (comma separated, searched recursively), not single assets. Relative paths are taken from the project folder; the report folder is created if needed. The exit code is 0 when the check ran, 1 when the arguments are wrong or a report could not be written, and 2 when a check ran and found what its switch fails on: `-FailOnUnstable` fails when an asset is unstable or could not be tested, `-FailOnChanges` fails when any file differs, is in only one folder or could not be compared. Without a switch the run only reports. In a Git Bash shell on Windows, prefix the command with `MSYS_NO_PATHCONV=1` so that `/Game/...` is not rewritten as a Windows path.
+
 ### Levels, split packages and cooked packages
 
 Levels (`.umap`) are read like any other package: the inspector, the diff window, the folder comparison and the save observer all accept `.umap` as well as `.uasset` (a monitored level is snapshotted and compared on save). A package saved in two files keeps its header in the `.uasset` or `.umap` and its exports in a `.uexp` beside it, with export offsets that count the two as one file; the reader appends the `.uexp` when the header file holds nothing else, so every export decodes, and opening the `.uexp` opens its header file. Bulk data in `.ubulk` and similar files is not read; the properties that point at it are. Cooked packages usually save their properties without tags (a bit mask of the properties that are set, then the values in the order of the class), which cannot be read without the class's property list, so each export of such a package is reported as one undecoded range that says so instead of being read as garbage; the tables, the exports' sizes and the header diff work as usual.
