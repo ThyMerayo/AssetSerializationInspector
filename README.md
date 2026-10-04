@@ -112,6 +112,8 @@ Container decoding preserves Unreal's serialization semantics. In particular, se
 
 Arrays use sequence-aware matching rather than a simple index-by-index comparison. LCS-based matching reduces noise when elements are inserted or removed, while stable semantic keys can identify logical elements that moved or changed.
 
+The elements of an array of structs are saved against the defaults of their struct, not against the owning object's archetype. So a set or map inside such an element is shown as its final contents against the struct's empty defaults (unless it was written with removals, which prove the defaults were not empty; those are left as stored), and a struct field one side leaves out is described with the default the struct has in the running editor (`struct default (live): ...`).
+
 Set and map comparisons use decoded semantic keys. Map entries are matched by key and values are compared recursively. Serialized container operations such as add, remove, replace, or add/modify remain distinguishable when the package contains delta serialization.
 
 ### Property-level change attribution

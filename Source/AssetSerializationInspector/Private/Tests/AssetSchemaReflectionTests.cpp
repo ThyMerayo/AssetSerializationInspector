@@ -129,4 +129,28 @@ bool FAssetSchemaReflection_CompletesContainerElements::RunTest(const FString& P
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSchemaReflection_ExportsStructFieldDefaults, "AssetSerializationInspector.Serialization.AssetSchemaReflection.ExportsStructFieldDefaults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSchemaReflection_ExportsStructFieldDefaults::RunTest(const FString& Parameters)
+{
+	// A default constructed transform has unit scale and the identity rotation.
+	FString Text;
+	if (TestTrue(TEXT("A field default is exported"), AssetSchemaReflection::ExportStructFieldDefault(TEXT("Transform"), { TEXT("Scale3D") }, Text)))
+	{
+		TestTrue(TEXT("Scale is one"), Text.Contains(TEXT("X=1.0")));
+	}
+
+	if (TestTrue(TEXT("A field of a nested struct is exported"), AssetSchemaReflection::ExportStructFieldDefault(TEXT("Transform"), { TEXT("Rotation"), TEXT("W") }, Text)))
+	{
+		TestEqual(TEXT("The identity rotation has W of one"), Text, FString(TEXT("1.000000")));
+	}
+
+	TestFalse(TEXT("An unknown field is refused"), AssetSchemaReflection::ExportStructFieldDefault(TEXT("Transform"), { TEXT("NoSuchField") }, Text));
+	TestFalse(TEXT("An unknown struct is refused"), AssetSchemaReflection::ExportStructFieldDefault(TEXT("NoSuchStructInAnyModule"), { TEXT("X") }, Text));
+	TestFalse(
+		TEXT("A path through a field that is not a struct is refused"), AssetSchemaReflection::ExportStructFieldDefault(TEXT("Transform"), { TEXT("Rotation"), TEXT("W"), TEXT("Deeper") }, Text));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

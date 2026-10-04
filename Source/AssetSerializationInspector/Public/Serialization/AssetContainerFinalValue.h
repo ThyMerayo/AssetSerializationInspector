@@ -50,4 +50,12 @@ namespace AssetContainerFinalValue
 	 * defaults were non-empty, so they cannot be assumed away.
 	 */
 	bool CanAssumeEmptyDefaults(const FAssetDecodedPropertyValue& Serialized);
+
+	/**
+	 * Replaces, inside Value, the sets and maps of the struct elements of arrays with their final contents. The elements of an
+	 * array are saved against the defaults of their struct, not against the owning object's archetype, and those are empty unless
+	 * the container was written with removals (which prove it had defaults, so such containers are left as they are). Sets and
+	 * maps outside array elements are not touched. Returns whether anything was replaced; Note says what was assumed.
+	 */
+	bool ResolveContainersInArrayElements(FAssetDecodedPropertyValue& Value, FString& InOutNote, bool bInsideElement = false);
 } // namespace AssetContainerFinalValue
