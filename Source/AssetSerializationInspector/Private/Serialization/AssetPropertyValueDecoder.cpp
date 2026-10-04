@@ -294,6 +294,7 @@ static bool DecodeNameFromReader(const FAssetPropertyDecodeContext& Context, FAs
 static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue);
 
 static bool IsValidContainerCount(const FAssetPropertyDecodeContext& Context, const int32 Count);
+static FAssetDecodedPropertyValue MakeTextChild(const FString& Name, const FString& TypeName, const FString& Value, const int64 Offset, const int64 Size);
 
 /** FGameplayTagContainer::Serialize writes its tags as an array of names, not as tagged properties. */
 static bool DecodeNameArrayStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
@@ -336,6 +337,107 @@ static bool DecodeNameArrayStructFromReader(const FAssetPropertyDecodeContext& C
 	return true;
 }
 
+/** A struct made of named scalar fields, read one after the other from a native (binary) layout. */
+/**
+ * FPerPlatformInt / FPerPlatformFloat / FPerPlatformBool (PerPlatformPropertiesImpl.inl): a 32 bit "strip" flag, the default
+ * value and, unless the flag is set, a map from platform name to value. Bools are 32 bit in a binary archive.
+ */
+template <typename TValue>
+static bool DecodePerPlatformFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	const auto Format = [](const TValue Value) { return LexToString(Value); };
+	const auto Fail = [&OutValue](const TCHAR* Message) {
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Message;
+		return false;
+	};
+
+	uint32 bStripped = 0;
+	TValue Default{};
+	if (!ReadBounded(Reader, ValueEnd, bStripped) || !ReadBounded(Reader, ValueEnd, Default))
+	{
+		return Fail(TEXT("Not enough space in reader for decoding a per-platform value."));
+	}
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.Children.Add(MakeTextChild(TEXT("Default"), TEXT("ScalarProperty"), Format(Default), Start + sizeof(uint32), sizeof(TValue)));
+	FString Summary = Format(Default);
+
+	if (bStripped == 0)
+	{
+		int32 Count = 0;
+		if (!ReadBounded(Reader, ValueEnd, Count) || !IsValidContainerCount(Context, Count))
+		{
+			return Fail(TEXT("Could not read the per-platform value count."));
+		}
+
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			FAssetDecodedPropertyValue Platform;
+			TValue Value{};
+			if (!DecodeNameFromReader(Context, Reader, ValueEnd, Platform) || !ReadBounded(Reader, ValueEnd, Value))
+			{
+				return Fail(TEXT("Could not read a per-platform value."));
+			}
+
+			OutValue.Children.Add(MakeTextChild(Platform.Value, TEXT("ScalarProperty"), Format(Value), Platform.AbsoluteOffset, Reader.Tell() - Platform.AbsoluteOffset));
+			Summary += FString::Printf(TEXT(", %s=%s"), *Platform.Value, *Format(Value));
+		}
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = Summary;
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
+/** FRichCurveKey::Serialize: three mode bytes, then Time, Value and the arrive and leave tangents with their weights. */
+static bool DecodeRichCurveKeyFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	uint8 Modes[3] = { 0, 0, 0 };
+	float Numbers[6] = { 0, 0, 0, 0, 0, 0 };
+	bool bRead = true;
+	for (uint8& Mode : Modes)
+	{
+		bRead = bRead && ReadBounded(Reader, ValueEnd, Mode);
+	}
+	for (float& Number : Numbers)
+	{
+		bRead = bRead && ReadBounded(Reader, ValueEnd, Number);
+	}
+
+	if (!bRead)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = TEXT("Not enough space in reader for decoding a rich curve key.");
+		return false;
+	}
+
+	static const TCHAR* const ModeNames[] = { TEXT("InterpMode"), TEXT("TangentMode"), TEXT("TangentWeightMode") };
+	static const TCHAR* const NumberNames[] = { TEXT("Time"), TEXT("Value"), TEXT("ArriveTangent"), TEXT("ArriveTangentWeight"), TEXT("LeaveTangent"), TEXT("LeaveTangentWeight") };
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		OutValue.Children.Add(MakeTextChild(ModeNames[Index], TEXT("ByteProperty"), LexToString(static_cast<uint32>(Modes[Index])), Start + Index, 1));
+	}
+	for (int32 Index = 0; Index < 6; ++Index)
+	{
+		OutValue.Children.Add(MakeTextChild(NumberNames[Index], TEXT("FloatProperty"), LexToString(Numbers[Index]), Start + 3 + Index * sizeof(float), sizeof(float)));
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("(Time=%s, Value=%s)"), *LexToString(Numbers[0]), *LexToString(Numbers[1]));
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = Reader.Tell() - Start;
+	return true;
+}
+
 static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FString& StructName, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	if (StructName == TEXT("Vector"))
@@ -356,6 +458,27 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	if (StructName == TEXT("GameplayTag"))
 	{
 		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("PerPlatformInt"))
+	{
+		return DecodePerPlatformFromReader<int32>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("PerPlatformFloat"))
+	{
+		return DecodePerPlatformFromReader<float>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("PerPlatformBool"))
+	{
+		// A bool is 32 bits in a binary archive.
+		return DecodePerPlatformFromReader<uint32>(Context, Reader, ValueEnd, OutValue);
+	}
+
+	if (StructName == TEXT("RichCurveKey") && Reader.UEVer() >= VER_UE4_SERIALIZE_RICH_CURVE_KEY)
+	{
+		return DecodeRichCurveKeyFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	if (StructName == TEXT("GameplayTagContainer"))

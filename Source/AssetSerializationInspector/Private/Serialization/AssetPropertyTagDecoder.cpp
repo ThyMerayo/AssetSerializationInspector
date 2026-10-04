@@ -2,8 +2,6 @@
 
 #include "Serialization/AssetPropertyTagDecoder.h"
 
-#include "UObject/PropertyTypeName.h"
-
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 
@@ -39,40 +37,36 @@ namespace
 	ENUM_CLASS_FLAGS(EAssetPropertyTagExtension);
 } // namespace
 
-static bool ConvertPropertyTypeName(const UE::FPropertyTypeName& InType, FAssetSerializedPropertyType& OutType, FText& OutError, const int32 Depth = 0)
+/**
+ * Reads a complete property type name: a pre-order list of nodes, each an FName and the number of nodes nested directly under
+ * it (FPropertyTypeName's archive format). The engine's own reader cannot be used on data that may not be a property tag at
+ * all: it stops the process (a fatal error) when the node count is absurd, so the sizes are bounded here instead.
+ */
+static bool ReadPropertyTypeNode(FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyType& OutType, int32& InOutNodeBudget, const int32 Depth)
 {
-	constexpr int32 MaxDepth = 32;
-
-	if (Depth >= MaxDepth)
+	if (Depth >= MaxPropertyTypeDepth || --InOutNodeBudget < 0)
 	{
-		OutError = NSLOCTEXT("AssetPropertyTagDecoder", "PropertyTypeDepthExceeded", "Property type nesting exceeds the supported depth.");
-	}
-
-	OutType = {};
-
-	if (InType.IsEmpty())
-	{
-		return true;
-	}
-
-	OutType.Name = InType.GetName().ToString();
-
-	const int32 ParameterCount = InType.GetParameterCount();
-
-	if (ParameterCount < 0 || ParameterCount > 64)
-	{
-		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "PropertyTypeParameterCountInvalid", "Property type '{0}' has an invalid parameter count of {1}."),
-			FText::FromString(OutType.Name), FText::AsNumber(ParameterCount));
 		return false;
 	}
 
-	OutType.Parameters.Reserve(ParameterCount);
+	FName Name;
+	int32 InnerCount = 0;
+	Reader << Name;
+	Reader << InnerCount;
 
-	for (int32 Index = 0; Index < ParameterCount; ++Index)
+	if (Reader.IsError() || InnerCount < 0 || InnerCount > 64)
+	{
+		return false;
+	}
+
+	OutType = {};
+	OutType.Name = Name.ToString();
+	OutType.Parameters.Reserve(InnerCount);
+
+	for (int32 Index = 0; Index < InnerCount; ++Index)
 	{
 		FAssetSerializedPropertyType Parameter;
-
-		if (!ConvertPropertyTypeName(InType.GetParameter(Index), Parameter, OutError, Depth + 1))
+		if (!ReadPropertyTypeNode(Reader, Parameter, InOutNodeBudget, Depth + 1))
 		{
 			return false;
 		}
@@ -85,16 +79,22 @@ static bool ConvertPropertyTypeName(const UE::FPropertyTypeName& InType, FAssetS
 
 static bool ReadCompletePropertyType(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyType& OutType, FText& OutError)
 {
-	UE::FPropertyTypeName EngineType;
-	Reader << EngineType;
+	int32 NodeBudget = 256;
 
-	if (Reader.IsError())
+	if (!ReadPropertyTypeNode(Reader, OutType, NodeBudget, 0))
 	{
+		OutType = {};
 		OutError = NSLOCTEXT("AssetPropertyTagDecoder", "PropertyTypeNameReadFailed", "Could not deserialize the complete property type name.");
 		return false;
 	}
 
-	return ConvertPropertyTypeName(EngineType, OutType, OutError);
+	// A type that names nothing is how the engine writes "no type".
+	if (OutType.Name == TEXT("None") && OutType.Parameters.IsEmpty())
+	{
+		OutType = {};
+	}
+
+	return true;
 }
 
 static bool ReadPropertyExtensions(const FAssetPackageDocument& Document, FAssetPackagePayloadReader& Reader, FAssetSerializedPropertyTag& OutTag, FText& OutError)

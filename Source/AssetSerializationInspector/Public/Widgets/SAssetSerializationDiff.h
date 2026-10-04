@@ -20,6 +20,7 @@ class SEditableTextBox;
 template <typename ItemType> class STreeView;
 
 struct FAssetPackageDocument;
+struct FObservedAssetSave;
 
 struct FHexPreviewText
 {
@@ -53,6 +54,9 @@ struct FAssetSerializationDiffSession
 
 	FObservedSaveId ObservedSaveId = 0;
 	FName PackageName;
+
+	/** The session that shows an observed save: its two packages, their traces, the diff and the save analysis. */
+	static TSharedRef<FAssetSerializationDiffSession> FromObservedSave(const FObservedAssetSave& Save);
 };
 
 /**

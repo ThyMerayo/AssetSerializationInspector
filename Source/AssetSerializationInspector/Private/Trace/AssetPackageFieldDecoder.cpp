@@ -177,15 +177,18 @@ namespace
 		FAssetSerializationControl SerializationControl;
 		FText Error;
 
-		const bool bIsClassDefaultObject = Document.IsExportClassDefaultObject(Export);
-		if (!ReadSerializationControl(Reader, bIsClassDefaultObject, SerializationControl, Error))
+		// Every object, not only class default objects, starts its tagged properties with the serialization control byte
+		// (UStruct::SerializeVersionedTaggedProperties writes it for any object whose class is a UClass).
+		if (!ReadSerializationControl(Reader, /*bIsUClass*/ true, SerializationControl, Error))
 		{
 			AddUnknownRange(OutTrace, Export.ScriptSerializationStartOffset, ScriptSize, Error.ToString());
 			return true;
 		}
 
 		bool bFoundTerminator = false;
+		bool bRestAttributed = false;
 		const int64 ExportEnd = Export.SerialOffset + Export.SerialSize;
+		const int64 ScriptEnd = ScriptStart + ScriptSize;
 		while (!Reader.IsError() && Reader.Tell() < ExportEnd)
 		{
 			const int64 BeforeTag = Reader.Tell();
@@ -239,7 +242,8 @@ namespace
 
 			if (!FAssetPropertyTagDecoder::ReadTag(Document, Reader, Tag, Error))
 			{
-				AddUnknownRange(OutTrace, BeforeTag - Export.SerialOffset, ExportEnd - BeforeTag, Error.ToString());
+				AddUnknownRange(OutTrace, BeforeTag - Export.SerialOffset, ScriptEnd - BeforeTag, Error.ToString());
+				bRestAttributed = true;
 				break;
 			}
 
@@ -267,15 +271,16 @@ namespace
 			Reader.Seek(Tag.ValueOffset + Tag.Size);
 		}
 
+		// What is left of the script serialization range, then what follows it, each attributed once and in order.
+		const int64 Current = Reader.Tell();
+		if (!bRestAttributed && Current < ScriptEnd)
+		{
+			AddUnknownRange(OutTrace, Current - Export.SerialOffset, ScriptEnd - Current, bFoundTerminator ? TEXT("Native/custom serialized data") : TEXT("Undecoded payload"));
+		}
+
 		if (Export.ScriptSerializationEndOffset < Export.SerialSize)
 		{
 			AddUnknownRange(OutTrace, Export.ScriptSerializationEndOffset, Export.SerialSize - Export.ScriptSerializationEndOffset, TEXT("Native/custom serialization after properties"));
-		}
-
-		const int64 Current = Reader.Tell();
-		if (Current < ExportEnd)
-		{
-			AddUnknownRange(OutTrace, Current - Export.SerialOffset, ExportEnd - Current, bFoundTerminator ? TEXT("Native/custom serialized data") : TEXT("Undecoded payload"));
 		}
 
 		return !OutTrace.Root->Children.IsEmpty();

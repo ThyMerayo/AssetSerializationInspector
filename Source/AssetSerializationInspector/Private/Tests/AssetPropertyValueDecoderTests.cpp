@@ -326,6 +326,39 @@ bool FAssetPropertyValueDecoder_DecodesNativelySerializedStructs::RunTest(const 
 	TestTrue(TEXT("A gameplay effect version decodes"), Result.IsSuccess());
 	TestEqual(TEXT("As its byte"), Result.Value, FString(TEXT("1")));
 
+	// FPerPlatformFloat: strip flag, default, then (when not stripped) the per-platform map.
+	FAssetPackageDocument PerPlatform;
+	AppendValue<uint32>(PerPlatform, 0);
+	AppendValue<float>(PerPlatform, 2.5f);
+	AppendValue<int32>(PerPlatform, 1);
+	AppendName(PerPlatform, AddName(PerPlatform, TEXT("Android")));
+	AppendValue<float>(PerPlatform, 1.0f);
+	Result = DecodeWholeFile(PerPlatform, StructType(TEXT("PerPlatformFloat")));
+	TestTrue(TEXT("A per-platform float decodes"), Result.IsSuccess());
+	TestTrue(TEXT("With its platform override"), Result.Value.Contains(TEXT("Android=1")));
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(PerPlatform.FileData.Num()));
+
+	FAssetPackageDocument Stripped;
+	AppendValue<uint32>(Stripped, 1);
+	AppendValue<int32>(Stripped, 7);
+	Result = DecodeWholeFile(Stripped, StructType(TEXT("PerPlatformInt")));
+	TestEqual(TEXT("A stripped per-platform int is its default"), Result.Value, FString(TEXT("7")));
+
+	// FRichCurveKey::Serialize: three mode bytes and six floats.
+	FAssetPackageDocument CurveKey;
+	CurveKey.PackageSummary.SetFileVersions(GPackageFileUEVersion.FileVersionUE4, GPackageFileUEVersion.FileVersionUE5, 0);
+	AppendValue<uint8>(CurveKey, 1);
+	AppendValue<uint8>(CurveKey, 0);
+	AppendValue<uint8>(CurveKey, 0);
+	for (const float Number : { 0.5f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f })
+	{
+		AppendValue<float>(CurveKey, Number);
+	}
+	Result = DecodeWholeFile(CurveKey, StructType(TEXT("RichCurveKey")));
+	TestTrue(TEXT("A rich curve key decodes"), Result.IsSuccess());
+	TestEqual(TEXT("It has its nine fields"), Result.Children.Num(), 9);
+	TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(CurveKey.FileData.Num()));
+
 	FAssetPackageDocument Truncated;
 	AppendValue<int32>(Truncated, 3);
 	AppendName(Truncated, AddName(Truncated, TEXT("Ability.Death")));
