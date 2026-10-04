@@ -116,20 +116,52 @@ private:
 	FDelegateHandle PostSaveHandle;
 };
 
+/**
+ * The set of assets whose saves are observed, kept in the user's editor settings so it survives restarts.
+ *
+ * The settings object is the stored form: the manager reads it at start, follows edits made to it (in the editor preferences, or
+ * by reloading the config) and writes it back whenever the set changes. Monitoring follows an asset when it is renamed or moved
+ * and stops when it is deleted, so a monitored asset is not silently lost.
+ */
 class FAssetMonitoringManager
 {
 public:
 	static FAssetMonitoringManager& Get();
 
-	FAssetMonitoringManager();
+	/**
+	 * @param bInPersistent When false the manager neither reads nor writes the settings and does not listen for asset changes; for tests.
+	 */
+	explicit FAssetMonitoringManager(bool bInPersistent = true);
+	~FAssetMonitoringManager();
 
 	bool IsMonitored(FName PackageName) const;
 
+	/** Adds the package to the set. Monitoring an asset twice is the same as once. */
 	void AddMonitoredAsset(FName PackageName);
 	void RemoveMonitoredAsset(FName PackageName);
+
+	/** Replaces the whole set, for example with the list the settings now hold. Nothing is written back. */
+	void SetMonitoredAssets(const TArray<FName>& PackageNames);
+
+	/** The package of a monitored asset was renamed or moved: monitor the new package instead. */
+	void HandleAssetRenamed(FName OldPackageName, FName NewPackageName);
+
+	/** The package of a monitored asset was deleted: stop monitoring it. */
+	void HandleAssetRemoved(FName PackageName);
 
 	const TSet<FName>& GetMonitoredAssets() const { return MonitoredPackages; }
 
 private:
+	void SaveToSettings() const;
+	void ReloadFromSettings();
+
+	void OnRegistryAssetRenamed(const struct FAssetData& NewAsset, const FString& OldObjectPath);
+	void OnRegistryAssetRemoved(const struct FAssetData& Asset);
+
 	TSet<FName> MonitoredPackages;
+
+	bool bPersistent = true;
+	FDelegateHandle SettingsChangedHandle;
+	FDelegateHandle AssetRenamedHandle;
+	FDelegateHandle AssetRemovedHandle;
 };
