@@ -9,6 +9,8 @@
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBar.h"
+#include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
@@ -184,6 +186,10 @@ void SAssetBatchResults::Construct(const FArguments& InArgs)
 
 	RebuildVisibleItems();
 
+	// The details can be long, so the text scrolls both ways: the lines are not wrapped.
+	const TSharedRef<SScrollBar> DetailsVerticalScrollBar = SNew(SScrollBar).Orientation(Orient_Vertical);
+	const TSharedRef<SScrollBar> DetailsHorizontalScrollBar = SNew(SScrollBar).Orientation(Orient_Horizontal);
+
 	TSharedRef<SHorizontalBox> Toggles = SNew(SHorizontalBox);
 	for (int32 Index = 0; Index < static_cast<int32>(EOutcome::Count); ++Index)
 	{
@@ -243,7 +249,18 @@ void SAssetBatchResults::Construct(const FArguments& InArgs)
 			[
 				SNew(SBorder).Padding(4.0f)
 				[
-					SAssignNew(DetailsText, SMultiLineEditableText).IsReadOnly(true).AutoWrapText(false).Text(LOCTEXT("SelectAnAsset", "Select an asset to see what resaving it changed."))
+					SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
+					+ SGridPanel::Slot(0, 0)
+					[
+						SAssignNew(DetailsText, SMultiLineEditableText)
+							.IsReadOnly(true)
+							.AutoWrapText(false)
+							.VScrollBar(DetailsVerticalScrollBar)
+							.HScrollBar(DetailsHorizontalScrollBar)
+							.Text(LOCTEXT("SelectAnAsset", "Select an asset to see what resaving it changed."))
+					]
+					+ SGridPanel::Slot(1, 0)[DetailsVerticalScrollBar]
+					+ SGridPanel::Slot(0, 1)[DetailsHorizontalScrollBar]
 				]
 			]
 		]
