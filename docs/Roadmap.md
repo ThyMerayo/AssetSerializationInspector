@@ -46,7 +46,7 @@ Planned next steps:
 Next steps, in order:
 
 - [x] Close the remaining decode failures found by the coverage scan (235 -> 37 failure kinds, 100.0% of tagged properties decode; a few rare native structs remain)
-- [ ] Summaries for native export data (texture size and format, mesh LOD counts, DNA, import data) instead of opaque bytes
+- [x] Summaries for native export data: changed native ranges are reported and described by class with facts from the properties; the byte totals of the Save Analysis are now computed (native bytes themselves not parsed)
 - [ ] Class schemas from live reflection: untyped struct elements in older packages' maps and sets, and packages saved with unversioned properties
 - [ ] Levels (`.umap`) and cooked/split packages (`.uexp`, `.ubulk`)
 - [ ] Containers inside arrays of structs: final values and omitted-field defaults
