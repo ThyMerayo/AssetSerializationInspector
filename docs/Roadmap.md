@@ -45,7 +45,7 @@ Planned next steps:
 
 Next steps, in order:
 
-- [ ] Close the remaining decode failures found by the coverage scan (`ExpressionInput`, `MovieSceneFloatChannel`, `MovieSceneFrameRange`, Niagara variable maps, properties with an empty/unknown type)
+- [x] Close the remaining decode failures found by the coverage scan (235 -> 37 failure kinds, 100.0% of tagged properties decode; a few rare native structs remain)
 - [ ] Summaries for native export data (texture size and format, mesh LOD counts, DNA, import data) instead of opaque bytes
 - [ ] Class schemas from live reflection: untyped struct elements in older packages' maps and sets, and packages saved with unversioned properties
 - [ ] Levels (`.umap`) and cooked/split packages (`.uexp`, `.ubulk`)
