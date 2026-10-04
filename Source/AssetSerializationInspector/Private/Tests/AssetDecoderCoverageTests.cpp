@@ -41,8 +41,10 @@ bool FAssetDecoderCoverage_NormalizesAndCollectsFailures::RunTest(const FString&
 {
 	using namespace AssetDecoderCoverageTestUtils;
 
-	TestEqual(TEXT("Numbers are replaced so similar failures group"), AssetDecoderCoverage::NormalizeMessage(TEXT("Could not decode array element 12 of 340.")), FString(TEXT("Could not decode array element # of #.")));
-	TestEqual(TEXT("Text without numbers is unchanged"), AssetDecoderCoverage::NormalizeMessage(TEXT("Unsupported property type: LazyObjectProperty")), FString(TEXT("Unsupported property type: LazyObjectProperty")));
+	TestEqual(TEXT("Numbers are replaced so similar failures group"), AssetDecoderCoverage::NormalizeMessage(TEXT("Could not decode array element 12 of 340.")),
+		FString(TEXT("Could not decode array element # of #.")));
+	TestEqual(TEXT("Text without numbers is unchanged"), AssetDecoderCoverage::NormalizeMessage(TEXT("Unsupported property type: LazyObjectProperty")),
+		FString(TEXT("Unsupported property type: LazyObjectProperty")));
 
 	TArray<FAssetDecoderCoverageFailure> Failures;
 	AssetDecoderCoverage::CollectFailures(MakeValue(EAssetPropertyDecodeStatus::Success, TEXT("IntProperty")), Failures);
@@ -86,8 +88,8 @@ bool FAssetDecoderCoverage_NormalizesAndCollectsFailures::RunTest(const FString&
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecoderCoverage_ScansAFolder, "AssetSerializationInspector.Coverage.AssetDecoderCoverage.ScansAFolder",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetDecoderCoverage_ScansAFolder, "AssetSerializationInspector.Coverage.AssetDecoderCoverage.ScansAFolder", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetDecoderCoverage_ScansAFolder::RunTest(const FString& Parameters)
 {

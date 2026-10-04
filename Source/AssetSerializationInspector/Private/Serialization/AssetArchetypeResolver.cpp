@@ -357,8 +357,8 @@ bool FAssetArchetypeResolver::LocateArchetype(const FLocation& Location, FLocati
 	return false;
 }
 
-EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
-	const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
+EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(
+	const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath, const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
 {
 	if (Depth >= MaximumArchetypeDepth)
 	{
@@ -389,8 +389,8 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveFromArchetype(const F
 	return ResolveEffectiveValue(Archetype, PropertyName, ArrayIndex, FieldPath, Depth + 1, OutValue, OutMessage);
 }
 
-EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath,
-	const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
+EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
+	const FLocation& Location, const FString& PropertyName, const int32 ArrayIndex, const TArray<FString>& FieldPath, const int32 Depth, FAssetArchetypeValue& OutValue, FString& OutMessage)
 {
 	const FAssetPackageDocument& Document = *Location.Document;
 	const FAssetPackageExportEntry& Export = Document.ExportMap[Location.ExportIndex];
@@ -582,8 +582,9 @@ FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedField(const
 		{
 			Result.Status = EAssetArchetypeValueStatus::DeclaredByBlueprint;
 			Result.Summary = DefaultText.IsEmpty() ? FString(TEXT("zero / empty")) : FString::Printf(TEXT("\"%s\""), *DefaultText);
-			Result.Note = DefaultText.IsEmpty() ? TEXT("Declared as a variable of the Blueprint with no default value, so it is zero or empty (inferred from the Blueprint's NewVariables).")
-												: FString::Printf(TEXT("Declared as a variable of the Blueprint with the default value text \"%s\" (from the Blueprint's NewVariables)."), *DefaultText);
+			Result.Note = DefaultText.IsEmpty()
+				? TEXT("Declared as a variable of the Blueprint with no default value, so it is zero or empty (inferred from the Blueprint's NewVariables).")
+				: FString::Printf(TEXT("Declared as a variable of the Blueprint with the default value text \"%s\" (from the Blueprint's NewVariables)."), *DefaultText);
 		}
 		else if (FieldPath.IsEmpty() && (Result.Status == EAssetArchetypeValueStatus::NotSerializedInChain || Message.Contains(NativePackageMessage)))
 		{
@@ -595,7 +596,8 @@ FAssetOmittedPropertyDefault FAssetArchetypeResolver::DescribeOmittedField(const
 			{
 				Result.Status = EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection;
 				Result.Summary = Text.IsEmpty() ? FString(TEXT("(empty)")) : Text;
-				Result.Note = FString::Printf(TEXT("Native default of %s, read from the running editor's class default object (live reflection); the editor that saved the asset may have used another value."), *OwnerClass);
+				Result.Note = FString::Printf(
+					TEXT("Native default of %s, read from the running editor's class default object (live reflection); the editor that saved the asset may have used another value."), *OwnerClass);
 			}
 		}
 	}

@@ -100,7 +100,8 @@ namespace AssetRealFixtureTestUtils
 	}
 } // namespace AssetRealFixtureTestUtils
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_TracesAreConsistent, "AssetSerializationInspector.RealAssets.TracesAreConsistent", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetRealFixture_TracesAreConsistent, "AssetSerializationInspector.RealAssets.TracesAreConsistent", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetRealFixture_TracesAreConsistent::RunTest(const FString& Parameters)
 {
@@ -114,7 +115,8 @@ bool FAssetRealFixture_TracesAreConsistent::RunTest(const FString& Parameters)
 			continue;
 		}
 
-		TestTrue(FString::Printf(TEXT("%s: the tables decode"), Name), Fixture.Document->NameMapError.IsEmpty() && Fixture.Document->ImportMapError.IsEmpty() && Fixture.Document->ExportMapError.IsEmpty());
+		TestTrue(
+			FString::Printf(TEXT("%s: the tables decode"), Name), Fixture.Document->NameMapError.IsEmpty() && Fixture.Document->ImportMapError.IsEmpty() && Fixture.Document->ExportMapError.IsEmpty());
 
 		int32 PropertyCount = 0;
 		for (const FAssetPackageExportEntry& Export : Fixture.Document->ExportMap)
@@ -152,7 +154,8 @@ bool FAssetRealFixture_TracesAreConsistent::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_BlueprintVariablesDecode, "AssetSerializationInspector.RealAssets.BlueprintVariablesDecode", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetRealFixture_BlueprintVariablesDecode, "AssetSerializationInspector.RealAssets.BlueprintVariablesDecode", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetRealFixture_BlueprintVariablesDecode::RunTest(const FString& Parameters)
 {
@@ -193,7 +196,8 @@ bool FAssetRealFixture_BlueprintVariablesDecode::RunTest(const FString& Paramete
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_ResolvesDefaultsOfABlueprint, "AssetSerializationInspector.RealAssets.ResolvesDefaultsOfABlueprint", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetRealFixture_ResolvesDefaultsOfABlueprint, "AssetSerializationInspector.RealAssets.ResolvesDefaultsOfABlueprint", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetRealFixture_ResolvesDefaultsOfABlueprint::RunTest(const FString& Parameters)
 {
@@ -239,7 +243,8 @@ bool FAssetRealFixture_ResolvesDefaultsOfABlueprint::RunTest(const FString& Para
 	if (Component != INDEX_NONE)
 	{
 		const FAssetOmittedPropertyDefault Native = Resolver.DescribeOmittedProperty(Component, TEXT("bHiddenInGame"), 0);
-		TestTrue(TEXT("A component's native property is found by the chain or by live reflection"), Native.Status == EAssetArchetypeValueStatus::Found || Native.Status == EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection);
+		TestTrue(TEXT("A component's native property is found by the chain or by live reflection"),
+			Native.Status == EAssetArchetypeValueStatus::Found || Native.Status == EAssetArchetypeValueStatus::NativeDefaultFromLiveReflection);
 	}
 
 	return true;
@@ -277,7 +282,8 @@ bool FAssetRealFixture_DiffsPackages::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_SaveAnalysisDescribesHeaderChanges, "AssetSerializationInspector.RealAssets.SaveAnalysisDescribesHeaderChanges", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_SaveAnalysisDescribesHeaderChanges, "AssetSerializationInspector.RealAssets.SaveAnalysisDescribesHeaderChanges",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetRealFixture_SaveAnalysisDescribesHeaderChanges::RunTest(const FString& Parameters)
 {

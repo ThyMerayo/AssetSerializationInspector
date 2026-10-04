@@ -481,8 +481,8 @@ FText SAssetSerializationDiff::GetAnalysisFilterResultText() const
 	}
 
 	const FAssetSaveAnalysis& Analysis = DiffSession->Analysis.GetValue();
-	const int32 Count = AnalysisFilter.CountMatches(Analysis.SemanticChanges) + AnalysisFilter.CountMatches(Analysis.LayoutChanges) + AnalysisFilter.CountMatches(Analysis.HeaderChanges) +
-						AnalysisFilter.CountMatches(Analysis.UnexplainedChanges);
+	const int32 Count = AnalysisFilter.CountMatches(Analysis.SemanticChanges) + AnalysisFilter.CountMatches(Analysis.LayoutChanges) + AnalysisFilter.CountMatches(Analysis.HeaderChanges)
+		+ AnalysisFilter.CountMatches(Analysis.UnexplainedChanges);
 
 	return FText::Format(LOCTEXT("AnalysisFilterResultCount", "{0} matching"), FText::AsNumber(Count));
 }

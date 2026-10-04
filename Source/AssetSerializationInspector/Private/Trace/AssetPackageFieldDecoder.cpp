@@ -145,8 +145,8 @@ namespace
 		 * they are the first thing in the export, so try the whole export; the tag reader stops and reports whatever is left as
 		 * undecoded when it is not a property stream (classes and other objects with a native header first).
 		 */
-		if (!Export.HasScriptSerializationRange() && (Document.PackageSummary.GetPackageFlags() & PKG_UnversionedProperties) == 0 && Document.PackageSummary.GetFileVersionUE() < EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET &&
-			LooksLikeTaggedPropertyStream(Document, Export))
+		if (!Export.HasScriptSerializationRange() && (Document.PackageSummary.GetPackageFlags() & PKG_UnversionedProperties) == 0
+			&& Document.PackageSummary.GetFileVersionUE() < EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET && LooksLikeTaggedPropertyStream(Document, Export))
 		{
 			Export.ScriptSerializationStartOffset = 0;
 			Export.ScriptSerializationEndOffset = Export.SerialSize;

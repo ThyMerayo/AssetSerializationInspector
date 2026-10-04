@@ -177,8 +177,7 @@ static bool DecodePodStructFromReader(
 }
 
 /** A box is its minimum and maximum corners followed by a one byte "is valid" flag. */
-template <typename TVector>
-static bool DecodeBoxFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+template <typename TVector> static bool DecodeBoxFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	const int64 Start = Reader.Tell();
 
@@ -898,8 +897,7 @@ static FAssetDecodedPropertyValue MakeTextChild(const FString& Name, const FStri
  * formatted texts with their arguments, numbers, percents and currencies, dates and times, case transforms and generators.
  * Bools in these records are written as 32 bit values, like every bool in a binary archive.
  */
-static bool DecodeTextFromReader(
-	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Depth = 0);
+static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Depth = 0);
 
 namespace TextHistoryDecoding
 {
@@ -1166,18 +1164,23 @@ namespace TextHistoryDecoding
 			int8 Rounding = 0;
 			int32 Digits = 0;
 
-			if (State.Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::AddedAlwaysSignNumberFormattingOption &&
-				!ReadScalar<uint32>(State, TEXT("AlwaysSign"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag))
+			if (State.Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::AddedAlwaysSignNumberFormattingOption
+				&& !ReadScalar<uint32>(State, TEXT("AlwaysSign"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag))
 			{
 				return false;
 			}
 
-			if (!ReadScalar<uint32>(State, TEXT("UseGrouping"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag) ||
-				!ReadScalar<int8>(State, TEXT("RoundingMode"), TEXT("Int8Property"), [](const int8 Value) { return LexToString(static_cast<int32>(Value)); }, Rounding) ||
-				!ReadScalar<int32>(State, TEXT("MinimumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
-				!ReadScalar<int32>(State, TEXT("MaximumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
-				!ReadScalar<int32>(State, TEXT("MinimumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
-				!ReadScalar<int32>(State, TEXT("MaximumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits))
+			if (!ReadScalar<uint32>(
+					State, TEXT("UseGrouping"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag)
+				|| !ReadScalar<int8>(
+					State, TEXT("RoundingMode"), TEXT("Int8Property"), [](const int8 Value) { return LexToString(static_cast<int32>(Value)); }, Rounding)
+				|| !ReadScalar<int32>(
+					State, TEXT("MinimumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
+				|| !ReadScalar<int32>(
+					State, TEXT("MaximumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
+				|| !ReadScalar<int32>(
+					State, TEXT("MinimumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
+				|| !ReadScalar<int32>(State, TEXT("MaximumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits))
 			{
 				return false;
 			}
@@ -1288,8 +1291,8 @@ namespace TextHistoryDecoding
 			{
 				int8 Style = 0;
 				FString TimeZone;
-				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), Style) || (State.Reader.UEVer() >= VER_UE4_FTEXT_HISTORY_DATE_TIMEZONE && !ReadString(State, TEXT("TimeZone"), TimeZone)) ||
-					!ReadCultureName(State))
+				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), Style)
+					|| (State.Reader.UEVer() >= VER_UE4_FTEXT_HISTORY_DATE_TIMEZONE && !ReadString(State, TEXT("TimeZone"), TimeZone)) || !ReadCultureName(State))
 				{
 					return false;
 				}
@@ -1317,8 +1320,8 @@ namespace TextHistoryDecoding
 				int8 TimeStyle = 0;
 				FString Pattern;
 				FString TimeZone;
-				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), DateStyle) || !ReadStyle(State, TEXT("TimeStyle"), TimeStyle) || (DateStyle == 5 && !ReadString(State, TEXT("CustomPattern"), Pattern)) ||
-					!ReadString(State, TEXT("TimeZone"), TimeZone) || !ReadCultureName(State))
+				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), DateStyle) || !ReadStyle(State, TEXT("TimeStyle"), TimeStyle)
+					|| (DateStyle == 5 && !ReadString(State, TEXT("CustomPattern"), Pattern)) || !ReadString(State, TEXT("TimeZone"), TimeZone) || !ReadCultureName(State))
 				{
 					return false;
 				}
@@ -1339,7 +1342,9 @@ namespace TextHistoryDecoding
 				Out.Children.Add(MoveTemp(Source));
 
 				uint8 Transform = 0;
-				if (!ReadScalar<uint8>(State, TEXT("TransformType"), TEXT("ByteProperty"), [](const uint8 Value) { return FString(Value == 0 ? TEXT("ToLower") : (Value == 1 ? TEXT("ToUpper") : TEXT("Unknown"))); }, Transform))
+				if (!ReadScalar<uint8>(
+						State, TEXT("TransformType"), TEXT("ByteProperty"), [](const uint8 Value) { return FString(Value == 0 ? TEXT("ToLower") : (Value == 1 ? TEXT("ToUpper") : TEXT("Unknown"))); },
+						Transform))
 				{
 					return false;
 				}
@@ -1459,8 +1464,8 @@ static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAs
 
 		// Editor packages also store the developer notes of the text: a string, written after the source string. It is what
 		// keeps the next element of an array of texts aligned.
-		if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDevNotesToFText && (Context.Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0 &&
-			!ReadTextString(TEXT("DevNotes")))
+		if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDevNotesToFText
+			&& (Context.Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0 && !ReadTextString(TEXT("DevNotes")))
 		{
 			return Fail(TEXT("Could not decode FText developer notes"));
 		}
@@ -1769,8 +1774,8 @@ static bool DecodeSoftObjectPathFromReader(const FAssetPropertyDecodeContext& Co
 			// The package and asset names of the top level asset, then the sub path as a UTF-8 string.
 			FAssetDecodedPropertyValue PackageName;
 			FAssetDecodedPropertyValue AssetName;
-			if (!DecodeNameFromReader(Context, Reader, ValueEnd, PackageName) || !DecodeNameFromReader(Context, Reader, ValueEnd, AssetName) ||
-				!AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, SubPath, Error))
+			if (!DecodeNameFromReader(Context, Reader, ValueEnd, PackageName) || !DecodeNameFromReader(Context, Reader, ValueEnd, AssetName)
+				|| !AssetSerializationPrimitives::ReadUtf8SerializedString(Reader, SubPath, Error))
 			{
 				OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 				OutValue.Error = TEXT("Could not read an inline soft object path.");

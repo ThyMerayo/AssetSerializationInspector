@@ -40,7 +40,8 @@ bool FAssetFolderComparisonResults_DescribesAFile::RunTest(const FString& Parame
 
 	TestEqual(TEXT("A changed pair saved by different versions"), SAssetFolderComparisonResults::GetStatusText(Changed).ToString(), FString(TEXT("Changed (different versions)")));
 	TestEqual(TEXT("An identical file"), SAssetFolderComparisonResults::GetStatusText(MakeEntry(TEXT("A.uasset"), EAssetFolderComparisonStatus::Identical)).ToString(), FString(TEXT("Identical")));
-	TestEqual(TEXT("A file only in the new folder"), SAssetFolderComparisonResults::GetStatusText(MakeEntry(TEXT("A.uasset"), EAssetFolderComparisonStatus::OnlyInNewFolder)).ToString(), FString(TEXT("Only in the new folder")));
+	TestEqual(TEXT("A file only in the new folder"), SAssetFolderComparisonResults::GetStatusText(MakeEntry(TEXT("A.uasset"), EAssetFolderComparisonStatus::OnlyInNewFolder)).ToString(),
+		FString(TEXT("Only in the new folder")));
 
 	const FString Details = SAssetFolderComparisonResults::BuildDetailsText(Changed);
 	TestTrue(TEXT("The details name the file"), Details.Contains(TEXT("Characters/Hero.uasset")));

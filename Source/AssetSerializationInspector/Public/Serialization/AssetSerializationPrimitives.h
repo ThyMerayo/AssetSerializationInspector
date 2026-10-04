@@ -13,4 +13,4 @@ namespace AssetSerializationPrimitives
 	 * ReadSerializedString the terminator is optional, and trailing NULs are dropped, as the engine does for soft object path sub paths.
 	 */
 	bool ReadUtf8SerializedString(FAssetPackageMemoryReader& Reader, FString& OutString, FText& OutError);
-}
+} // namespace AssetSerializationPrimitives

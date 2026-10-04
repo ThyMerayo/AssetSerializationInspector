@@ -631,9 +631,9 @@ bool FAssetPropertyValueDecoder_DecodesTextHistoriesWithArguments::RunTest(const
 		AppendValue<int8>(Document, 0);
 		AppendValue<int64>(Document, 42);
 		AppendValue<uint32>(Document, 1); // has options
-		AppendValue<uint32>(Document, 0);  // AlwaysSign
-		AppendValue<uint32>(Document, 1);  // UseGrouping
-		AppendValue<int8>(Document, 0);    // RoundingMode
+		AppendValue<uint32>(Document, 0); // AlwaysSign
+		AppendValue<uint32>(Document, 1); // UseGrouping
+		AppendValue<int8>(Document, 0);	  // RoundingMode
 		AppendValue<int32>(Document, 1);
 		AppendValue<int32>(Document, 324);
 		AppendValue<int32>(Document, 0);

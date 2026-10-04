@@ -63,8 +63,9 @@ public:
 		if (ColumnName == FolderResultsVersionColumn)
 		{
 			const bool bBoth = !Entry.OldEngineVersion.IsEmpty() && !Entry.NewEngineVersion.IsEmpty();
-			const FString Text = bBoth ? (Entry.OldEngineVersion == Entry.NewEngineVersion ? Entry.NewEngineVersion : FString::Printf(TEXT("%s -> %s"), *Entry.OldEngineVersion, *Entry.NewEngineVersion))
-									   : (Entry.NewEngineVersion.IsEmpty() ? Entry.OldEngineVersion : Entry.NewEngineVersion);
+			const FString Text = bBoth
+				? (Entry.OldEngineVersion == Entry.NewEngineVersion ? Entry.NewEngineVersion : FString::Printf(TEXT("%s -> %s"), *Entry.OldEngineVersion, *Entry.NewEngineVersion))
+				: (Entry.NewEngineVersion.IsEmpty() ? Entry.OldEngineVersion : Entry.NewEngineVersion);
 			return SNew(STextBlock).Text(FText::FromString(Text));
 		}
 
@@ -130,12 +131,14 @@ FString SAssetFolderComparisonResults::BuildDetailsText(const FAssetFolderCompar
 
 	if (!Entry.OldEngineVersion.IsEmpty() || !Entry.NewEngineVersion.IsEmpty())
 	{
-		Lines.Add(FString::Printf(TEXT("Saved by: %s -> %s"), Entry.OldEngineVersion.IsEmpty() ? TEXT("-") : *Entry.OldEngineVersion, Entry.NewEngineVersion.IsEmpty() ? TEXT("-") : *Entry.NewEngineVersion));
+		Lines.Add(FString::Printf(
+			TEXT("Saved by: %s -> %s"), Entry.OldEngineVersion.IsEmpty() ? TEXT("-") : *Entry.OldEngineVersion, Entry.NewEngineVersion.IsEmpty() ? TEXT("-") : *Entry.NewEngineVersion));
 	}
 
 	if (!Entry.OldFileVersion.IsEmpty() || !Entry.NewFileVersion.IsEmpty())
 	{
-		Lines.Add(FString::Printf(TEXT("Package version: %s -> %s"), Entry.OldFileVersion.IsEmpty() ? TEXT("-") : *Entry.OldFileVersion, Entry.NewFileVersion.IsEmpty() ? TEXT("-") : *Entry.NewFileVersion));
+		Lines.Add(
+			FString::Printf(TEXT("Package version: %s -> %s"), Entry.OldFileVersion.IsEmpty() ? TEXT("-") : *Entry.OldFileVersion, Entry.NewFileVersion.IsEmpty() ? TEXT("-") : *Entry.NewFileVersion));
 	}
 
 	Lines.Add(FString::Printf(TEXT("File size: %s -> %s bytes"), *DescribeFolderResultsSize(Entry.OldFileSize), *DescribeFolderResultsSize(Entry.NewFileSize)));
@@ -196,86 +199,51 @@ void SAssetFolderComparisonResults::Construct(const FArguments& InArgs)
 	const TSharedRef<SScrollBar> DetailsVerticalScrollBar = SNew(SScrollBar).Orientation(Orient_Vertical);
 	const TSharedRef<SScrollBar> DetailsHorizontalScrollBar = SNew(SScrollBar).Orientation(Orient_Horizontal);
 
-	ChildSlot
-	[
-		SNew(SVerticalBox)
+	ChildSlot[SNew(SVerticalBox)
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 8.0f, 8.0f, 0.0f)
-		[
-			SNew(STextBlock).Text(FText::Format(LOCTEXT("ResultsHeading", "Folder comparison{0}"), Result.IsValid() && Result->bCancelled ? LOCTEXT("ResultsCancelled", " (cancelled)") : FText::GetEmpty()))
-				.Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))
-		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 8.0f, 8.0f, 0.0f)[SNew(STextBlock)
+				.Text(FText::Format(LOCTEXT("ResultsHeading", "Folder comparison{0}"), Result.IsValid() && Result->bCancelled ? LOCTEXT("ResultsCancelled", " (cancelled)") : FText::GetEmpty()))
+				.Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 2.0f, 8.0f, 4.0f)
-		[
-			SNew(STextBlock).Text(FText::Format(LOCTEXT("ResultsFolders", "{0}  ->  {1}"), FText::FromString(Result.IsValid() ? Result->OldFolder : FString()), FText::FromString(Result.IsValid() ? Result->NewFolder : FString())))
-				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
-		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 2.0f, 8.0f, 4.0f)[SNew(STextBlock)
+				.Text(FText::Format(LOCTEXT("ResultsFolders", "{0}  ->  {1}"), FText::FromString(Result.IsValid() ? Result->OldFolder : FString()),
+					FText::FromString(Result.IsValid() ? Result->NewFolder : FString())))
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[Toggles]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-			[
-				SNew(SBox).WidthOverride(220.0f)
-				[
-					SNew(SSearchBox).HintText(LOCTEXT("SearchFiles", "Search files")).OnTextChanged(this, &SAssetFolderComparisonResults::HandleSearchChanged)
-				]
-			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.0f, 0.0f, 0.0f, 0.0f)
-			[
-				SNew(SBox).WidthOverride(90.0f)[SNew(STextBlock).Text(this, &SAssetFolderComparisonResults::GetCountText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
-			]
-		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f)[SNew(SHorizontalBox) + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[Toggles]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(
+				220.0f)[SNew(SSearchBox).HintText(LOCTEXT("SearchFiles", "Search files")).OnTextChanged(this, &SAssetFolderComparisonResults::HandleSearchChanged)]]
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(8.0f, 0.0f, 0.0f,
+					0.0f)[SNew(SBox).WidthOverride(90.0f)[SNew(STextBlock).Text(this, &SAssetFolderComparisonResults::GetCountText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]]]
 
-		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)
-		[
-			SNew(SSplitter).Orientation(Orient_Vertical)
+		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SSplitter).Orientation(Orient_Vertical)
 
-			+ SSplitter::Slot().Value(0.6f)
-			[
-				SNew(SBorder).Padding(0.0f)
-				[
-					SAssignNew(ListView, SListView<TSharedPtr<FAssetFolderComparisonItem>>)
-						.ListItemsSource(&VisibleItems)
-						.SelectionMode(ESelectionMode::Single)
-						.OnGenerateRow(this, &SAssetFolderComparisonResults::GenerateRow)
-						.OnSelectionChanged(this, &SAssetFolderComparisonResults::HandleSelectionChanged)
-						.HeaderRow(SNew(SHeaderRow)
-							+ SHeaderRow::Column(FolderResultsFileColumn).DefaultLabel(LOCTEXT("FileColumn", "File")).FillWidth(0.45f)
-							+ SHeaderRow::Column(FolderResultsStatusColumn).DefaultLabel(LOCTEXT("StatusColumn", "Status")).FillWidth(0.2f)
-							+ SHeaderRow::Column(FolderResultsVersionColumn).DefaultLabel(LOCTEXT("VersionColumn", "Saved by")).FillWidth(0.2f)
-							+ SHeaderRow::Column(FolderResultsSizeColumn).DefaultLabel(LOCTEXT("SizeColumn", "Size (bytes)")).FillWidth(0.15f))
-				]
-			]
+			+ SSplitter::Slot().Value(0.6f)[SNew(SBorder).Padding(0.0f)[SAssignNew(ListView, SListView<TSharedPtr<FAssetFolderComparisonItem>>)
+					.ListItemsSource(&VisibleItems)
+					.SelectionMode(ESelectionMode::Single)
+					.OnGenerateRow(this, &SAssetFolderComparisonResults::GenerateRow)
+					.OnSelectionChanged(this, &SAssetFolderComparisonResults::HandleSelectionChanged)
+					.HeaderRow(SNew(SHeaderRow) + SHeaderRow::Column(FolderResultsFileColumn).DefaultLabel(LOCTEXT("FileColumn", "File")).FillWidth(0.45f)
+						+ SHeaderRow::Column(FolderResultsStatusColumn).DefaultLabel(LOCTEXT("StatusColumn", "Status")).FillWidth(0.2f)
+						+ SHeaderRow::Column(FolderResultsVersionColumn).DefaultLabel(LOCTEXT("VersionColumn", "Saved by")).FillWidth(0.2f)
+						+ SHeaderRow::Column(FolderResultsSizeColumn).DefaultLabel(LOCTEXT("SizeColumn", "Size (bytes)")).FillWidth(0.15f))]]
 
-			+ SSplitter::Slot().Value(0.4f)
-			[
-				SNew(SBorder).Padding(4.0f)
-				[
-					SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
-					+ SGridPanel::Slot(0, 0)
-					[
-						SAssignNew(DetailsText, SMultiLineEditableText)
-							.IsReadOnly(true)
-							.AutoWrapText(false)
-							.VScrollBar(DetailsVerticalScrollBar)
-							.HScrollBar(DetailsHorizontalScrollBar)
-							.Text(LOCTEXT("SelectAFile", "Select a file to see what differs between the folders."))
-					]
-					+ SGridPanel::Slot(1, 0)[DetailsVerticalScrollBar]
-					+ SGridPanel::Slot(0, 1)[DetailsHorizontalScrollBar]
-				]
-			]
-		]
+			+ SSplitter::Slot().Value(0.4f)[SNew(SBorder).Padding(4.0f)[SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
+				+ SGridPanel::Slot(0, 0)[SAssignNew(DetailsText, SMultiLineEditableText)
+						.IsReadOnly(true)
+						.AutoWrapText(false)
+						.VScrollBar(DetailsVerticalScrollBar)
+						.HScrollBar(DetailsHorizontalScrollBar)
+						.Text(LOCTEXT("SelectAFile", "Select a file to see what differs between the folders."))]
+				+ SGridPanel::Slot(1, 0)[DetailsVerticalScrollBar] + SGridPanel::Slot(0, 1)[DetailsHorizontalScrollBar]]]]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
-			[
-				SNew(SButton).Text(LOCTEXT("OpenComparison", "Open Comparison")).ToolTipText(LOCTEXT("OpenComparisonTooltip", "Compare the two versions of the selected file in the diff window. Both files are read again."))
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("OpenComparison", "Open Comparison"))
+					.ToolTipText(LOCTEXT("OpenComparisonTooltip", "Compare the two versions of the selected file in the diff window. Both files are read again."))
 					.IsEnabled_Lambda([this]() { return CanOpenSelected(); })
 					.OnClicked_Lambda([this]() {
 						if (CanOpenSelected())
@@ -283,18 +251,11 @@ void SAssetFolderComparisonResults::Construct(const FArguments& InArgs)
 							OnOpenPair.Execute(SelectedItem->Entry.RelativePath);
 						}
 						return FReply::Handled();
-					})
-			]
-			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)]
-			+ SHorizontalBox::Slot().AutoWidth()
-			[
-				SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
-					OnSaveReport.ExecuteIfBound();
-					return FReply::Handled();
-				})
-			]
-		]
-	];
+					})]
+			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)] + SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
+				  OnSaveReport.ExecuteIfBound();
+				  return FReply::Handled();
+			  })]]];
 }
 
 TSharedRef<SWidget> SAssetFolderComparisonResults::BuildStatusToggle(const EAssetFolderComparisonStatus Status)
@@ -315,11 +276,9 @@ TSharedRef<SWidget> SAssetFolderComparisonResults::BuildStatusToggle(const EAsse
 		.OnCheckStateChanged_Lambda([this, Index](const ECheckBoxState State) {
 			bShowStatus[Index] = State == ECheckBoxState::Checked;
 			RebuildVisibleItems();
-		})
-		[
+		})[
 			// A changed file is described as plain "Changed" here: the version difference is a property of the row, not a filter.
-			SNew(STextBlock).Text(FText::Format(LOCTEXT("StatusToggle", "{0} ({1})"), GetStatusText(Sample), FText::AsNumber(Count)))
-		];
+			SNew(STextBlock).Text(FText::Format(LOCTEXT("StatusToggle", "{0} ({1})"), GetStatusText(Sample), FText::AsNumber(Count)))];
 }
 
 TSharedRef<ITableRow> SAssetFolderComparisonResults::GenerateRow(TSharedPtr<FAssetFolderComparisonItem> Item, const TSharedRef<STableViewBase>& OwnerTable)

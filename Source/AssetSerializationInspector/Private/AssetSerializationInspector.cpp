@@ -15,8 +15,8 @@
 #include "UObject/UObjectGlobals.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Layout/SBox.h"
-#include "Widgets/SWindow.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
 
 #include "AssetSerializationInspectorCommands.h"
@@ -31,11 +31,11 @@
 #include "Save/AssetNoOpResaveTest.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Save/AssetSaveObserver.h"
+#include "Trace/AssetPackageFieldDecoder.h"
 #include "Widgets/SAssetBatchResults.h"
 #include "Widgets/SAssetFolderComparisonResults.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
-#include "Trace/AssetPackageFieldDecoder.h"
 
 static const FName AssetSerializationInspectorTabName("Asset Serialization Inspector");
 static const FName DiffTabName(TEXT("Asset Serialization Diff"));
@@ -131,11 +131,14 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
 				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
 			Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
-				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
-				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
+				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
+				FUIAction(
+					FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
 			Section.AddMenuEntry("ShowFolderComparison", LOCTEXT("ShowFolderComparison", "Show Last Folder Comparison"),
 				LOCTEXT("ShowFolderComparisonTooltip", "Reopen the window with the files of the latest comparison of two asset folders."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
-				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow), FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
+				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow),
+					FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
 			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
 				LOCTEXT("CompareAssetFoldersTooltip",
 					"Compare the .uasset files of two folders on disk, for example a project before and after moving it to another engine "
@@ -311,9 +314,9 @@ void FAssetSerializationInspectorModule::ShowBatchResultsWindow()
 	}
 
 	const TSharedRef<SAssetBatchResults> Results = SNew(SAssetBatchResults)
-														.Result(LastBatchResult)
-														.OnOpenDiff(FOnOpenBatchResaveDiff::CreateRaw(this, &FAssetSerializationInspectorModule::OpenBatchEntryDiff))
-														.OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport));
+													   .Result(LastBatchResult)
+													   .OnOpenDiff(FOnOpenBatchResaveDiff::CreateRaw(this, &FAssetSerializationInspectorModule::OpenBatchEntryDiff))
+													   .OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport));
 
 	// A new run replaces the content of the window that is already open.
 	if (const TSharedPtr<SWindow> Existing = BatchResultsWindow.Pin())
@@ -323,11 +326,8 @@ void FAssetSerializationInspectorModule::ShowBatchResultsWindow()
 		return;
 	}
 
-	const TSharedRef<SWindow> Window = SNew(SWindow)
-										   .Title(LOCTEXT("BatchResultsTitle", "No-op Resave Results"))
-										   .ClientSize(FVector2D(960.0f, 640.0f))
-										   .SupportsMinimize(true)
-										   .SupportsMaximize(true)[Results];
+	const TSharedRef<SWindow> Window =
+		SNew(SWindow).Title(LOCTEXT("BatchResultsTitle", "No-op Resave Results")).ClientSize(FVector2D(960.0f, 640.0f)).SupportsMinimize(true).SupportsMaximize(true)[Results];
 
 	BatchResultsWindow = Window;
 	FSlateApplication::Get().AddWindow(Window);
@@ -350,7 +350,8 @@ void FAssetSerializationInspectorModule::OpenBatchEntryDiff(const FName PackageN
 		return;
 	}
 
-	FNotificationInfo Info(Result.bSucceeded ? LOCTEXT("NoChangesThisTime", "Resaving the asset changed nothing this time, so there is no comparison to open.") : FText::Format(LOCTEXT("RerunFailed", "The asset could not be tested again: {0}"), Result.Error));
+	FNotificationInfo Info(Result.bSucceeded ? LOCTEXT("NoChangesThisTime", "Resaving the asset changed nothing this time, so there is no comparison to open.")
+											 : FText::Format(LOCTEXT("RerunFailed", "The asset could not be tested again: {0}"), Result.Error));
 	Info.ExpireDuration = 8.0f;
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
@@ -497,11 +498,8 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonWindow()
 		return;
 	}
 
-	const TSharedRef<SWindow> Window = SNew(SWindow)
-										   .Title(LOCTEXT("FolderComparisonTitle", "Folder Comparison"))
-										   .ClientSize(FVector2D(960.0f, 640.0f))
-										   .SupportsMinimize(true)
-										   .SupportsMaximize(true)[Results];
+	const TSharedRef<SWindow> Window =
+		SNew(SWindow).Title(LOCTEXT("FolderComparisonTitle", "Folder Comparison")).ClientSize(FVector2D(960.0f, 640.0f)).SupportsMinimize(true).SupportsMaximize(true)[Results];
 
 	FolderComparisonWindow = Window;
 	FSlateApplication::Get().AddWindow(Window);
