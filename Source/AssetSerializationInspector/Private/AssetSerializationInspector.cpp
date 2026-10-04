@@ -422,16 +422,18 @@ void FAssetSerializationInspectorModule::SaveBatchResaveReport()
 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
+	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
+	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report").ToString(), FPaths::ProjectSavedDir(),
-			AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text),
+			FPaths::GetBaseFilename(AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), false),
 			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;
 	}
 
-	// The format follows the extension, so make sure there is one.
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
 	FString Filename = SelectedFiles[0];
 	if (FPaths::GetExtension(Filename).IsEmpty())
 	{
@@ -673,16 +675,19 @@ void FAssetSerializationInspectorModule::SaveFolderComparisonReport()
 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
+	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
+	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report").ToString(), FPaths::ProjectSavedDir(),
-			AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text),
+			FPaths::GetBaseFilename(
+				AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text), false),
 			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;
 	}
 
-	// The format follows the extension, so make sure there is one.
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
 	FString Filename = SelectedFiles[0];
 	if (FPaths::GetExtension(Filename).IsEmpty())
 	{

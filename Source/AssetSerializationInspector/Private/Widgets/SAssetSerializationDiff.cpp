@@ -1013,9 +1013,11 @@ bool SAssetSerializationDiff::BrowseForReportFile(const FString& DefaultFilename
 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
+	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
+	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
 	TArray<FString> SelectedFiles;
-	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(), DefaultFilename,
-		TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles);
+	const bool bSelected = DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("ExportReportDialogTitle", "Export Report").ToString(), FPaths::ProjectSavedDir(),
+		FPaths::GetBaseFilename(DefaultFilename, false), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles);
 
 	if (!bSelected || SelectedFiles.IsEmpty())
 	{
@@ -1024,7 +1026,7 @@ bool SAssetSerializationDiff::BrowseForReportFile(const FString& DefaultFilename
 
 	OutFilename = SelectedFiles[0];
 
-	// The format follows the extension, so make sure there is one.
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
 	if (FPaths::GetExtension(OutFilename).IsEmpty())
 	{
 		OutFilename += TEXT(".txt");

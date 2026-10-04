@@ -263,7 +263,7 @@ Packages saved before UE 5.4 (UE4 and UE5.0 to 5.3) store property tags in an ol
 
 ### HTML reports
 
-Every report the plugin saves (the diff window's analysis, the batch no-op resave test and the folder comparison) can be written as a self-contained HTML page next to the text and JSON versions: choose *HTML report* in the save dialog, give the file a `.html` name, or pass `-Report=Something.html` to the commandlet. The page has no scripts and no external files, so it can be attached to a ticket or kept as a build artifact; it follows the browser's light or dark theme, shows the save analysis and the differences as folding blocks with coloured state labels (added, removed, modified, moved), and escapes every name and value that comes from an asset so that a property value cannot inject markup.
+Every report the plugin saves (the diff window's analysis, the batch no-op resave test and the folder comparison) can be written as a self-contained HTML page next to the text and JSON versions: choose *HTML report* (or *JSON report*) as the file type in the save dialog (the suggested name has no extension, so the dialog adds the one of the type you pick; a name typed with an extension keeps it and decides the format), give the file a `.html` name, or pass `-Report=Something.html` to the commandlet. The page has no scripts and no external files, so it can be attached to a ticket or kept as a build artifact; it follows the browser's light or dark theme, shows the save analysis and the differences as folding blocks with coloured state labels (added, removed, modified, moved), and escapes every name and value that comes from an asset so that a property value cannot inject markup.
 
 ### Comparing with a source control revision
 
