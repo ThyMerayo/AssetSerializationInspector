@@ -255,6 +255,8 @@ The same test runs on many assets: select several assets, or use *Run No-op Resa
 
 Packages saved before UE 5.4 (UE4 and UE5.0 to 5.3) store property tags in an older layout, with only the type name and the extra fields each type needs. The inspector reads both layouts, including the inner struct tag that older arrays of structs carry, so their properties decode like newer ones. The tables and exports are read with the versions the package was saved with, which also covers older name maps (no hashes before UE 4.4x), exports without a script serialization range (their properties are looked for from the start of the export) and soft object paths stored inline instead of in the header table. Checked on a package migrated from UE 5.0 and on UE4-era starter content; elements of maps and sets whose struct type is not stored by those versions and that are not tagged structs are reported as unsupported.
 
+When the comparison finishes, a **results window** opens (*Window -> Show Last Folder Comparison* reopens it): every file with its status (could not compare, changed, only in the new or old folder, identical), the engine that saved each side and the file sizes, with status filters and a search box. Selecting a file shows what differs, and *Open Comparison* opens a changed pair in the diff window (both files are read again for it).
+
 In the two-file diff, differences in the engine, file or custom versions are explained, including that some differences can come from the format rather than from edits.
 
 ---
@@ -586,7 +588,6 @@ Known limitations:
 - Only `.uasset` packages are read; levels (`.umap`) are not.
 - Native C++ defaults are read from the running editor (top-level properties only; set and map deltas still assume an empty default), and omitted fields are only described for struct properties (not for structs inside arrays, sets or maps).
 - Package versions this editor build cannot read are reported as failed rather than guessed.
-- Folder comparisons produce a report; there is no results window to browse their pairs yet.
 - Most of the UI has been exercised through automation tests and manual use on small assets. Large projects and assets saved by several different engine versions deserve more real-world testing.
 
 ---

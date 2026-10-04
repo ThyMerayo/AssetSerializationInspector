@@ -41,6 +41,9 @@ private:
 	void CompareAssetFolders();
 	void ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result);
 	void SaveFolderComparisonReport();
+	void ShowFolderComparisonWindow();
+	void OpenFolderComparisonPairDiff(const FString& RelativePath);
+	void ShowDiffSession(TSharedPtr<FAssetSerializationDiffSession> Session);
 
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
@@ -57,5 +60,8 @@ private:
 
 	/** The latest folder comparison, kept so its report can be saved from the notification. */
 	TSharedPtr<FAssetFolderComparisonResult> LastFolderComparison;
+
+	/** The window that lists the latest folder comparison's files. */
+	TWeakPtr<class SWindow> FolderComparisonWindow;
 	FString LastComparedFolder;
 };
