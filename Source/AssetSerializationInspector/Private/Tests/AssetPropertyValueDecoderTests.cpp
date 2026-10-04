@@ -4,7 +4,10 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Misc/DateTime.h"
+#include "UObject/EditorObjectVersion.h"
 #include "UObject/ObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
@@ -492,6 +495,174 @@ bool FAssetPropertyValueDecoder_DecodesInlineSoftObjectPaths::RunTest(const FStr
 
 	Result = DecodeWholeFile(Newer, PathType);
 	TestEqual(TEXT("Names are joined"), Result.Value, FString(TEXT("/Game/Box.Box")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_DecodesTextHistoriesWithArguments, "AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.DecodesTextHistoriesWithArguments",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_DecodesTextHistoriesWithArguments::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	const FAssetSerializedPropertyType TextType = MakeType(TEXT("TextProperty"));
+
+	const auto MakeDocument = []() {
+		FAssetPackageDocument Document;
+		Document.PackageSummary.SetFileVersions(GPackageFileUEVersion.FileVersionUE4, GPackageFileUEVersion.FileVersionUE5, 0);
+		FCustomVersionContainer& Versions = const_cast<FCustomVersionContainer&>(Document.PackageSummary.GetCustomVersionContainer());
+		Versions.SetVersion(FEditorObjectVersion::GUID, FEditorObjectVersion::LatestVersion, TEXT("Editor"));
+		Versions.SetVersion(FUE5ReleaseStreamObjectVersion::GUID, FUE5ReleaseStreamObjectVersion::LatestVersion, TEXT("UE5ReleaseStream"));
+		return Document;
+	};
+
+	const auto AppendHeader = [](FAssetPackageDocument& Document, const int8 HistoryType) {
+		AppendValue<uint32>(Document, 0);
+		AppendValue<int8>(Document, HistoryType);
+	};
+
+	const auto AppendBaseText = [&AppendHeader](FAssetPackageDocument& Document, const FString& Text) {
+		AppendHeader(Document, 0);
+		AppendAnsiString(Document, TEXT(""));
+		AppendAnsiString(Document, TEXT(""));
+		AppendAnsiString(Document, Text);
+	};
+
+	// OrderedFormat: the format text, then the arguments as typed values.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 2);
+		AppendBaseText(Document, TEXT("Hi {0} {1}"));
+		AppendValue<int32>(Document, 2);
+		AppendValue<int8>(Document, 0); // Int
+		AppendValue<int64>(Document, 5);
+		AppendValue<int8>(Document, 4); // Text
+		AppendBaseText(Document, TEXT("x"));
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("An ordered format decodes"), Result.IsSuccess());
+		TestTrue(TEXT("It shows the format and the argument count"), Result.Value.Contains(TEXT("Format(Hi {0} {1}) with 2 arguments")));
+		TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Document.FileData.Num()));
+		if (TestEqual(TEXT("Its parts are the flags, the format text and the arguments"), Result.Children.Num(), 3))
+		{
+			const FAssetDecodedPropertyValue& Arguments = Result.Children[2];
+			if (TestEqual(TEXT("Both arguments are read"), Arguments.Children.Num(), 2))
+			{
+				TestEqual(TEXT("An integer argument"), Arguments.Children[0].Value, FString(TEXT("5")));
+				TestEqual(TEXT("A text argument"), Arguments.Children[1].Value, FString(TEXT("x")));
+			}
+		}
+	}
+
+	// NamedFormat: a map from argument name to value.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 1);
+		AppendBaseText(Document, TEXT("{Name}!"));
+		AppendValue<int32>(Document, 1);
+		AppendAnsiString(Document, TEXT("Name"));
+		AppendValue<int8>(Document, 2); // Float
+		AppendValue<float>(Document, 1.5f);
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("A named format decodes"), Result.IsSuccess());
+		if (TestEqual(TEXT("It has its parts"), Result.Children.Num(), 3) && TestEqual(TEXT("And one argument"), Result.Children[2].Children.Num(), 1))
+		{
+			TestEqual(TEXT("Named by its key"), Result.Children[2].Children[0].Name, FString(TEXT("Name")));
+		}
+	}
+
+	// ArgumentFormat: Blueprint format arguments, each with a name, a type and a value.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 3);
+		AppendBaseText(Document, TEXT("{A}"));
+		AppendValue<int32>(Document, 1);
+		AppendAnsiString(Document, TEXT("A"));
+		AppendValue<uint8>(Document, 0); // Int
+		AppendValue<int64>(Document, 7);
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("An argument data format decodes"), Result.IsSuccess());
+		if (TestEqual(TEXT("It has its parts"), Result.Children.Num(), 3) && TestEqual(TEXT("And one argument"), Result.Children[2].Children.Num(), 1))
+		{
+			TestEqual(TEXT("With its value"), Result.Children[2].Children[0].Value, FString(TEXT("7")));
+		}
+	}
+
+	// AsNumber with formatting options.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 4);
+		AppendValue<int8>(Document, 0);
+		AppendValue<int64>(Document, 42);
+		AppendValue<uint32>(Document, 1); // has options
+		AppendValue<uint32>(Document, 0);  // AlwaysSign
+		AppendValue<uint32>(Document, 1);  // UseGrouping
+		AppendValue<int8>(Document, 0);    // RoundingMode
+		AppendValue<int32>(Document, 1);
+		AppendValue<int32>(Document, 324);
+		AppendValue<int32>(Document, 0);
+		AppendValue<int32>(Document, 3);
+		AppendAnsiString(Document, TEXT(""));
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("A number text decodes"), Result.IsSuccess());
+		TestEqual(TEXT("It shows the number"), Result.Value, FString(TEXT("AsNumber(42)")));
+		TestEqual(TEXT("The whole value is consumed"), Result.Size, static_cast<int64>(Document.FileData.Num()));
+	}
+
+	// AsDateTime.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 9);
+		AppendValue<int64>(Document, FDateTime(2024, 1, 2, 3, 4, 5).GetTicks());
+		AppendValue<int8>(Document, 1);
+		AppendValue<int8>(Document, 1);
+		AppendAnsiString(Document, TEXT("UTC"));
+		AppendAnsiString(Document, TEXT(""));
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("A date and time text decodes"), Result.IsSuccess());
+		TestTrue(TEXT("It shows the date"), Result.Value.Contains(TEXT("2024-01-02")));
+	}
+
+	// Transform wraps another text.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 10);
+		AppendBaseText(Document, TEXT("abc"));
+		AppendValue<uint8>(Document, 1);
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestEqual(TEXT("A transformed text shows its transform"), Result.Value, FString(TEXT("ToUpper(abc)")));
+	}
+
+	// A text generator with no generator.
+	{
+		FAssetPackageDocument Document = MakeDocument();
+		AppendHeader(Document, 12);
+		AppendName(Document, AddName(Document, TEXT("None")));
+
+		const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, TextType);
+		TestTrue(TEXT("A text generator decodes"), Result.IsSuccess());
+	}
+
+	// A history type this build does not know, and a text cut short.
+	{
+		FAssetPackageDocument Unknown = MakeDocument();
+		AppendHeader(Unknown, 99);
+		TestEqual(TEXT("An unknown history type is unsupported"), DecodeWholeFile(Unknown, TextType).Status, EAssetPropertyDecodeStatus::Unsupported);
+
+		FAssetPackageDocument Truncated = MakeDocument();
+		AppendHeader(Truncated, 2);
+		AppendBaseText(Truncated, TEXT("{0}"));
+		AppendValue<int32>(Truncated, 3);
+		AppendValue<int8>(Truncated, 0);
+		AppendValue<int64>(Truncated, 1);
+		TestEqual(TEXT("Missing arguments are invalid"), DecodeWholeFile(Truncated, TextType).Status, EAssetPropertyDecodeStatus::InvalidData);
+	}
 
 	return true;
 }

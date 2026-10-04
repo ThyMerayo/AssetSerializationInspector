@@ -8,7 +8,9 @@
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/ObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 AbsoluteOffset)
 {
@@ -769,11 +771,502 @@ static FAssetDecodedPropertyValue MakeTextChild(const FString& Name, const FStri
 }
 
 /*
- * Mirrors FText::SerializeText: uint32 Flags, int8 HistoryType, then a history-specific payload.
- * Only the history types that carry no arguments are decoded; formatted, numeric, date/time,
- * transform and generator histories are reported as unsupported.
+ * The history types of FText that carry more than a string, in the layouts of FTextHistory_*::Serialize (TextHistory.cpp):
+ * formatted texts with their arguments, numbers, percents and currencies, dates and times, case transforms and generators.
+ * Bools in these records are written as 32 bit values, like every bool in a binary archive.
  */
-static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+static bool DecodeTextFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Depth = 0);
+
+namespace TextHistoryDecoding
+{
+	struct FState
+	{
+		const FAssetPropertyDecodeContext& Context;
+		FAssetPackagePayloadReader& Reader;
+		const int64 ValueEnd;
+		FAssetDecodedPropertyValue& Out;
+		const int32 Depth;
+		FString Error;
+	};
+
+	template <typename TValue> bool ReadScalar(FState& State, const TCHAR* Name, const TCHAR* TypeName, FString (*Format)(TValue), TValue& OutValue)
+	{
+		const int64 Start = State.Reader.Tell();
+		if (!ReadBounded(State.Reader, State.ValueEnd, OutValue))
+		{
+			State.Error = FString::Printf(TEXT("Could not read %s."), Name);
+			return false;
+		}
+
+		State.Out.Children.Add(MakeTextChild(Name, TypeName, Format(OutValue), Start, State.Reader.Tell() - Start));
+		return true;
+	}
+
+	bool ReadString(FState& State, const TCHAR* Name, FString& OutText)
+	{
+		const int64 Start = State.Reader.Tell();
+		FText Error;
+		if (!AssetSerializationPrimitives::ReadSerializedString(State.Reader, OutText, Error) || State.Reader.Tell() > State.ValueEnd)
+		{
+			State.Error = FString::Printf(TEXT("Could not read %s."), Name);
+			return false;
+		}
+
+		State.Out.Children.Add(MakeTextChild(Name, TEXT("StrProperty"), OutText, Start, State.Reader.Tell() - Start));
+		return true;
+	}
+
+	bool ReadNestedText(FState& State, const TCHAR* Name, FAssetDecodedPropertyValue& OutText)
+	{
+		OutText.Name = Name;
+		OutText.TypeName = TEXT("TextProperty");
+
+		if (State.Depth + 1 >= State.Context.MaximumDepth || !DecodeTextFromReader(State.Context, State.Reader, State.ValueEnd, OutText, State.Depth + 1))
+		{
+			State.Error = OutText.Error.IsEmpty() ? FString::Printf(TEXT("Could not decode %s."), Name) : FString::Printf(TEXT("Could not decode %s: %s"), Name, *OutText.Error);
+			return false;
+		}
+
+		return true;
+	}
+
+	/** FFormatArgumentValue: an int8 type then the value. Text values are nested FTexts. */
+	bool ReadArgumentValue(FState& State, const FString& Name, FAssetDecodedPropertyValue& OutArgument)
+	{
+		const int64 Start = State.Reader.Tell();
+		int8 Type = 0;
+		if (!ReadBounded(State.Reader, State.ValueEnd, Type))
+		{
+			State.Error = TEXT("Could not read a format argument type.");
+			return false;
+		}
+
+		OutArgument.Name = Name;
+
+		switch (Type)
+		{
+			case 0: // Int
+			{
+				int64 Value = 0;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Value))
+				{
+					break;
+				}
+				OutArgument = MakeTextChild(Name, TEXT("Int64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				return true;
+			}
+			case 1: // UInt
+			{
+				uint64 Value = 0;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Value))
+				{
+					break;
+				}
+				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				return true;
+			}
+			case 2: // Float
+			{
+				float Value = 0.0f;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Value))
+				{
+					break;
+				}
+				OutArgument = MakeTextChild(Name, TEXT("FloatProperty"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				return true;
+			}
+			case 3: // Double
+			{
+				double Value = 0.0;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Value))
+				{
+					break;
+				}
+				OutArgument = MakeTextChild(Name, TEXT("DoubleProperty"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				return true;
+			}
+			case 4: // Text
+			{
+				return ReadNestedText(State, *Name, OutArgument) && (OutArgument.AbsoluteOffset = Start, OutArgument.Size = State.Reader.Tell() - Start, true);
+			}
+			case 5: // Gender, stored as a UInt
+			{
+				uint64 Value = 0;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Value))
+				{
+					break;
+				}
+				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				return true;
+			}
+			default:
+				State.Error = FString::Printf(TEXT("Unknown format argument type %d."), static_cast<int32>(Type));
+				return false;
+		}
+
+		State.Error = TEXT("Could not read a format argument value.");
+		return false;
+	}
+
+	/** FFormatArgumentData (arguments of a text formatted from Blueprints): name, type byte, value. */
+	bool ReadArgumentData(FState& State, const int32 Index, FAssetDecodedPropertyValue& OutArgument)
+	{
+		const int64 Start = State.Reader.Tell();
+		const FString Label = FString::Printf(TEXT("[%d]"), Index);
+
+		FString ArgumentName;
+		FText StringError;
+		if (State.Reader.UEVer() < VER_UE4_K2NODE_VAR_REFERENCEGUIDS)
+		{
+			FAssetDecodedPropertyValue OldName;
+			if (!DecodeTextFromReader(State.Context, State.Reader, State.ValueEnd, OldName, State.Depth + 1))
+			{
+				State.Error = TEXT("Could not read a format argument name.");
+				return false;
+			}
+			ArgumentName = OldName.Value;
+		}
+		else if (!AssetSerializationPrimitives::ReadSerializedString(State.Reader, ArgumentName, StringError))
+		{
+			State.Error = TEXT("Could not read a format argument name.");
+			return false;
+		}
+
+		uint8 Type = 4; // Data saved before TextFormatArgumentDataIsVariant was always text.
+		if (State.Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::TextFormatArgumentDataIsVariant && !ReadBounded(State.Reader, State.ValueEnd, Type))
+		{
+			State.Error = TEXT("Could not read a format argument type.");
+			return false;
+		}
+
+		FAssetDecodedPropertyValue Value;
+		const FString Name = FString::Printf(TEXT("%s %s"), *Label, *ArgumentName);
+		bool bRead = false;
+
+		switch (Type)
+		{
+			case 0:
+			{
+				const bool b64 = State.Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::TextFormatArgumentData64bitSupport;
+				int64 Number = 0;
+				int32 Small = 0;
+				bRead = b64 ? ReadBounded(State.Reader, State.ValueEnd, Number) : ReadBounded(State.Reader, State.ValueEnd, Small);
+				Value = MakeTextChild(Name, TEXT("Int64Property"), LexToString(b64 ? Number : static_cast<int64>(Small)), Start, State.Reader.Tell() - Start);
+				break;
+			}
+			case 2:
+			{
+				float Number = 0.0f;
+				bRead = ReadBounded(State.Reader, State.ValueEnd, Number);
+				Value = MakeTextChild(Name, TEXT("FloatProperty"), LexToString(Number), Start, State.Reader.Tell() - Start);
+				break;
+			}
+			case 3:
+			{
+				double Number = 0.0;
+				bRead = ReadBounded(State.Reader, State.ValueEnd, Number);
+				Value = MakeTextChild(Name, TEXT("DoubleProperty"), LexToString(Number), Start, State.Reader.Tell() - Start);
+				break;
+			}
+			case 4:
+			{
+				bRead = ReadNestedText(State, *Name, Value);
+				break;
+			}
+			case 5:
+			{
+				uint8 Gender = 0;
+				bRead = ReadBounded(State.Reader, State.ValueEnd, Gender);
+				Value = MakeTextChild(Name, TEXT("ByteProperty"), LexToString(static_cast<uint32>(Gender)), Start, State.Reader.Tell() - Start);
+				break;
+			}
+			default:
+				State.Error = FString::Printf(TEXT("Unknown format argument type %d."), static_cast<int32>(Type));
+				return false;
+		}
+
+		if (!bRead)
+		{
+			State.Error = State.Error.IsEmpty() ? FString(TEXT("Could not read a format argument value.")) : State.Error;
+			return false;
+		}
+
+		Value.Name = Name;
+		OutArgument = MoveTemp(Value);
+		return true;
+	}
+
+	bool ReadCultureName(FState& State)
+	{
+		FString Culture;
+		return ReadString(State, TEXT("CultureName"), Culture);
+	}
+
+	FString DateTimeStyleName(const int8 Style)
+	{
+		static const TCHAR* const Names[] = { TEXT("Default"), TEXT("Short"), TEXT("Medium"), TEXT("Long"), TEXT("Full"), TEXT("Custom") };
+		return Style >= 0 && Style < UE_ARRAY_COUNT(Names) ? FString(Names[Style]) : FString::Printf(TEXT("%d"), static_cast<int32>(Style));
+	}
+
+	bool ReadDateTime(FState& State)
+	{
+		int64 Ticks = 0;
+		return ReadScalar<int64>(State, TEXT("SourceDateTime"), TEXT("Int64Property"), [](const int64 Value) { return FDateTime(Value).ToIso8601(); }, Ticks);
+	}
+
+	bool ReadStyle(FState& State, const TCHAR* Name, int8& OutStyle)
+	{
+		return ReadScalar<int8>(State, Name, TEXT("Int8Property"), [](const int8 Value) { return DateTimeStyleName(Value); }, OutStyle);
+	}
+
+	bool ReadFormatNumberBody(FState& State)
+	{
+		FAssetDecodedPropertyValue Source;
+		if (!ReadArgumentValue(State, TEXT("SourceValue"), Source))
+		{
+			return false;
+		}
+
+		State.Out.Children.Add(Source);
+		State.Out.Value = Source.Value;
+
+		uint32 bHasOptions = 0;
+		if (!ReadScalar<uint32>(State, TEXT("bHasFormatOptions"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, bHasOptions))
+		{
+			return false;
+		}
+
+		if (bHasOptions != 0)
+		{
+			uint32 Flag = 0;
+			int8 Rounding = 0;
+			int32 Digits = 0;
+
+			if (State.Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::AddedAlwaysSignNumberFormattingOption &&
+				!ReadScalar<uint32>(State, TEXT("AlwaysSign"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag))
+			{
+				return false;
+			}
+
+			if (!ReadScalar<uint32>(State, TEXT("UseGrouping"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag) ||
+				!ReadScalar<int8>(State, TEXT("RoundingMode"), TEXT("Int8Property"), [](const int8 Value) { return LexToString(static_cast<int32>(Value)); }, Rounding) ||
+				!ReadScalar<int32>(State, TEXT("MinimumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
+				!ReadScalar<int32>(State, TEXT("MaximumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
+				!ReadScalar<int32>(State, TEXT("MinimumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits) ||
+				!ReadScalar<int32>(State, TEXT("MaximumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits))
+			{
+				return false;
+			}
+		}
+
+		return ReadCultureName(State);
+	}
+
+	/** Returns false with State.Error set when the payload cannot be read; Unsupported is set for history types not handled. */
+	bool ReadHistory(FState& State, const int8 HistoryType, bool& bOutUnsupported)
+	{
+		FAssetDecodedPropertyValue& Out = State.Out;
+
+		switch (HistoryType)
+		{
+			case 1: // NamedFormat: FormatText, then TMap<FString, FFormatArgumentValue>.
+			case 2: // OrderedFormat: FormatText, then TArray<FFormatArgumentValue>.
+			case 3: // ArgumentFormat: FormatText, then TArray<FFormatArgumentData>.
+			{
+				FAssetDecodedPropertyValue Format;
+				if (!ReadNestedText(State, TEXT("FormatText"), Format))
+				{
+					return false;
+				}
+
+				const FString FormatString = Format.Value;
+				Out.Children.Add(MoveTemp(Format));
+
+				const int64 ArgumentsStart = State.Reader.Tell();
+				int32 Count = 0;
+				if (!ReadBounded(State.Reader, State.ValueEnd, Count) || !IsValidContainerCount(State.Context, Count))
+				{
+					State.Error = TEXT("Could not read the format argument count.");
+					return false;
+				}
+
+				FAssetDecodedPropertyValue Arguments;
+				Arguments.Status = EAssetPropertyDecodeStatus::Success;
+				Arguments.Kind = EAssetDecodedValueKind::Array;
+				Arguments.Name = TEXT("Arguments");
+				Arguments.TypeName = HistoryType == 1 ? TEXT("MapProperty") : TEXT("ArrayProperty");
+				Arguments.Value = FString::Printf(TEXT("%d arguments"), Count);
+
+				for (int32 Index = 0; Index < Count; ++Index)
+				{
+					FAssetDecodedPropertyValue Argument;
+					bool bOk = false;
+
+					if (HistoryType == 1)
+					{
+						FString Key;
+						FText StringError;
+						bOk = AssetSerializationPrimitives::ReadSerializedString(State.Reader, Key, StringError) && ReadArgumentValue(State, Key, Argument);
+					}
+					else if (HistoryType == 2)
+					{
+						bOk = ReadArgumentValue(State, FString::Printf(TEXT("{%d}"), Index), Argument);
+					}
+					else
+					{
+						bOk = ReadArgumentData(State, Index, Argument);
+					}
+
+					if (!bOk)
+					{
+						State.Error = State.Error.IsEmpty() ? FString::Printf(TEXT("Could not read format argument %d."), Index) : State.Error;
+						return false;
+					}
+
+					Argument.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Argument);
+					Arguments.Children.Add(MoveTemp(Argument));
+				}
+
+				Arguments.AbsoluteOffset = ArgumentsStart;
+				Arguments.Size = State.Reader.Tell() - ArgumentsStart;
+				Out.Children.Add(MoveTemp(Arguments));
+				Out.Value = FString::Printf(TEXT("Format(%s) with %d arguments"), *FormatString, Count);
+				return true;
+			}
+
+			case 4: // AsNumber
+			case 5: // AsPercent
+				if (!ReadFormatNumberBody(State))
+				{
+					return false;
+				}
+				Out.Value = FString::Printf(TEXT("%s(%s)"), HistoryType == 4 ? TEXT("AsNumber") : TEXT("AsPercent"), *Out.Value);
+				return true;
+
+			case 6: // AsCurrency: currency code first, then the number body.
+			{
+				FString Currency;
+				if (State.Reader.UEVer() >= VER_UE4_ADDED_CURRENCY_CODE_TO_FTEXT && !ReadString(State, TEXT("CurrencyCode"), Currency))
+				{
+					return false;
+				}
+
+				if (!ReadFormatNumberBody(State))
+				{
+					return false;
+				}
+
+				Out.Value = FString::Printf(TEXT("AsCurrency(%s %s)"), *Out.Value, *Currency);
+				return true;
+			}
+
+			case 7: // AsDate
+			{
+				int8 Style = 0;
+				FString TimeZone;
+				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), Style) || (State.Reader.UEVer() >= VER_UE4_FTEXT_HISTORY_DATE_TIMEZONE && !ReadString(State, TEXT("TimeZone"), TimeZone)) ||
+					!ReadCultureName(State))
+				{
+					return false;
+				}
+
+				Out.Value = FString::Printf(TEXT("AsDate(%s, %s)"), *Out.Children[1].Value, *DateTimeStyleName(Style));
+				return true;
+			}
+
+			case 8: // AsTime
+			{
+				int8 Style = 0;
+				FString TimeZone;
+				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("TimeStyle"), Style) || !ReadString(State, TEXT("TimeZone"), TimeZone) || !ReadCultureName(State))
+				{
+					return false;
+				}
+
+				Out.Value = FString::Printf(TEXT("AsTime(%s, %s)"), *Out.Children[1].Value, *DateTimeStyleName(Style));
+				return true;
+			}
+
+			case 9: // AsDateTime
+			{
+				int8 DateStyle = 0;
+				int8 TimeStyle = 0;
+				FString Pattern;
+				FString TimeZone;
+				if (!ReadDateTime(State) || !ReadStyle(State, TEXT("DateStyle"), DateStyle) || !ReadStyle(State, TEXT("TimeStyle"), TimeStyle) || (DateStyle == 5 && !ReadString(State, TEXT("CustomPattern"), Pattern)) ||
+					!ReadString(State, TEXT("TimeZone"), TimeZone) || !ReadCultureName(State))
+				{
+					return false;
+				}
+
+				Out.Value = FString::Printf(TEXT("AsDateTime(%s)"), *Out.Children[1].Value);
+				return true;
+			}
+
+			case 10: // Transform: source text, then 0 = ToLower, 1 = ToUpper.
+			{
+				FAssetDecodedPropertyValue Source;
+				if (!ReadNestedText(State, TEXT("SourceText"), Source))
+				{
+					return false;
+				}
+
+				const FString SourceString = Source.Value;
+				Out.Children.Add(MoveTemp(Source));
+
+				uint8 Transform = 0;
+				if (!ReadScalar<uint8>(State, TEXT("TransformType"), TEXT("ByteProperty"), [](const uint8 Value) { return FString(Value == 0 ? TEXT("ToLower") : (Value == 1 ? TEXT("ToUpper") : TEXT("Unknown"))); }, Transform))
+				{
+					return false;
+				}
+
+				Out.Value = FString::Printf(TEXT("%s(%s)"), Transform == 0 ? TEXT("ToLower") : (Transform == 1 ? TEXT("ToUpper") : TEXT("Transform")), *SourceString);
+				return true;
+			}
+
+			case 12: // TextGenerator: the generator's type name and its opaque contents.
+			{
+				FAssetDecodedPropertyValue Generator;
+				if (!DecodeNameFromReader(State.Context, State.Reader, State.ValueEnd, Generator))
+				{
+					State.Error = TEXT("Could not read the text generator type.");
+					return false;
+				}
+
+				Out.Children.Add(MakeTextChild(TEXT("GeneratorTypeID"), TEXT("NameProperty"), Generator.Value, Generator.AbsoluteOffset, Generator.Size));
+
+				int32 ContentSize = 0;
+				if (Generator.Value != TEXT("None"))
+				{
+					const int64 ContentStart = State.Reader.Tell();
+					if (!ReadBounded(State.Reader, State.ValueEnd, ContentSize) || ContentSize < 0 || State.Reader.Tell() + ContentSize > State.ValueEnd)
+					{
+						State.Error = TEXT("Could not read the text generator contents.");
+						return false;
+					}
+
+					State.Reader.Seek(State.Reader.Tell() + ContentSize);
+					Out.Children.Add(MakeTextChild(TEXT("GeneratorContents"), TEXT("ByteProperty"), FString::Printf(TEXT("%d bytes"), ContentSize), ContentStart, State.Reader.Tell() - ContentStart));
+				}
+
+				Out.Value = FString::Printf(TEXT("TextGenerator(%s)"), *Generator.Value);
+				return true;
+			}
+
+			default:
+				bOutUnsupported = true;
+				State.Error = FString::Printf(TEXT("FText history type %d is not supported."), static_cast<int32>(HistoryType));
+				return false;
+		}
+	}
+} // namespace TextHistoryDecoding
+
+/*
+ * Mirrors FText::SerializeText: uint32 Flags, int8 HistoryType, then a history-specific payload. The simple histories
+ * (none, base, string table) are read here; the others by TextHistoryDecoding::ReadHistory.
+ */
+static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue, const int32 Depth)
 {
 	const int64 Start = Reader.Tell();
 
@@ -840,6 +1333,14 @@ static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAs
 		}
 
 		OutValue.Value = OutValue.Children.Last().Value;
+
+		// Editor packages also store the developer notes of the text: a string, written after the source string. It is what
+		// keeps the next element of an array of texts aligned.
+		if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDevNotesToFText && (Context.Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0 &&
+			!ReadTextString(TEXT("DevNotes")))
+		{
+			return Fail(TEXT("Could not decode FText developer notes"));
+		}
 	}
 	else if (HistoryType == 11)
 	{
@@ -861,10 +1362,16 @@ static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	}
 	else
 	{
-		OutValue.Children.Reset();
-		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
-		OutValue.Error = FString::Printf(TEXT("FText history type %d is not supported."), static_cast<int32>(HistoryType));
-		return false;
+		TextHistoryDecoding::FState State{ Context, Reader, ValueEnd, OutValue, Depth, FString() };
+		bool bUnsupported = false;
+
+		if (!TextHistoryDecoding::ReadHistory(State, HistoryType, bUnsupported))
+		{
+			OutValue.Children.Reset();
+			OutValue.Status = bUnsupported ? EAssetPropertyDecodeStatus::Unsupported : EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Error = State.Error;
+			return false;
+		}
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
