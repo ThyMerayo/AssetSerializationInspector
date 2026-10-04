@@ -37,7 +37,7 @@ Planned next steps:
 - [x] Batch/project-wide save analysis: the no-op resave test over selected assets, folders or the whole project, with a text/JSON report (#13)
 - [x] Results window for a batch run (browse assets, filter, open one asset's first or second resave diff)
 - [x] Cross-engine/version comparison: compare two folders of assets with a grouped text/JSON report, and version-aware explanations in the two-file diff (#14)
-- [ ] Results window for a folder comparison (browse pairs, open one pair's diff)
+- [x] Results window for a folder comparison (browse pairs, filter, open one pair's diff)
 - [ ] Verify the folder comparison on packages that really were saved by different engine versions
 - [x] Additional property/native serializer coverage driven by real assets (coverage scan `ASI.DecodeCoverage`, gameplay tag and Vector2f structs; delegates and soft object path table fixed; GameplayEffectVersion and boxes done; FieldPath done, every tagged property in the project survey decodes; remaining gap: unversioned properties and native export data)
 - [ ] Persistent monitored-asset configuration
