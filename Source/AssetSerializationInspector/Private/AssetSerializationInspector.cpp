@@ -4,10 +4,14 @@
 
 #include "ContentBrowserMenuContexts.h"
 #include "DesktopPlatformModule.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "IDesktopPlatform.h"
+#include "ISourceControlRevision.h"
 #include "LevelEditor.h"
 #include "Misc/MessageDialog.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
 #include "ToolMenus.h"
@@ -22,6 +26,7 @@
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
 #include "Compare/AssetFolderComparison.h"
+#include "Compare/AssetSourceControlCompare.h"
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
@@ -39,6 +44,17 @@
 
 static const FName AssetSerializationInspectorTabName("Asset Serialization Inspector");
 static const FName DiffTabName(TEXT("Asset Serialization Diff"));
+
+static void NotifyFailure(const FText& Message)
+{
+	FNotificationInfo Info(Message);
+	Info.ExpireDuration = 8.0f;
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(SNotificationItem::CS_Fail);
+	}
+}
 
 #define LOCTEXT_NAMESPACE "FAssetSerializationInspectorModule"
 
@@ -202,6 +218,17 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 							FAssetMonitoringManager::Get().AddMonitoredAsset(PackageName);
 						}
 					})));
+			}
+
+			if (SelectedPackages.Num() == 1)
+			{
+				InSection.AddMenuEntry("CompareWithSourceControlRevision", LOCTEXT("CompareWithRevision", "Compare with Source Control Revision..."),
+					LOCTEXT("CompareWithRevisionTooltip",
+						"Compare the asset on disk with an earlier revision of it in source control (Perforce, Git or any other provider the editor is "
+						"connected to), and explain what changed."),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
+					FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::CompareWithSourceControlRevision, SelectedPackages[0]),
+						FCanExecuteAction::CreateLambda([]() { return AssetSourceControlCompare::IsAvailable(); })));
 			}
 
 			InSection.AddMenuEntry("RunNoOpResaveTest", LOCTEXT("NoOpResaveTest", "Run No-op Resave Test"),
@@ -517,31 +544,94 @@ void FAssetSerializationInspectorModule::OpenFolderComparisonPairDiff(const FStr
 	SlowTask.MakeDialog();
 	SlowTask.EnterProgressFrame(1.0f, FText::FromString(RelativePath));
 
-	FText OldError;
-	FText NewError;
-	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(LastFolderComparison->OldFolder, RelativePath), OldError);
-	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(LastFolderComparison->NewFolder, RelativePath), NewError);
+	FText Error;
+	const TSharedPtr<FAssetSerializationDiffSession> Session = FAssetSerializationDiffSession::FromFiles(
+		FPaths::Combine(LastFolderComparison->OldFolder, RelativePath), FPaths::Combine(LastFolderComparison->NewFolder, RelativePath), FName(*FPaths::GetBaseFilename(RelativePath)), Error);
 
-	if (!OldDocument.IsValid() || !NewDocument.IsValid())
+	if (!Session.IsValid())
 	{
-		FNotificationInfo Info(FText::Format(LOCTEXT("PairNotReadable", "The files could not be read again: {0}"), !OldDocument.IsValid() ? OldError : NewError));
-		Info.ExpireDuration = 8.0f;
-
-		if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
-		{
-			Notification->SetCompletionState(SNotificationItem::CS_Fail);
-		}
+		NotifyFailure(FText::Format(LOCTEXT("PairNotReadable", "The files could not be read again: {0}"), Error));
 		return;
 	}
 
-	const TSharedRef<FAssetSerializationDiffSession> Session = MakeShared<FAssetSerializationDiffSession>();
-	Session->Old.Document = OldDocument;
-	Session->Old.Traces = FAssetPackageFieldDecoder::Decode(*OldDocument);
-	Session->New.Document = NewDocument;
-	Session->New.Traces = FAssetPackageFieldDecoder::Decode(*NewDocument);
-	Session->DiffResult = AssetPackageDiff::Compare(*OldDocument, *NewDocument, Session->Old.Traces.Get(), Session->New.Traces.Get());
-	Session->Analysis = FAssetSaveAnalyzer::Analyze(Session->DiffResult.GetValue(), *OldDocument, *NewDocument);
-	Session->PackageName = FName(*FPaths::GetBaseFilename(RelativePath));
+	ShowDiffSession(Session);
+}
+
+void FAssetSerializationInspectorModule::CompareWithSourceControlRevision(const FName PackageName)
+{
+	FString Filename;
+	if (!FPackageName::DoesPackageExist(PackageName.ToString(), &Filename))
+	{
+		NotifyFailure(FText::Format(LOCTEXT("RevisionNoFile", "{0} has no file on disk to compare."), FText::FromName(PackageName)));
+		return;
+	}
+
+	Filename = FPaths::ConvertRelativePathToFull(Filename);
+
+	TArray<AssetSourceControlCompare::FRevision> Revisions;
+	FString Error;
+	{
+		FScopedSlowTask SlowTask(1.0f, LOCTEXT("ReadingHistory", "Asking source control for the history..."));
+		SlowTask.MakeDialog();
+		SlowTask.EnterProgressFrame(1.0f);
+
+		if (!AssetSourceControlCompare::FetchHistory(Filename, Revisions, Error))
+		{
+			NotifyFailure(FText::FromString(Error));
+			return;
+		}
+	}
+
+	// A menu at the cursor lists the revisions, newest first. The asset on disk is compared with the one picked.
+	constexpr int32 MaximumRevisions = 25;
+	const TArray<FAssetRevisionInfo> Infos = AssetSourceControlCompare::DescribeAll(Revisions);
+
+	FMenuBuilder Menu(true, nullptr);
+	Menu.BeginSection("Revisions", FText::Format(LOCTEXT("RevisionsHeading", "Compare {0} on disk with revision..."), FText::FromString(FPackageName::GetShortName(PackageName))));
+	for (const FAssetRevisionInfo& Info : Infos)
+	{
+		if (Info.Index >= MaximumRevisions)
+		{
+			break;
+		}
+
+		const FText Label = FText::FromString(Info.Index == 0 ? Info.ToLabel() + TEXT("  (latest)") : Info.ToLabel());
+		Menu.AddMenuEntry(
+			Label, FText::GetEmpty(), FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::OpenRevisionDiff, PackageName, Filename, Revisions[Info.Index])));
+	}
+	Menu.EndSection();
+
+	FSlateApplication::Get().PushMenu(FSlateApplication::Get().GetActiveTopLevelWindow().ToSharedRef(), FWidgetPath(), Menu.MakeWidget(), FSlateApplication::Get().GetCursorPos(),
+		FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
+void FAssetSerializationInspectorModule::OpenRevisionDiff(const FName PackageName, const FString Filename, const TSharedPtr<ISourceControlRevision, ESPMode::ThreadSafe> Revision)
+{
+	if (!Revision.IsValid())
+	{
+		return;
+	}
+
+	FScopedSlowTask SlowTask(2.0f, LOCTEXT("ReadingRevision", "Getting the revision..."));
+	SlowTask.MakeDialog();
+
+	FString RevisionFile;
+	FString Error;
+	SlowTask.EnterProgressFrame(1.0f, FText::FromString(Revision->GetRevision()));
+	if (!AssetSourceControlCompare::DownloadRevision(*Revision, Filename, RevisionFile, Error))
+	{
+		NotifyFailure(FText::FromString(Error));
+		return;
+	}
+
+	SlowTask.EnterProgressFrame(1.0f, LOCTEXT("ComparingRevision", "Comparing..."));
+	FText ReadError;
+	const TSharedPtr<FAssetSerializationDiffSession> Session = FAssetSerializationDiffSession::FromFiles(RevisionFile, Filename, PackageName, ReadError);
+	if (!Session.IsValid())
+	{
+		NotifyFailure(FText::Format(LOCTEXT("RevisionNotReadable", "The revision could not be read: {0}"), ReadError));
+		return;
+	}
 
 	ShowDiffSession(Session);
 }

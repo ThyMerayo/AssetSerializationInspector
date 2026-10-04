@@ -31,7 +31,10 @@
 #include "Readers/AssetPackageReader.h"
 #include "Report/AssetAnalysisReport.h"
 #include "Report/AssetReportWriter.h"
+#include "Save/AssetSaveAnalyzer.h"
 #include "Save/AssetSaveHistoryManager.h"
+#include "Save/AssetSaveObserver.h"
+#include "Trace/AssetPackageFieldDecoder.h"
 #include "Widgets/SSelectableRichText.h"
 
 namespace
@@ -872,6 +875,30 @@ TSharedRef<FAssetSerializationDiffSession> FAssetSerializationDiffSession::FromO
 	Session->ObservedSaveId = Save.SaveId;
 	Session->PackageName = Save.PackageName;
 
+	return Session;
+}
+
+TSharedPtr<FAssetSerializationDiffSession> FAssetSerializationDiffSession::FromFiles(const FString& OldFilename, const FString& NewFilename, const FName PackageName, FText& OutError)
+{
+	FText OldError;
+	FText NewError;
+	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(OldFilename, OldError);
+	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(NewFilename, NewError);
+
+	if (!OldDocument.IsValid() || !NewDocument.IsValid())
+	{
+		OutError = !OldDocument.IsValid() ? OldError : NewError;
+		return nullptr;
+	}
+
+	const TSharedRef<FAssetSerializationDiffSession> Session = MakeShared<FAssetSerializationDiffSession>();
+	Session->Old.Document = OldDocument;
+	Session->Old.Traces = FAssetPackageFieldDecoder::Decode(*OldDocument);
+	Session->New.Document = NewDocument;
+	Session->New.Traces = FAssetPackageFieldDecoder::Decode(*NewDocument);
+	Session->DiffResult = AssetPackageDiff::Compare(*OldDocument, *NewDocument, Session->Old.Traces.Get(), Session->New.Traces.Get());
+	Session->Analysis = FAssetSaveAnalyzer::Analyze(Session->DiffResult.GetValue(), *OldDocument, *NewDocument);
+	Session->PackageName = PackageName;
 	return Session;
 }
 

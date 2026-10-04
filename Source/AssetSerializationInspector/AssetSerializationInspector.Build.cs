@@ -46,6 +46,7 @@ public class AssetSerializationInspector : ModuleRules
                 "Projects",
                 "Slate",
                 "SlateCore",
+                "SourceControl",
                 "ToolMenus",
                 "UnrealEd",
             }

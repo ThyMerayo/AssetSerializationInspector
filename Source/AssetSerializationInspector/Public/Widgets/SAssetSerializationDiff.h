@@ -57,6 +57,9 @@ struct FAssetSerializationDiffSession
 
 	/** The session that shows an observed save: its two packages, their traces, the diff and the save analysis. */
 	static TSharedRef<FAssetSerializationDiffSession> FromObservedSave(const FObservedAssetSave& Save);
+
+	/** The session that compares two package files on disk. Null, with the reason in OutError, when either cannot be read. */
+	static TSharedPtr<FAssetSerializationDiffSession> FromFiles(const FString& OldFilename, const FString& NewFilename, FName PackageName, FText& OutError);
 };
 
 /**
