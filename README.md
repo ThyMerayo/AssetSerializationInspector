@@ -537,6 +537,8 @@ The plugin records save-related package changes only for monitored assets.
 
 Monitoring can later be disabled from the same context menu.
 
+The list of monitored assets is a per-user preference: it is saved in the editor's user settings for the project (under the project's `Saved` folder, not into a `Default*.ini` that would be committed) and is still there after restarting the editor. It can also be edited in *Editor Preferences -> Plugins -> Asset Serialization Inspector*, and the change applies at once. Monitoring follows an asset when it is renamed or moved, and stops when it is deleted.
+
 Use the search box and the *Added / Removed / Modified / Moved* toggles to narrow a large diff. **Export report...** saves the whole comparison.
 
 ### Reviewing a monitored save

@@ -2,7 +2,10 @@
 
 #include "Save/AssetSaveObserver.h"
 
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/FileManager.h"
+#include "Misc/CoreDelegates.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "UObject/ObjectSaveContext.h"
@@ -220,13 +223,41 @@ FAssetMonitoringManager& FAssetMonitoringManager::Get()
 	return Instance;
 }
 
-FAssetMonitoringManager::FAssetMonitoringManager()
+FAssetMonitoringManager::FAssetMonitoringManager(const bool bInPersistent) : bPersistent(bInPersistent)
 {
-	const UAssetSerializationInspectorSettings* Settings = GetDefault<UAssetSerializationInspectorSettings>();
-
-	for (const FName PackageName : Settings->MonitoredPackages)
+	if (!bPersistent)
 	{
-		MonitoredPackages.Add(PackageName);
+		return;
+	}
+
+	ReloadFromSettings();
+
+	// Edits made to the setting (the editor preferences, or a reloaded config) change what is monitored at once.
+	SettingsChangedHandle = GetMutableDefault<UAssetSerializationInspectorSettings>()->OnSettingChanged().AddLambda([this](UObject*, FPropertyChangedEvent&) { ReloadFromSettings(); });
+
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	AssetRenamedHandle = AssetRegistry.OnAssetRenamed().AddRaw(this, &FAssetMonitoringManager::OnRegistryAssetRenamed);
+	AssetRemovedHandle = AssetRegistry.OnAssetRemoved().AddRaw(this, &FAssetMonitoringManager::OnRegistryAssetRemoved);
+}
+
+FAssetMonitoringManager::~FAssetMonitoringManager()
+{
+	// The shared instance is destroyed at process exit, when the object system and the asset registry may already be gone.
+	if (!bPersistent || IsEngineExitRequested() || !UObjectInitialized())
+	{
+		return;
+	}
+
+	if (UAssetSerializationInspectorSettings* Settings = GetMutableDefault<UAssetSerializationInspectorSettings>())
+	{
+		Settings->OnSettingChanged().Remove(SettingsChangedHandle);
+	}
+
+	if (FModuleManager::Get().IsModuleLoaded(TEXT("AssetRegistry")))
+	{
+		IAssetRegistry& AssetRegistry = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		AssetRegistry.OnAssetRenamed().Remove(AssetRenamedHandle);
+		AssetRegistry.OnAssetRemoved().Remove(AssetRemovedHandle);
 	}
 }
 
@@ -237,18 +268,72 @@ bool FAssetMonitoringManager::IsMonitored(const FName PackageName) const
 
 void FAssetMonitoringManager::AddMonitoredAsset(const FName PackageName)
 {
-	MonitoredPackages.Add(PackageName);
+	bool bAlreadyMonitored = false;
+	MonitoredPackages.Add(PackageName, &bAlreadyMonitored);
 
-	UAssetSerializationInspectorSettings* Settings = GetMutableDefault<UAssetSerializationInspectorSettings>();
-	Settings->MonitoredPackages.Add(PackageName);
-	Settings->SaveConfig();
+	if (!bAlreadyMonitored)
+	{
+		SaveToSettings();
+	}
 }
 
 void FAssetMonitoringManager::RemoveMonitoredAsset(const FName PackageName)
 {
-	MonitoredPackages.Remove(PackageName);
+	if (MonitoredPackages.Remove(PackageName) > 0)
+	{
+		SaveToSettings();
+	}
+}
+
+void FAssetMonitoringManager::SetMonitoredAssets(const TArray<FName>& PackageNames)
+{
+	MonitoredPackages.Reset();
+	MonitoredPackages.Append(PackageNames);
+}
+
+void FAssetMonitoringManager::HandleAssetRenamed(const FName OldPackageName, const FName NewPackageName)
+{
+	if (OldPackageName == NewPackageName || !MonitoredPackages.Contains(OldPackageName))
+	{
+		return;
+	}
+
+	MonitoredPackages.Remove(OldPackageName);
+	MonitoredPackages.Add(NewPackageName);
+	SaveToSettings();
+}
+
+void FAssetMonitoringManager::HandleAssetRemoved(const FName PackageName)
+{
+	RemoveMonitoredAsset(PackageName);
+}
+
+void FAssetMonitoringManager::SaveToSettings() const
+{
+	if (!bPersistent)
+	{
+		return;
+	}
 
 	UAssetSerializationInspectorSettings* Settings = GetMutableDefault<UAssetSerializationInspectorSettings>();
-	Settings->MonitoredPackages.Remove(PackageName);
+
+	// Writing the list triggers no change notification of its own, so the manager's set is not reloaded under it.
+	Settings->MonitoredPackages = MonitoredPackages.Array();
+	Settings->MonitoredPackages.Sort(FNameLexicalLess());
 	Settings->SaveConfig();
+}
+
+void FAssetMonitoringManager::ReloadFromSettings()
+{
+	SetMonitoredAssets(GetDefault<UAssetSerializationInspectorSettings>()->MonitoredPackages);
+}
+
+void FAssetMonitoringManager::OnRegistryAssetRenamed(const FAssetData& NewAsset, const FString& OldObjectPath)
+{
+	HandleAssetRenamed(FName(*FPackageName::ObjectPathToPackageName(OldObjectPath)), NewAsset.PackageName);
+}
+
+void FAssetMonitoringManager::OnRegistryAssetRemoved(const FAssetData& Asset)
+{
+	HandleAssetRemoved(Asset.PackageName);
 }
