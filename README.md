@@ -96,7 +96,7 @@ Decoded property values can be compared semantically instead of only as changed 
 - Byte and enum properties (enum values are decoded by name)
 - Field paths (`FieldPathProperty`), shown as owner and property path
 - Delegates (single and multicast; bindings with payloads are not decoded)
-- Natively serialized structs: gameplay tags and tag containers, single-precision 2D vectors, boxes, gameplay effect versions, per-platform values (`PerPlatformInt/Float/Bool`), rich curve keys
+- Natively serialized structs: gameplay tags and tag containers, single-precision 2D vectors, boxes, gameplay effect versions, per-platform values (`PerPlatformInt/Float/Bool`), rich curve keys, material inputs (`ExpressionInput` and the typed ones), Sequencer frame ranges and float/double channels, Niagara variables, single-precision vectors and quaternions, integer vectors, frame numbers, date times, optionals and sparse delegates; a struct that a tag says writes itself natively and that is not recognized is read as tagged properties only when that parses cleanly, and is otherwise reported as natively serialized instead of being read as garbage
 - Text properties: empty, base and string-table texts, and the histories that carry arguments (named, ordered and Blueprint-argument formats with their arguments, numbers, percents, currencies, dates and times, case transforms, text generators as their type and size); a history type this build does not know is reported as unsupported
 - Hard UObject/package references, shown as stable paths rather than table indices
 - Soft object/class references (resolved through the package's soft object path table)

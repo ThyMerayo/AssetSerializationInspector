@@ -261,6 +261,7 @@ namespace
 			Node->Offset = Tag.ValueOffset - Export.SerialOffset;
 			Node->Size = Tag.Size;
 			Node->Parent = OutTrace.Root;
+			Node->bBinaryOrNative = Tag.SerializeType == EAssetPropertyTagSerializeType::BinaryOrNative;
 			if (Tag.Type.Name == TEXT("BoolProperty"))
 			{
 				Node->bHasInlineBoolValue = true;

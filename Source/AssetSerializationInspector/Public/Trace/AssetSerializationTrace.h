@@ -33,6 +33,9 @@ struct FAssetSerializationTraceNode
 	int32 ArrayIndex = 0;
 
 	bool bHasInlineBoolValue = false;
+
+	/** True when the property tag says the value is written by the type's own serializer rather than as tagged properties. */
+	bool bBinaryOrNative = false;
 	bool bInlineBoolValue = false;
 
 	TArray<TSharedPtr<FAssetSerializationTraceNode>> Children;
