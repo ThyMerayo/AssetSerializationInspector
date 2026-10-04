@@ -36,6 +36,8 @@ private:
 	void RunBatchResaveOnPaths(TArray<FString> PackagePaths, FString Scope);
 	void ShowBatchResaveNotification(const FAssetBatchResaveResult& Result);
 	void SaveBatchResaveReport();
+	void ShowBatchResultsWindow();
+	void OpenBatchEntryDiff(FName PackageName, bool bSecondResave);
 	void CompareAssetFolders();
 	void ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result);
 	void SaveFolderComparisonReport();
@@ -49,6 +51,9 @@ private:
 
 	/** The latest batch run, kept so its report can be saved from the notification. */
 	TSharedPtr<FAssetBatchResaveResult> LastBatchResult;
+
+	/** The window that lists the latest batch run's assets. */
+	TWeakPtr<class SWindow> BatchResultsWindow;
 
 	/** The latest folder comparison, kept so its report can be saved from the notification. */
 	TSharedPtr<FAssetFolderComparisonResult> LastFolderComparison;

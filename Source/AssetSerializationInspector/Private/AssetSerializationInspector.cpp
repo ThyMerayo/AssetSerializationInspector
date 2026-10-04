@@ -15,6 +15,7 @@
 #include "UObject/UObjectGlobals.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/SWindow.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -26,6 +27,7 @@
 #include "Save/AssetBatchResave.h"
 #include "Save/AssetNoOpResaveTest.h"
 #include "Save/AssetSaveObserver.h"
+#include "Widgets/SAssetBatchResults.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
 
@@ -122,6 +124,9 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					"saved and whether they do so every time. The assets on disk are not modified."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
 				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
+			Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
+				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
+				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
 			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
 				LOCTEXT("CompareAssetFoldersTooltip",
 					"Compare the .uasset files of two folders on disk, for example a project before and after moving it to another engine "
@@ -286,6 +291,63 @@ void FAssetSerializationInspectorModule::RunBatchResaveTest(TArray<FName> Packag
 
 	LastBatchResult = MakeShared<FAssetBatchResaveResult>(MoveTemp(Result));
 	ShowBatchResaveNotification(*LastBatchResult);
+	ShowBatchResultsWindow();
+}
+
+void FAssetSerializationInspectorModule::ShowBatchResultsWindow()
+{
+	if (!LastBatchResult.IsValid())
+	{
+		return;
+	}
+
+	const TSharedRef<SAssetBatchResults> Results = SNew(SAssetBatchResults)
+														.Result(LastBatchResult)
+														.OnOpenDiff(FOnOpenBatchResaveDiff::CreateRaw(this, &FAssetSerializationInspectorModule::OpenBatchEntryDiff))
+														.OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport));
+
+	// A new run replaces the content of the window that is already open.
+	if (const TSharedPtr<SWindow> Existing = BatchResultsWindow.Pin())
+	{
+		Existing->SetContent(Results);
+		Existing->BringToFront();
+		return;
+	}
+
+	const TSharedRef<SWindow> Window = SNew(SWindow)
+										   .Title(LOCTEXT("BatchResultsTitle", "No-op Resave Results"))
+										   .ClientSize(FVector2D(960.0f, 640.0f))
+										   .SupportsMinimize(true)
+										   .SupportsMaximize(true)[Results];
+
+	BatchResultsWindow = Window;
+	FSlateApplication::Get().AddWindow(Window);
+}
+
+void FAssetSerializationInspectorModule::OpenBatchEntryDiff(const FName PackageName, const bool bSecondResave)
+{
+	// The batch run kept only condensed results, so the comparison is produced again for this one asset.
+	FScopedSlowTask SlowTask(1.0f, LOCTEXT("RerunningNoOpResaveTest", "Testing the asset again..."));
+	SlowTask.MakeDialog();
+	SlowTask.EnterProgressFrame(1.0f, FText::FromString(FPackageName::GetShortName(PackageName)));
+
+	UPackage* Package = LoadPackage(nullptr, *PackageName.ToString(), LOAD_None);
+	const FNoOpResaveResult Result = AssetNoOpResaveTest::Run(Package);
+	const TSharedPtr<FObservedAssetSave> Save = bSecondResave ? Result.SecondResave : Result.FirstResave;
+
+	if (Result.bSucceeded && Save.IsValid() && Save->HasChanges())
+	{
+		OpenObservedSaveDiff(Save);
+		return;
+	}
+
+	FNotificationInfo Info(Result.bSucceeded ? LOCTEXT("NoChangesThisTime", "Resaving the asset changed nothing this time, so there is no comparison to open.") : FText::Format(LOCTEXT("RerunFailed", "The asset could not be tested again: {0}"), Result.Error));
+	Info.ExpireDuration = 8.0f;
+
+	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+	{
+		Notification->SetCompletionState(SNotificationItem::CS_Fail);
+	}
 }
 
 void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAssetBatchResaveResult& Result)
@@ -299,6 +361,9 @@ void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAsse
 	FNotificationInfo Info(Message);
 	Info.ExpireDuration = 20.0f;
 	Info.bFireAndForget = true;
+	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("ViewBatchResultsButton", "View Results"),
+		LOCTEXT("ViewBatchResultsTooltip", "Browse the assets of this run, see what resaving changed in each and open its comparison."),
+		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveBatchReportButton", "Save Report..."),
 		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text or JSON report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport), SNotificationItem::CS_None));
