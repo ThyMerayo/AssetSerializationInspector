@@ -141,7 +141,7 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
 			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
 				LOCTEXT("CompareAssetFoldersTooltip",
-					"Compare the .uasset files of two folders on disk, for example a project before and after moving it to another engine "
+					"Compare the .uasset and .umap files of two folders on disk, for example a project before and after moving it to another engine "
 					"version. Files are paired by relative path, and the report groups what changed and the engine versions involved."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Diff"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::CompareAssetFolders)));
 		}

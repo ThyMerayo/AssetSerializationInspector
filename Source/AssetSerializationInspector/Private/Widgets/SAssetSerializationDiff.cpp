@@ -253,7 +253,7 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 {
 	DiffSession = InArgs._Session.IsValid() ? InArgs._Session : MakeShared<FAssetSerializationDiffSession>();
 
-	StatusText = LOCTEXT("ReadyStatus", "Select two .uasset files to compare.");
+	StatusText = LOCTEXT("ReadyStatus", "Select two package files (.uasset or .umap) to compare.");
 
 	HexDiffStyle = MakeShared<FSlateStyleSet>(TEXT("AssetSerializationHexDiffStyle"));
 	FTextBlockStyle NormalStyle = FAppStyle::GetWidgetStyle<FTextBlockStyle>(TEXT("NormalText"));
@@ -944,7 +944,7 @@ bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& 
 
 	TArray<FString> SelectedFiles;
 	const bool bSelected = DesktopPlatform->OpenFileDialog(
-		ParentWindowHandle, DialogTitle.ToString(), FPaths::ProjectContentDir(), TEXT(""), TEXT("Unreal Asset (*.uasset)|*.uasset"), EFileDialogFlags::None, SelectedFiles);
+		ParentWindowHandle, DialogTitle.ToString(), FPaths::ProjectContentDir(), TEXT(""), TEXT("Unreal Asset (*.uasset;*.umap)|*.uasset;*.umap"), EFileDialogFlags::None, SelectedFiles);
 
 	if (!bSelected || SelectedFiles.IsEmpty())
 	{
@@ -1088,7 +1088,7 @@ FReply SAssetSerializationDiff::HandleCompareClicked()
 
 	if (OldFilename.IsEmpty() || NewFilename.IsEmpty())
 	{
-		StatusText = LOCTEXT("MissingFilenames", "Select both an old and a new .uasset file.");
+		StatusText = LOCTEXT("MissingFilenames", "Select both an old and a new package file (.uasset or .umap).");
 		return FReply::Handled();
 	}
 

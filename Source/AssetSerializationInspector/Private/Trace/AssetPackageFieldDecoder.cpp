@@ -141,6 +141,15 @@ namespace
 		OutTrace.Root->Offset = 0;
 		OutTrace.Root->Size = Export.SerialSize;
 
+		// Cooked packages usually save their properties without tags: a bit mask of which properties are set, then the values in the
+		// order of the class's property list. Reading that needs the class, so the export is reported as one undecoded range rather
+		// than read as tags (which would produce garbage).
+		if ((Document.PackageSummary.GetPackageFlags() & PKG_UnversionedProperties) != 0)
+		{
+			AddUnknownRange(OutTrace, 0, Export.SerialSize, TEXT("Properties saved without tags (unversioned property serialization)"));
+			return true;
+		}
+
 		/*
 		 * Before SCRIPT_SERIALIZATION_OFFSET the export map does not say where the tagged properties are. For most objects
 		 * they are the first thing in the export, so try the whole export; the tag reader stops and reports whatever is left as

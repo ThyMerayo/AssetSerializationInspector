@@ -197,7 +197,7 @@ const FAssetArchetypeResolver::FLoadedPackage* FAssetArchetypeResolver::FindOrLo
 	}
 
 	FString Filename;
-	if (!FPackageName::TryConvertLongPackageNameToFilename(PackageName, Filename, TEXT(".uasset")) || !FPaths::FileExists(Filename))
+	if (!FPackageName::DoesPackageExist(PackageName, &Filename))
 	{
 		OutMessage = FString::Printf(TEXT("The package file for '%s' could not be found on disk."), *PackageName);
 		return nullptr;

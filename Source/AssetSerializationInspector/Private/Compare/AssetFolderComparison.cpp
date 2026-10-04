@@ -140,6 +140,10 @@ TArray<FString> AssetFolderComparison::FindPackageFiles(const FString& Folder)
 	TArray<FString> Files;
 	IFileManager::Get().FindFilesRecursive(Files, *Folder, TEXT("*.uasset"), true, false);
 
+	TArray<FString> Maps;
+	IFileManager::Get().FindFilesRecursive(Maps, *Folder, TEXT("*.umap"), true, false);
+	Files.Append(Maps);
+
 	FString Root = FPaths::ConvertRelativePathToFull(Folder);
 	FPaths::NormalizeFilename(Root);
 	if (!Root.EndsWith(TEXT("/")))

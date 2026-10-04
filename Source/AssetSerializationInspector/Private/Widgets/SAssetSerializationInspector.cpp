@@ -173,11 +173,11 @@ void SAssetSerializationInspector::Construct(const FArguments& InArgs)
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f)[SNew(SHorizontalBox)
 
 			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(
-				0.0f, 0.0f, 8.0f, 0.0f)[SAssignNew(AssetPathTextBox, SEditableTextBox).HintText(LOCTEXT("AssetPathHint", "Enter a package path or .uasset filename"))]
+				0.0f, 0.0f, 8.0f, 0.0f)[SAssignNew(AssetPathTextBox, SEditableTextBox).HintText(LOCTEXT("AssetPathHint", "Enter a package path or .uasset/.umap filename"))]
 
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)[SNew(SButton)
 					.Text(LOCTEXT("BrowseButton", "Browse..."))
-					.ToolTipText(LOCTEXT("BrowseButtonTooltip", "Select a .uasset file from disk"))
+					.ToolTipText(LOCTEXT("BrowseButtonTooltip", "Select a .uasset or .umap file from disk"))
 					.OnClicked(this, &SAssetSerializationInspector::HandleBrowseClicked)]
 
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)[SNew(SButton)
@@ -316,8 +316,8 @@ FReply SAssetSerializationInspector::HandleBrowseClicked()
 
 	TArray<FString> SelectedFiles;
 
-	const bool bSelectedFile = DesktopPlatform->OpenFileDialog(
-		ParentWindowHandle, LOCTEXT("OpenAssetDialogTitle", "Select Unreal Asset").ToString(), DefaultPath, TEXT(""), TEXT("Unreal Asset (*.uasset)|*.uasset"), EFileDialogFlags::None, SelectedFiles);
+	const bool bSelectedFile = DesktopPlatform->OpenFileDialog(ParentWindowHandle, LOCTEXT("OpenAssetDialogTitle", "Select Unreal Asset").ToString(), DefaultPath, TEXT(""),
+		TEXT("Unreal Asset (*.uasset;*.umap)|*.uasset;*.umap"), EFileDialogFlags::None, SelectedFiles);
 
 	if (!bSelectedFile || SelectedFiles.IsEmpty())
 	{
@@ -475,7 +475,7 @@ FText SAssetSerializationInspector::GetHexPreviewText() const
 {
 	if (!Document.IsValid())
 	{
-		return LOCTEXT("NoDocumentForHex", "Load a .uasset file to display its bytes.");
+		return LOCTEXT("NoDocumentForHex", "Load a package file to display its bytes.");
 	}
 
 	if (!SelectedNode.IsValid())
