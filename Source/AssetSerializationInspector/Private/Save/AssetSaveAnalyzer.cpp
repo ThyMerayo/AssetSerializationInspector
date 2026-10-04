@@ -191,8 +191,9 @@ static FText DescribeSizeChange(const int64 OldSize, const int64 NewSize)
 		return FText::GetEmpty();
 	}
 
-	return FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "SizeChange", "{0} by {1} bytes ({2} -> {3})"), Delta > 0 ? NSLOCTEXT("AssetSaveAnalyzer", "Grew", "grew") : NSLOCTEXT("AssetSaveAnalyzer", "Shrank", "shrank"),
-		FText::AsNumber(FMath::Abs(Delta)), FText::AsNumber(OldSize), FText::AsNumber(NewSize));
+	return FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "SizeChange", "{0} by {1} bytes ({2} -> {3})"),
+		Delta > 0 ? NSLOCTEXT("AssetSaveAnalyzer", "Grew", "grew") : NSLOCTEXT("AssetSaveAnalyzer", "Shrank", "shrank"), FText::AsNumber(FMath::Abs(Delta)), FText::AsNumber(OldSize),
+		FText::AsNumber(NewSize));
 }
 
 static FAssetSaveExplanationEntry BuildHeaderFieldExplanation(const FAssetPackageDiffEntry& Field)
@@ -249,7 +250,9 @@ static FAssetSaveExplanationEntry BuildHeaderRegionExplanation(const FAssetPacka
 		default:
 		{
 			const FText SizeChange = DescribeSizeChange(Region.OldSize, Region.NewSize);
-			Result.Description = !SizeChange.IsEmpty() ? SizeChange : FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderTableBytesChanged", "{0} of {1} bytes changed."), FText::AsNumber(Region.ChangedByteCount), FText::AsNumber(Region.OldSize));
+			Result.Description = !SizeChange.IsEmpty()
+				? SizeChange
+				: FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderTableBytesChanged", "{0} of {1} bytes changed."), FText::AsNumber(Region.ChangedByteCount), FText::AsNumber(Region.OldSize));
 			break;
 		}
 	}
@@ -313,10 +316,12 @@ static void AnalyzeHeader(const FAssetPackageDiffEntry& Header, FAssetSaveAnalys
 	}
 
 	const FText SizeChange = DescribeSizeChange(Header.OldSize, Header.NewSize);
-	FText Description = SizeChange.IsEmpty() ? NSLOCTEXT("AssetSaveAnalyzer", "HeaderSameSize", "The header kept its size.") : FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderSizeChanged", "The header {0}."), SizeChange);
+	FText Description = SizeChange.IsEmpty() ? NSLOCTEXT("AssetSaveAnalyzer", "HeaderSameSize", "The header kept its size.")
+											 : FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderSizeChanged", "The header {0}."), SizeChange);
 	if (MovedTables > 0)
 	{
-		Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderMovedTables", "{0} {1} other tables were only moved (their stored offsets shifted)."), Description, FText::AsNumber(MovedTables));
+		Description =
+			FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderMovedTables", "{0} {1} other tables were only moved (their stored offsets shifted)."), Description, FText::AsNumber(MovedTables));
 	}
 
 	Result.Description = Description;

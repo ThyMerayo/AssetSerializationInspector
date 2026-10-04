@@ -373,7 +373,8 @@ bool FAssetArchetypeResolver_ResolvesSetNestedInStruct::RunTest(const FString& P
 
 	// Removing an element the defaults do not have is inconsistent, so the delta is refused rather than guessed.
 	FAssetArchetypeResolver LoneResolver(Package.Document, Package.Traces);
-	TestFalse(TEXT("A delta that removes what the defaults lack is refused"), LoneResolver.ResolveFinalNestedContainerValue(Lone, TEXT("Settings"), 0, { TEXT("Tags") }, LoneStruct.Children[0], Final, Message));
+	TestFalse(TEXT("A delta that removes what the defaults lack is refused"),
+		LoneResolver.ResolveFinalNestedContainerValue(Lone, TEXT("Settings"), 0, { TEXT("Tags") }, LoneStruct.Children[0], Final, Message));
 
 	return true;
 }
@@ -391,7 +392,8 @@ bool FAssetArchetypeResolver_DescribesBlueprintVariableDefaults::RunTest(const F
 	}
 
 	FText Error;
-	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
+	const TSharedPtr<FAssetPackageDocument> Document =
+		FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
 	if (!TestTrue(TEXT("The fixture loads"), Document.IsValid()))
 	{
 		return false;
@@ -462,8 +464,8 @@ bool FAssetArchetypeResolver_DescribesBlueprintVariableDefaults::RunTest(const F
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection, "AssetSerializationInspector.Serialization.AssetArchetypeResolver.ReadsNativeDefaultsFromLiveReflection",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection,
+	"AssetSerializationInspector.Serialization.AssetArchetypeResolver.ReadsNativeDefaultsFromLiveReflection", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection::RunTest(const FString& Parameters)
 {
@@ -474,7 +476,8 @@ bool FAssetArchetypeResolver_ReadsNativeDefaultsFromLiveReflection::RunTest(cons
 	}
 
 	FText Error;
-	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
+	const TSharedPtr<FAssetPackageDocument> Document =
+		FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"), TEXT("BP_BOX50.uasset")), Error);
 	if (!TestTrue(TEXT("The fixture loads"), Document.IsValid()))
 	{
 		return false;

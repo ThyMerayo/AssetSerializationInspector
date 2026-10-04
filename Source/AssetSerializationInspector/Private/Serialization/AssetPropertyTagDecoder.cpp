@@ -278,7 +278,8 @@ static bool ReadLegacyTagRemainder(const FAssetPackageDocument& Document, FAsset
 
 	if (Reader.IsError())
 	{
-		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyHeaderReadFailed", "Could not read the tag of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
+		OutError = FText::Format(
+			NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyHeaderReadFailed", "Could not read the tag of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
 		return false;
 	}
 
@@ -353,7 +354,8 @@ static bool ReadLegacyTagRemainder(const FAssetPackageDocument& Document, FAsset
 
 	if (!bTypeFieldsRead)
 	{
-		OutError = FText::Format(NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyTypeReadFailed", "Could not read the type of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
+		OutError = FText::Format(
+			NSLOCTEXT("AssetPropertyTagDecoder", "LegacyPropertyTypeReadFailed", "Could not read the type of property '{0}' (older package format)."), FText::FromString(OutTag.ResolvedName));
 		return false;
 	}
 

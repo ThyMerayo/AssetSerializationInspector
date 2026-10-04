@@ -23,7 +23,8 @@ namespace AssetBatchResultsTestUtils
 	}
 } // namespace AssetBatchResultsTestUtils
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBatchResults_DescribesAnEntry, "AssetSerializationInspector.Widgets.AssetBatchResults.DescribesAnEntry", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetBatchResults_DescribesAnEntry, "AssetSerializationInspector.Widgets.AssetBatchResults.DescribesAnEntry", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetBatchResults_DescribesAnEntry::RunTest(const FString& Parameters)
 {
@@ -35,8 +36,10 @@ bool FAssetBatchResults_DescribesAnEntry::RunTest(const FString& Parameters)
 	Unstable.SecondResaveChanges.Add({ TEXT("PropertyValueChanged"), TEXT("Counter"), TEXT("1 -> 2") });
 
 	TestEqual(TEXT("An unstable asset"), SAssetBatchResults::GetOutcomeText(Unstable).ToString(), FString(TEXT("Unstable")));
-	TestEqual(TEXT("A normalized asset"), SAssetBatchResults::GetOutcomeText(MakeEntry(TEXT("/Game/N"), EAssetBatchResaveStatus::Tested, ENoOpResaveVerdict::NormalizedOnFirstSave)).ToString(), FString(TEXT("Normalized on first save")));
-	TestEqual(TEXT("A skipped asset"), SAssetBatchResults::GetOutcomeText(MakeEntry(TEXT("/Game/S"), EAssetBatchResaveStatus::Skipped, ENoOpResaveVerdict::Stable)).ToString(), FString(TEXT("Skipped")));
+	TestEqual(TEXT("A normalized asset"), SAssetBatchResults::GetOutcomeText(MakeEntry(TEXT("/Game/N"), EAssetBatchResaveStatus::Tested, ENoOpResaveVerdict::NormalizedOnFirstSave)).ToString(),
+		FString(TEXT("Normalized on first save")));
+	TestEqual(
+		TEXT("A skipped asset"), SAssetBatchResults::GetOutcomeText(MakeEntry(TEXT("/Game/S"), EAssetBatchResaveStatus::Skipped, ENoOpResaveVerdict::Stable)).ToString(), FString(TEXT("Skipped")));
 	TestEqual(TEXT("A failed asset"), SAssetBatchResults::GetOutcomeText(MakeEntry(TEXT("/Game/F"), EAssetBatchResaveStatus::Failed, ENoOpResaveVerdict::Stable)).ToString(), FString(TEXT("Failed")));
 
 	const FString Details = SAssetBatchResults::BuildDetailsText(Unstable);
@@ -55,7 +58,8 @@ bool FAssetBatchResults_DescribesAnEntry::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBatchResults_ListsAndFiltersAssets, "AssetSerializationInspector.Widgets.AssetBatchResults.ListsAndFiltersAssets", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetBatchResults_ListsAndFiltersAssets, "AssetSerializationInspector.Widgets.AssetBatchResults.ListsAndFiltersAssets", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetBatchResults_ListsAndFiltersAssets::RunTest(const FString& Parameters)
 {

@@ -9,8 +9,8 @@
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
-#include "Widgets/Layout/SScrollBar.h"
 #include "Widgets/Layout/SGridPanel.h"
+#include "Widgets/Layout/SScrollBar.h"
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
@@ -63,8 +63,9 @@ public:
 				return SNew(STextBlock).Text(FText::GetEmpty());
 			}
 
-			return SNew(STextBlock).Text(FText::Format(LOCTEXT("ChangedBytesCell", "{0} bytes, {1} changes"), FText::AsNumber(Entry.FirstResaveChangedBytes),
-				FText::AsNumber(Entry.FirstResaveChanges.Num() + Entry.FirstResaveChangesOmitted)));
+			return SNew(STextBlock)
+				.Text(FText::Format(LOCTEXT("ChangedBytesCell", "{0} bytes, {1} changes"), FText::AsNumber(Entry.FirstResaveChangedBytes),
+					FText::AsNumber(Entry.FirstResaveChanges.Num() + Entry.FirstResaveChangesOmitted)));
 		}
 
 		return SNew(STextBlock).Text(FText::FromString(Entry.Message)).ToolTipText(FText::FromString(Entry.Message));
@@ -196,100 +197,58 @@ void SAssetBatchResults::Construct(const FArguments& InArgs)
 		Toggles->AddSlot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)[BuildOutcomeToggle(static_cast<EOutcome>(Index))];
 	}
 
-	ChildSlot
-	[
-		SNew(SVerticalBox)
+	ChildSlot[SNew(SVerticalBox)
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 8.0f, 8.0f, 4.0f)
-		[
-			SNew(STextBlock).Text(FText::Format(LOCTEXT("ResultsHeading", "No-op resave test of {0}{1}"), FText::FromString(Result.IsValid() ? Result->Scope : FString()),
-				Result.IsValid() && Result->bCancelled ? LOCTEXT("ResultsCancelled", " (cancelled)") : FText::GetEmpty()))
-				.Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))
-		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 8.0f, 8.0f, 4.0f)[SNew(STextBlock)
+				.Text(FText::Format(LOCTEXT("ResultsHeading", "No-op resave test of {0}{1}"), FText::FromString(Result.IsValid() ? Result->Scope : FString()),
+					Result.IsValid() && Result->bCancelled ? LOCTEXT("ResultsCancelled", " (cancelled)") : FText::GetEmpty()))
+				.Font(FAppStyle::GetFontStyle("HeadingExtraSmall"))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[Toggles]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-			[
-				SNew(SBox).WidthOverride(220.0f)
-				[
-					SNew(SSearchBox).HintText(LOCTEXT("SearchAssets", "Search assets")).OnTextChanged(this, &SAssetBatchResults::HandleSearchChanged)
-				]
-			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.0f, 0.0f, 0.0f, 0.0f)
-			[
-				SNew(SBox).WidthOverride(90.0f)[SNew(STextBlock).Text(this, &SAssetBatchResults::GetCountText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
-			]
-		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f)[SNew(SHorizontalBox) + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)[Toggles]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(
+				VAlign_Center)[SNew(SBox).WidthOverride(220.0f)[SNew(SSearchBox).HintText(LOCTEXT("SearchAssets", "Search assets")).OnTextChanged(this, &SAssetBatchResults::HandleSearchChanged)]]
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(8.0f, 0.0f, 0.0f, 0.0f)[SNew(SBox).WidthOverride(90.0f)[SNew(STextBlock).Text(this, &SAssetBatchResults::GetCountText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]]]
 
-		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)
-		[
-			SNew(SSplitter).Orientation(Orient_Vertical)
+		+ SVerticalBox::Slot().FillHeight(1.0f).Padding(8.0f)[SNew(SSplitter).Orientation(Orient_Vertical)
 
-			+ SSplitter::Slot().Value(0.6f)
-			[
-				SNew(SBorder).Padding(0.0f)
-				[
-					SAssignNew(ListView, SListView<TSharedPtr<FAssetBatchResultItem>>)
-						.ListItemsSource(&VisibleItems)
-						.SelectionMode(ESelectionMode::Single)
-						.OnGenerateRow(this, &SAssetBatchResults::GenerateRow)
-						.OnSelectionChanged(this, &SAssetBatchResults::HandleSelectionChanged)
-						.HeaderRow(SNew(SHeaderRow)
-							+ SHeaderRow::Column(BatchResultsAssetColumn).DefaultLabel(LOCTEXT("AssetColumn", "Asset")).FillWidth(0.35f)
-							+ SHeaderRow::Column(BatchResultsOutcomeColumn).DefaultLabel(LOCTEXT("OutcomeColumn", "Result")).FillWidth(0.2f)
-							+ SHeaderRow::Column(BatchResultsChangedColumn).DefaultLabel(LOCTEXT("ChangedColumn", "First resave")).FillWidth(0.2f)
-							+ SHeaderRow::Column(BatchResultsNoteColumn).DefaultLabel(LOCTEXT("NoteColumn", "Note")).FillWidth(0.25f))
-				]
-			]
+			+ SSplitter::Slot().Value(0.6f)[SNew(SBorder).Padding(0.0f)[SAssignNew(ListView, SListView<TSharedPtr<FAssetBatchResultItem>>)
+					.ListItemsSource(&VisibleItems)
+					.SelectionMode(ESelectionMode::Single)
+					.OnGenerateRow(this, &SAssetBatchResults::GenerateRow)
+					.OnSelectionChanged(this, &SAssetBatchResults::HandleSelectionChanged)
+					.HeaderRow(SNew(SHeaderRow) + SHeaderRow::Column(BatchResultsAssetColumn).DefaultLabel(LOCTEXT("AssetColumn", "Asset")).FillWidth(0.35f)
+						+ SHeaderRow::Column(BatchResultsOutcomeColumn).DefaultLabel(LOCTEXT("OutcomeColumn", "Result")).FillWidth(0.2f)
+						+ SHeaderRow::Column(BatchResultsChangedColumn).DefaultLabel(LOCTEXT("ChangedColumn", "First resave")).FillWidth(0.2f)
+						+ SHeaderRow::Column(BatchResultsNoteColumn).DefaultLabel(LOCTEXT("NoteColumn", "Note")).FillWidth(0.25f))]]
 
-			+ SSplitter::Slot().Value(0.4f)
-			[
-				SNew(SBorder).Padding(4.0f)
-				[
-					SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
-					+ SGridPanel::Slot(0, 0)
-					[
-						SAssignNew(DetailsText, SMultiLineEditableText)
-							.IsReadOnly(true)
-							.AutoWrapText(false)
-							.VScrollBar(DetailsVerticalScrollBar)
-							.HScrollBar(DetailsHorizontalScrollBar)
-							.Text(LOCTEXT("SelectAnAsset", "Select an asset to see what resaving it changed."))
-					]
-					+ SGridPanel::Slot(1, 0)[DetailsVerticalScrollBar]
-					+ SGridPanel::Slot(0, 1)[DetailsHorizontalScrollBar]
-				]
-			]
-		]
+			+ SSplitter::Slot().Value(0.4f)[SNew(SBorder).Padding(4.0f)[SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
+				+ SGridPanel::Slot(0, 0)[SAssignNew(DetailsText, SMultiLineEditableText)
+						.IsReadOnly(true)
+						.AutoWrapText(false)
+						.VScrollBar(DetailsVerticalScrollBar)
+						.HScrollBar(DetailsHorizontalScrollBar)
+						.Text(LOCTEXT("SelectAnAsset", "Select an asset to see what resaving it changed."))]
+				+ SGridPanel::Slot(1, 0)[DetailsVerticalScrollBar] + SGridPanel::Slot(0, 1)[DetailsHorizontalScrollBar]]]]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
-			[
-				SNew(SButton).Text(LOCTEXT("OpenFirstResave", "Open First Resave")).ToolTipText(LOCTEXT("OpenFirstResaveTooltip", "Compare the file on disk with what the first resave writes. The asset is tested again to produce the comparison."))
+		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("OpenFirstResave", "Open First Resave"))
+					.ToolTipText(LOCTEXT("OpenFirstResaveTooltip", "Compare the file on disk with what the first resave writes. The asset is tested again to produce the comparison."))
 					.IsEnabled_Lambda([this]() { return CanOpenSelected(false); })
-					.OnClicked_Lambda([this]() { return OpenSelected(false); })
-			]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
-			[
-				SNew(SButton).Text(LOCTEXT("OpenSecondResave", "Open Second Resave")).ToolTipText(LOCTEXT("OpenSecondResaveTooltip", "Compare the first resave with a second one, which shows what keeps changing. The asset is tested again to produce the comparison."))
+					.OnClicked_Lambda([this]() { return OpenSelected(false); })]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("OpenSecondResave", "Open Second Resave"))
+					.ToolTipText(
+						LOCTEXT("OpenSecondResaveTooltip", "Compare the first resave with a second one, which shows what keeps changing. The asset is tested again to produce the comparison."))
 					.IsEnabled_Lambda([this]() { return CanOpenSelected(true); })
-					.OnClicked_Lambda([this]() { return OpenSelected(true); })
-			]
-			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)]
-			+ SHorizontalBox::Slot().AutoWidth()
-			[
-				SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
-					OnSaveReport.ExecuteIfBound();
-					return FReply::Handled();
-				})
-			]
-		]
-	];
+					.OnClicked_Lambda([this]() { return OpenSelected(true); })]
+			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)] + SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
+				  OnSaveReport.ExecuteIfBound();
+				  return FReply::Handled();
+			  })]]];
 }
 
 TSharedRef<SWidget> SAssetBatchResults::BuildOutcomeToggle(const EOutcome Outcome)
@@ -333,10 +292,7 @@ TSharedRef<SWidget> SAssetBatchResults::BuildOutcomeToggle(const EOutcome Outcom
 		.OnCheckStateChanged_Lambda([this, Index](const ECheckBoxState State) {
 			bShowOutcome[Index] = State == ECheckBoxState::Checked;
 			RebuildVisibleItems();
-		})
-		[
-			SNew(STextBlock).Text(FText::Format(LOCTEXT("OutcomeToggle", "{0} ({1})"), GetOutcomeText(Sample), FText::AsNumber(Count)))
-		];
+		})[SNew(STextBlock).Text(FText::Format(LOCTEXT("OutcomeToggle", "{0} ({1})"), GetOutcomeText(Sample), FText::AsNumber(Count)))];
 }
 
 TSharedRef<ITableRow> SAssetBatchResults::GenerateRow(TSharedPtr<FAssetBatchResultItem> Item, const TSharedRef<STableViewBase>& OwnerTable)
