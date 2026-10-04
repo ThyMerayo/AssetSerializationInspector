@@ -17,6 +17,7 @@
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Summary/AssetExportSummary.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -421,6 +422,80 @@ bool FAssetRealFixture_ComparesFoldersAcrossEngineVersions::RunTest(const FStrin
 	TestTrue(TEXT("An engine the package does not name is called unknown"), Report.Contains(TEXT("unknown")));
 
 	IFileManager::Get().DeleteDirectory(*Root, false, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetRealFixture_ReportsChangesInNativeData, "AssetSerializationInspector.RealAssets.ReportsChangesInNativeData", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetRealFixture_ReportsChangesInNativeData::RunTest(const FString& Parameters)
+{
+	using namespace AssetRealFixtureTestUtils;
+
+	FFixture Original;
+	if (!TestTrue(TEXT("BP_Box1 loads"), LoadFixture(TEXT("BP_Box1.uasset"), Original)))
+	{
+		return false;
+	}
+
+	// Find a range no property accounts for (the compiled data of the Blueprint's generated class) and change one byte in it.
+	const FAssetPackageExportEntry* NativeExport = nullptr;
+	const FAssetSerializationTraceNode* NativeNode = nullptr;
+	for (const FAssetPackageExportEntry& Export : Original.Document->ExportMap)
+	{
+		const FAssetSerializationTrace* Trace = Original.Traces->FindExportTrace(Export.Index);
+		if (Trace == nullptr || !Trace->Root.IsValid() || AssetExportSummary::GetClassName(*Original.Document, Export) != TEXT("BlueprintGeneratedClass"))
+		{
+			continue;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		{
+			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native && Node->Size > 16 && NativeNode == nullptr)
+			{
+				NativeExport = &Export;
+				NativeNode = Node.Get();
+			}
+		}
+	}
+
+	if (!TestNotNull(TEXT("The generated class has native data"), NativeNode))
+	{
+		return false;
+	}
+
+	const FAssetExportSummary Summary = AssetExportSummary::Summarize(*Original.Document, *NativeExport, Original.Traces->FindExportTrace(NativeExport->Index));
+	TestEqual(TEXT("The summary names the class"), Summary.ClassName, FString(TEXT("BlueprintGeneratedClass")));
+	TestTrue(TEXT("It says what the native data holds"), !Summary.NativeDataKind.IsEmpty() && Summary.ToText().Contains(Summary.NativeDataKind));
+	TestTrue(TEXT("It knows how much of the export is native"), Summary.NativeBytes >= NativeNode->Size && Summary.PayloadBytes >= Summary.NativeBytes);
+
+	FAssetPackageDocument Changed = *Original.Document;
+	Changed.FileData[NativeExport->SerialOffset + NativeNode->Offset + 8] ^= 0xFF;
+	const TSharedPtr<FAssetPackageTraceCollection> ChangedTraces = FAssetPackageFieldDecoder::Decode(Changed);
+
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*Original.Document, Changed, Original.Traces.Get(), ChangedTraces.Get());
+	const FAssetSaveAnalysis Analysis = FAssetSaveAnalyzer::Analyze(Diff, *Original.Document, Changed);
+
+	TestEqual(TEXT("The one changed byte is counted"), Analysis.UnexplainedChangedBytes, static_cast<int64>(1));
+	TestEqual(TEXT("It is the total"), Analysis.TotalChangedBytes, static_cast<int64>(1));
+	TestEqual(TEXT("Native data changed and nothing else"), Analysis.ResultKind, EAssetSaveResultKind::NativeOnlyChanges);
+
+	if (TestEqual(TEXT("One unexplained change"), Analysis.UnexplainedChanges.Num(), 1))
+	{
+		TestEqual(TEXT("With its byte count"), Analysis.UnexplainedChanges[0].ChangedByteCount, static_cast<int64>(1));
+		TestTrue(TEXT("And what the data is"), Analysis.UnexplainedChanges[0].CauseDescription.ToString().Contains(TEXT("BlueprintGeneratedClass")));
+	}
+
+	// Two packages that differ only in their header still total the header's changes.
+	FFixture Older;
+	if (LoadFixture(TEXT("BP_BOX50.uasset"), Older))
+	{
+		const FAssetPackageDiffResult HeaderDiff = AssetPackageDiff::Compare(*Older.Document, *Original.Document, Older.Traces.Get(), Original.Traces.Get());
+		const FAssetSaveAnalysis HeaderAnalysis = FAssetSaveAnalyzer::Analyze(HeaderDiff, *Older.Document, *Original.Document);
+		TestTrue(TEXT("Changed bytes are totalled for a real comparison"), HeaderAnalysis.TotalChangedBytes > 0);
+		TestEqual(TEXT("Explained and unexplained make up the total"), HeaderAnalysis.TotalChangedBytes, HeaderAnalysis.ExplainedChangedBytes + HeaderAnalysis.UnexplainedChangedBytes);
+	}
+
 	return true;
 }
 
