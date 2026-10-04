@@ -139,6 +139,10 @@ struct FAssetPackageDocument
 	FString Filename;
 	TArray64<uint8> FileData;
 
+	/** For a package saved in two files: the .uexp whose bytes follow the header in FileData, and the size of the header file. */
+	FString ExportDataFilename;
+	int64 HeaderFileSize = 0;
+
 	FPackageFileSummary PackageSummary;
 	int64 SerializedSummarySize = 0;
 	bool bHasValidPackageSummary = false;

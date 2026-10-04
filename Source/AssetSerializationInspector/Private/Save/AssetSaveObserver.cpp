@@ -41,7 +41,7 @@ FString FAssetSaveObserver::MakeSnapshotFilename(const FString& SourceFilename) 
 	IFileManager::Get().MakeDirectory(*SnapshotDirectory, true);
 	const FString BaseName = FPaths::GetBaseFilename(SourceFilename);
 
-	return FPaths::Combine(SnapshotDirectory, BaseName + TEXT("_Before.uasset"));
+	return FPaths::Combine(SnapshotDirectory, BaseName + TEXT("_Before") + FPaths::GetExtension(SourceFilename, true));
 }
 
 void FAssetSaveObserver::HandlePreSavePackage(UPackage* Package, FObjectPreSaveContext SaveContext)
@@ -66,7 +66,7 @@ void FAssetSaveObserver::HandlePreSavePackage(UPackage* Package, FObjectPreSaveC
 	}
 
 	const FString LongPackageName = Package->GetName();
-	const FString SourceFilename = FPackageName::LongPackageNameToFilename(LongPackageName, FPackageName::GetAssetPackageExtension());
+	const FString SourceFilename = FPackageName::LongPackageNameToFilename(LongPackageName, Package->ContainsMap() ? FPackageName::GetMapPackageExtension() : FPackageName::GetAssetPackageExtension());
 
 	FAssetSaveSnapshot Snapshot;
 

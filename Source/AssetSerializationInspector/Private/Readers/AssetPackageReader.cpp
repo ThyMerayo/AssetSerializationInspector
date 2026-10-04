@@ -784,6 +784,39 @@ namespace
 		return true;
 	}
 
+	/**
+	 * A package saved in two files (cooked packages, and editor packages saved with split files) keeps its header in the .uasset or
+	 * .umap and the exports in a .uexp beside it, and the export offsets count the two as one file. When the file holds nothing but
+	 * the header, the .uexp is appended so that every offset in the document is valid, as the engine does when it loads the package.
+	 */
+	void AppendExportData(FAssetPackageDocument& Document)
+	{
+		if (Document.PackageSummary.TotalHeaderSize != Document.GetFileSize())
+		{
+			return;
+		}
+
+		const FString ExportFilename = FPaths::ChangeExtension(Document.Filename, TEXT("uexp"));
+		TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*ExportFilename));
+		if (!Reader || Reader->TotalSize() <= 0)
+		{
+			return;
+		}
+
+		const int64 HeaderSize = Document.FileData.Num();
+		const int64 ExportSize = Reader->TotalSize();
+		Document.FileData.SetNumUninitialized(HeaderSize + ExportSize);
+		Reader->Serialize(Document.FileData.GetData() + HeaderSize, ExportSize);
+
+		if (Reader->IsError())
+		{
+			Document.FileData.SetNum(HeaderSize);
+			return;
+		}
+
+		Document.ExportDataFilename = ExportFilename;
+		Document.HeaderFileSize = HeaderSize;
+	}
 } // namespace
 
 TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FString& Filename, FText& OutError)
@@ -796,7 +829,21 @@ TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FStrin
 		return nullptr;
 	}
 
-	const FString FullFilename = FPaths::ConvertRelativePathToFull(Filename);
+	FString FullFilename = FPaths::ConvertRelativePathToFull(Filename);
+
+	// The export data of a package saved in two files is read through its header, so a .uexp stands for the file it belongs to.
+	if (FPaths::GetExtension(FullFilename, true).Equals(TEXT(".uexp"), ESearchCase::IgnoreCase))
+	{
+		for (const TCHAR* HeaderExtension : { TEXT(".uasset"), TEXT(".umap") })
+		{
+			const FString Header = FPaths::ChangeExtension(FullFilename, HeaderExtension);
+			if (FPaths::FileExists(Header))
+			{
+				FullFilename = Header;
+				break;
+			}
+		}
+	}
 
 	if (!FPaths::FileExists(FullFilename))
 	{
@@ -806,9 +853,9 @@ TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FStrin
 
 	const FString Extension = FPaths::GetExtension(FullFilename, true);
 
-	if (!Extension.Equals(TEXT(".uasset"), ESearchCase::IgnoreCase))
+	if (!Extension.Equals(TEXT(".uasset"), ESearchCase::IgnoreCase) && !Extension.Equals(TEXT(".umap"), ESearchCase::IgnoreCase))
 	{
-		OutError = FText::Format(LOCTEXT("UnsupportedExtension", "Expected a .uasset file, but received:\n{0}"), FText::FromString(Extension));
+		OutError = FText::Format(LOCTEXT("UnsupportedExtension", "Expected a .uasset or .umap file, but received:\n{0}"), FText::FromString(Extension));
 		return nullptr;
 	}
 
@@ -850,6 +897,8 @@ TSharedPtr<FAssetPackageDocument> FAssetPackageReader::LoadFromFile(const FStrin
 	{
 		return nullptr;
 	}
+
+	AppendExportData(*Document);
 
 	FText NameMapError;
 	if (!DecodeNameMap(*Document, NameMapError))
