@@ -30,7 +30,7 @@ Planned next steps:
 - [x] Real-asset fixture tests for the decoders and archetype resolution (BP_BOX50 from UE 5.0, BP_Box1 from this engine; found that only class default objects had their properties decoded)
 - [x] Search and state filtering for the structural diff (#6)
 - [x] Package header diff: every summary field plus per-region byte comparison with hex view (#9)
-- [ ] Describe header changes in the Save Analysis (for example which tables grew)
+- [x] Describe header changes in the Save Analysis (which tables grew, shrank, appeared or went; changed summary fields)
 - [x] Search and filtering for Save Analysis (confidence) and repeated-save patterns (pattern) (#11)
 - [x] No-op resave test mode: two temporary resaves per asset with a stable / normalized / unstable verdict (#8)
 - [x] Exportable text/JSON analysis reports for a comparison (#7); reports for batches of assets reuse `FAssetAnalysisReport`
