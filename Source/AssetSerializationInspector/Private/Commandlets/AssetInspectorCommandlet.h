@@ -51,7 +51,7 @@ namespace AssetInspectorCommandlet
 	 *   -Mode=DecodeCoverage  -Folder=<folder>  [-Report=<file>]
 	 *       Reports what the property decoder cannot read.
 	 *
-	 * Relative paths are taken from the project folder. The report format follows the extension of -Report (.json, otherwise text). Exit codes: ExitOk, ExitError, ExitFindings.
+	 * Relative paths are taken from the project folder. The report format follows the extension of -Report (.json or .html, otherwise text). Exit codes: ExitOk, ExitError, ExitFindings.
 	 */
 	int32 Execute(const FString& Params);
 } // namespace AssetInspectorCommandlet

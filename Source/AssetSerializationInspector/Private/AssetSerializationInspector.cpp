@@ -402,7 +402,7 @@ void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAsse
 		LOCTEXT("ViewBatchResultsTooltip", "Browse the assets of this run, see what resaving changed in each and open its comparison."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveBatchReportButton", "Save Report..."),
-		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text or JSON report."),
+		LOCTEXT("SaveBatchReportTooltip", "Save the per-asset results and the changes that recur across assets as a text, JSON or HTML report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport), SNotificationItem::CS_None));
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
@@ -422,16 +422,18 @@ void FAssetSerializationInspectorModule::SaveBatchResaveReport()
 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
+	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
+	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report").ToString(), FPaths::ProjectSavedDir(),
-			AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"),
-			EFileDialogFlags::None, SelectedFiles)
+			FPaths::GetBaseFilename(AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), false),
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;
 	}
 
-	// The format follows the extension, so make sure there is one.
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
 	FString Filename = SelectedFiles[0];
 	if (FPaths::GetExtension(Filename).IsEmpty())
 	{
@@ -652,7 +654,7 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const 
 		LOCTEXT("ViewFolderComparisonTooltip", "Browse the files of this comparison, see what differs in each and open the comparison of a changed pair."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveFolderComparisonButton", "Save Report..."),
-		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text or JSON report."),
+		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text, JSON or HTML report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport), SNotificationItem::CS_None));
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
@@ -673,16 +675,19 @@ void FAssetSerializationInspectorModule::SaveFolderComparisonReport()
 
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 
+	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
+	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
 	TArray<FString> SelectedFiles;
 	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report").ToString(), FPaths::ProjectSavedDir(),
-			AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text),
-			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json"), EFileDialogFlags::None, SelectedFiles)
+			FPaths::GetBaseFilename(
+				AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text), false),
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
 		|| SelectedFiles.IsEmpty())
 	{
 		return;
 	}
 
-	// The format follows the extension, so make sure there is one.
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
 	FString Filename = SelectedFiles[0];
 	if (FPaths::GetExtension(Filename).IsEmpty())
 	{

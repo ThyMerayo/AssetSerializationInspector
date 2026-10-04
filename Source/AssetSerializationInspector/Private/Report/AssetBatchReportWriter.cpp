@@ -9,6 +9,7 @@
 #include "Serialization/JsonWriter.h"
 
 #include "Report/AssetAnalysisReport.h"
+#include "Report/AssetHtmlReport.h"
 #include "Save/AssetBatchResave.h"
 
 #define LOCTEXT_NAMESPACE "AssetBatchReportWriter"
@@ -90,6 +91,26 @@ namespace
 		Writer.WriteValue(TEXT("omitted"), static_cast<int64>(Omitted));
 		Writer.WriteObjectEnd();
 	}
+
+	FString HtmlChanges(const TCHAR* Heading, const int64 ChangedBytes, const TArray<FAssetBatchResaveChange>& Changes, const int32 Omitted)
+	{
+		using namespace AssetHtmlReport;
+
+		TArray<TArray<FString>> Rows;
+		for (const FAssetBatchResaveChange& Change : Changes)
+		{
+			Rows.Add({ Escape(Change.Category), Escape(Change.Name), Change.Detail.IsEmpty() ? FString() : Code(Change.Detail) });
+		}
+
+		FString Html = Table({ TEXT("Category"), TEXT("Name"), TEXT("Detail") }, Rows);
+		if (Omitted > 0)
+		{
+			Html += FString::Printf(TEXT("<p class=\"muted\">... and %d more</p>"), Omitted);
+		}
+
+		return Details(FString::Printf(TEXT("%s: %lld changed bytes, %d changes"), Heading, ChangedBytes, Changes.Num() + Omitted),
+			Changes.IsEmpty() ? FString(TEXT("<p class=\"muted\">(none)</p>")) : Html, false);
+	}
 } // namespace
 
 FString AssetBatchReportWriter::ToText(const FAssetBatchResaveResult& Result)
@@ -170,6 +191,86 @@ FString AssetBatchReportWriter::ToText(const FAssetBatchResaveResult& Result)
 	AppendGroup(TEXT("Stable"), [](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Tested && Entry.Verdict == ENoOpResaveVerdict::Stable; });
 
 	return FString::Join(Lines, TEXT("\n")) + TEXT("\n");
+}
+
+FString AssetBatchReportWriter::ToHtml(const FAssetBatchResaveResult& Result)
+{
+	using namespace AssetHtmlReport;
+
+	const FAssetBatchResaveSummary Summary = Result.Summarize();
+	const FString ToolVersion = AssetAnalysisReport::GetToolVersion();
+
+	FString Body = TEXT("<h1>Asset Serialization Inspector: no-op resave test</h1>\n");
+	Body += KeyValues({ { TEXT("Tool version"), ToolVersion.IsEmpty() ? FString(TEXT("unknown")) : ToolVersion }, { TEXT("Scope"), Result.Scope }, { TEXT("Started"), Result.StartedAt.ToIso8601() },
+		{ TEXT("Finished"), Result.FinishedAt.ToIso8601() + (Result.bCancelled ? TEXT(" (cancelled before every asset was tested)") : TEXT("")) } });
+
+	Body += FString::Printf(TEXT("<p class=\"chips\">%s%s%s%s%s%s</p>\n"), *Chip(FString::Printf(TEXT("%d stable"), Summary.Stable), TEXT("ok")),
+		*Chip(FString::Printf(TEXT("%d normalized on the first save"), Summary.NormalizedOnFirstSave), TEXT("warn")), *Chip(FString::Printf(TEXT("%d unstable"), Summary.Unstable), TEXT("bad")),
+		*Chip(FString::Printf(TEXT("%d failed"), Summary.Failed), TEXT("bad")), *Chip(FString::Printf(TEXT("%d skipped"), Summary.Skipped), TEXT("info")),
+		*Chip(FString::Printf(TEXT("%d assets"), Result.Entries.Num()), TEXT("info")));
+
+	const TArray<FAssetBatchRecurringChange> Recurring = Result.FindRecurringChanges();
+	if (!Recurring.IsEmpty())
+	{
+		TArray<TArray<FString>> Rows;
+		for (const FAssetBatchRecurringChange& Change : Recurring)
+		{
+			Rows.Add({ Escape(FString::FromInt(Change.AssetCount)), Escape(Change.Category), Escape(Change.Name) });
+		}
+
+		Body += TEXT("<h2>Changes made in several assets by the first resave</h2>\n") + Table({ TEXT("Assets"), TEXT("Category"), TEXT("Name") }, Rows);
+	}
+
+	const auto AddGroup = [&](const TCHAR* Heading, const TFunctionRef<bool(const FAssetBatchResaveEntry&)> Predicate, const bool bOpen) {
+		FString Group;
+		int32 Count = 0;
+		for (const FAssetBatchResaveEntry& Entry : Result.Entries)
+		{
+			if (!Predicate(Entry))
+			{
+				continue;
+			}
+
+			++Count;
+			const FString Name = FString::Printf(TEXT("<strong>%s</strong>"), *Escape(Entry.PackageName.ToString()));
+			if (Entry.Status != EAssetBatchResaveStatus::Tested)
+			{
+				Group += FString::Printf(TEXT("<div class=\"row\">%s <span class=\"muted\">%s</span></div>\n"), *Name, *Escape(Entry.Message));
+				continue;
+			}
+
+			FString Changes;
+			if (Entry.Verdict != ENoOpResaveVerdict::Stable)
+			{
+				Changes += HtmlChanges(TEXT("First resave"), Entry.FirstResaveChangedBytes, Entry.FirstResaveChanges, Entry.FirstResaveChangesOmitted);
+			}
+
+			if (Entry.Verdict == ENoOpResaveVerdict::Unstable)
+			{
+				Changes += HtmlChanges(TEXT("Second resave"), Entry.SecondResaveChangedBytes, Entry.SecondResaveChanges, Entry.SecondResaveChangesOmitted);
+			}
+
+			const FString Head = FString::Printf(TEXT("%s <span class=\"muted\">%.2f s</span>"), *Name, Entry.Seconds);
+			Group += Changes.IsEmpty() ? FString::Printf(TEXT("<div class=\"row\">%s</div>\n"), *Head) : Details(Head, Changes, false);
+		}
+
+		if (Count > 0)
+		{
+			Body += FString::Printf(TEXT("<h2>%s (%d)</h2>\n"), *Escape(Heading), Count) + Group;
+		}
+	};
+
+	AddGroup(
+		TEXT("Unstable: resaving keeps changing the file"),
+		[](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Tested && Entry.Verdict == ENoOpResaveVerdict::Unstable; }, true);
+	AddGroup(
+		TEXT("Normalized on the first save: the first resave changes the file, later ones do not"),
+		[](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Tested && Entry.Verdict == ENoOpResaveVerdict::NormalizedOnFirstSave; }, true);
+	AddGroup(TEXT("Failed"), [](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Failed; }, true);
+	AddGroup(TEXT("Skipped"), [](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Skipped; }, false);
+	AddGroup(TEXT("Stable"), [](const FAssetBatchResaveEntry& Entry) { return Entry.Status == EAssetBatchResaveStatus::Tested && Entry.Verdict == ENoOpResaveVerdict::Stable; }, false);
+
+	return Page(TEXT("Asset Serialization Inspector: no-op resave test"), Body);
 }
 
 FString AssetBatchReportWriter::ToJson(const FAssetBatchResaveResult& Result)
@@ -273,7 +374,15 @@ FString AssetBatchReportWriter::ToJson(const FAssetBatchResaveResult& Result)
 
 FString AssetBatchReportWriter::Write(const FAssetBatchResaveResult& Result, const EAssetReportFormat Format)
 {
-	return Format == EAssetReportFormat::Json ? ToJson(Result) : ToText(Result);
+	switch (Format)
+	{
+		case EAssetReportFormat::Json:
+			return ToJson(Result);
+		case EAssetReportFormat::Html:
+			return ToHtml(Result);
+		default:
+			return ToText(Result);
+	}
 }
 
 FString AssetBatchReportWriter::MakeDefaultFilename(const FString& Scope, const FDateTime& Time, const EAssetReportFormat Format)

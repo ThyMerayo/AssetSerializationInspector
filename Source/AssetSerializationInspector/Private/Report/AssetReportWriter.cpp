@@ -9,6 +9,7 @@
 #include "Serialization/JsonWriter.h"
 
 #include "Report/AssetAnalysisReport.h"
+#include "Report/AssetHtmlReport.h"
 
 #define LOCTEXT_NAMESPACE "AssetReportWriter"
 
@@ -273,6 +274,138 @@ namespace
 		}
 	}
 
+	// ---- HTML ----
+
+	const TCHAR* ChipClass(const EAssetPackageDiffState State)
+	{
+		switch (State)
+		{
+			case EAssetPackageDiffState::Added:
+				return TEXT("added");
+			case EAssetPackageDiffState::Removed:
+				return TEXT("removed");
+			case EAssetPackageDiffState::Moved:
+				return TEXT("moved");
+			case EAssetPackageDiffState::Modified:
+				return TEXT("modified");
+			default:
+				return TEXT("info");
+		}
+	}
+
+	const TCHAR* ChipClass(const EAssetExplanationConfidence Confidence)
+	{
+		switch (Confidence)
+		{
+			case EAssetExplanationConfidence::Certain:
+			case EAssetExplanationConfidence::High:
+				return TEXT("ok");
+			case EAssetExplanationConfidence::Inferred:
+				return TEXT("warn");
+			default:
+				return TEXT("bad");
+		}
+	}
+
+	FString HtmlValues(const FAssetPackageDiffEntry& Entry)
+	{
+		const auto Side = [&Entry](const bool bOld) {
+			const FString& Value = SideValue(Entry, bOld);
+			const FString& Final = bOld ? Entry.OldFinalValue : Entry.NewFinalValue;
+
+			FString Html = Value.IsEmpty() ? FString() : AssetHtmlReport::Code(Value);
+			if (!Final.IsEmpty())
+			{
+				Html += TEXT(" &rarr; ") + AssetHtmlReport::Code(Final);
+			}
+
+			return Html;
+		};
+
+		const FString Old = Side(true);
+		const FString New = Side(false);
+		if (Old.IsEmpty() && New.IsEmpty())
+		{
+			return Entry.ChangedByteCount > 0 ? FString::Printf(TEXT(" <span class=\"muted\">%lld changed bytes</span>"), Entry.ChangedByteCount) : FString();
+		}
+
+		return FString::Printf(TEXT(" %s &rArr; %s"), Old.IsEmpty() ? TEXT("<span class=\"muted\">(none)</span>") : *Old, New.IsEmpty() ? TEXT("<span class=\"muted\">(none)</span>") : *New);
+	}
+
+	FString HtmlDifference(const FAssetPackageDiffEntry& Entry, const int32 Depth)
+	{
+		FString Head = AssetHtmlReport::Chip(NameOf(Entry.State), ChipClass(Entry.State)) + FString::Printf(TEXT("<strong>%s</strong>"), *AssetHtmlReport::Escape(Entry.DisplayName.ToString()));
+		if (!Entry.TypeName.IsEmpty())
+		{
+			Head += FString::Printf(TEXT("<span class=\"type\">%s</span>"), *AssetHtmlReport::Escape(Entry.TypeName));
+		}
+		Head += HtmlValues(Entry);
+
+		FString Body;
+		if (!Entry.Explanation.IsEmpty())
+		{
+			Body += FString::Printf(TEXT("<p class=\"note\">why: %s</p>"), *AssetHtmlReport::Escape(Entry.Explanation.ToString()));
+		}
+
+		for (const FString& Note : { Entry.OldFinalValueNote, Entry.NewFinalValueNote })
+		{
+			if (!Note.IsEmpty())
+			{
+				Body += FString::Printf(TEXT("<p class=\"note\">note: %s</p>"), *AssetHtmlReport::Escape(Note));
+			}
+		}
+
+		for (const FAssetPackageDiffEntry& Child : Entry.Children)
+		{
+			Body += HtmlDifference(Child, Depth + 1);
+		}
+
+		return Body.IsEmpty() ? FString::Printf(TEXT("<div class=\"row\">%s</div>\n"), *Head) : AssetHtmlReport::Details(Head, Body, Depth == 0 && Entry.Children.Num() <= 20);
+	}
+
+	FString HtmlExplanation(const FAssetSaveExplanationEntry& Entry)
+	{
+		FString Head = AssetHtmlReport::Chip(NameOf(Entry.Confidence), ChipClass(Entry.Confidence)) + FString::Printf(TEXT("<strong>%s</strong>"), *AssetHtmlReport::Escape(Entry.Title.ToString()));
+
+		const FString Description = Entry.Description.ToString();
+		if (!Description.IsEmpty())
+		{
+			Head += TEXT(" ") + AssetHtmlReport::Escape(Description);
+		}
+
+		if (Entry.bHasOldValue || Entry.bHasNewValue)
+		{
+			Head += FString::Printf(TEXT(" %s &rArr; %s"), Entry.bHasOldValue ? *AssetHtmlReport::Code(Entry.OldValue) : TEXT("<span class=\"muted\">(none)</span>"),
+				Entry.bHasNewValue ? *AssetHtmlReport::Code(Entry.NewValue) : TEXT("<span class=\"muted\">(none)</span>"));
+		}
+
+		FString Body;
+		const FString Cause = Entry.CauseDescription.ToString();
+		if (!Cause.IsEmpty())
+		{
+			Body += FString::Printf(TEXT("<p class=\"note\">cause (%s): %s</p>"), NameOf(Entry.CauseConfidence), *AssetHtmlReport::Escape(Cause));
+		}
+
+		for (const FAssetSaveExplanationEntry& Child : Entry.Children)
+		{
+			Body += HtmlExplanation(Child);
+		}
+
+		return Body.IsEmpty() ? FString::Printf(TEXT("<div class=\"row\">%s</div>\n"), *Head) : AssetHtmlReport::Details(Head, Body, false);
+	}
+
+	FString HtmlExplanationSection(const TCHAR* Title, const TArray<FAssetSaveExplanationEntry>& Entries)
+	{
+		FString Body;
+		for (const FAssetSaveExplanationEntry& Entry : Entries)
+		{
+			Body += HtmlExplanation(Entry);
+		}
+
+		return AssetHtmlReport::Details(
+			FString::Printf(TEXT("<strong>%s</strong> (%d)"), Title, Entries.Num()), Body.IsEmpty() ? FString(TEXT("<p class=\"muted\">(none)</p>")) : Body, !Entries.IsEmpty());
+	}
+
 	// ---- JSON ----
 
 	void WriteOptionalString(FJsonWriter& Writer, const FString& Key, const FString& Value, const bool bPresent)
@@ -463,6 +596,65 @@ FString AssetReportWriter::ToText(const FAssetAnalysisReport& Report)
 	return FString::Join(Lines, TEXT("\n")) + TEXT("\n");
 }
 
+FString AssetReportWriter::ToHtml(const FAssetAnalysisReport& Report)
+{
+	using namespace AssetHtmlReport;
+
+	FString Body = TEXT("<h1>Asset Serialization Inspector report</h1>\n");
+	Body += KeyValues({ { TEXT("Tool version"), Report.ToolVersion.IsEmpty() ? FString(TEXT("unknown")) : Report.ToolVersion }, { TEXT("Generated"), Report.GeneratedAtUtc.ToIso8601() },
+		{ TEXT("Old"), Report.OldFilename }, { TEXT("Old hash"), Report.OldFileHash }, { TEXT("New"), Report.NewFilename }, { TEXT("New hash"), Report.NewFileHash } });
+
+	if (Report.bFilesIdentical)
+	{
+		Body += FString::Printf(TEXT("<p class=\"chips\">%s The files are byte-identical.</p>\n"), *Chip(TEXT("identical"), TEXT("ok")));
+	}
+	else
+	{
+		Body += FString::Printf(TEXT("<p class=\"chips\">%s%s%s%s</p>\n"), *Chip(FString::Printf(TEXT("%d modified"), Report.Summary.Modified), TEXT("modified")),
+			*Chip(FString::Printf(TEXT("%d moved"), Report.Summary.Moved), TEXT("moved")), *Chip(FString::Printf(TEXT("%d added"), Report.Summary.Added), TEXT("added")),
+			*Chip(FString::Printf(TEXT("%d removed"), Report.Summary.Removed), TEXT("removed")));
+	}
+
+	if (Report.SaveAnalysis.IsSet())
+	{
+		const FAssetSaveAnalysis& Analysis = Report.SaveAnalysis.GetValue();
+
+		Body += FString::Printf(TEXT("<h2>Save analysis: %s</h2>\n"), NameOf(Analysis.ResultKind));
+		Body += FString::Printf(TEXT("<p>%d property changes, %d relocations, %d header table changes.<br>%lld changed bytes: %lld explained, %lld unexplained.</p>\n"), Analysis.PropertyChangeCount,
+			Analysis.RelocationCount, Analysis.HeaderChangeCount, Analysis.TotalChangedBytes, Analysis.ExplainedChangedBytes, Analysis.UnexplainedChangedBytes);
+		Body += HtmlExplanationSection(TEXT("Semantic changes"), Analysis.SemanticChanges);
+		Body += HtmlExplanationSection(TEXT("Layout changes"), Analysis.LayoutChanges);
+		Body += HtmlExplanationSection(TEXT("Package header changes"), Analysis.HeaderChanges);
+		Body += HtmlExplanationSection(TEXT("Unexplained changes"), Analysis.UnexplainedChanges);
+	}
+
+	Body += FString::Printf(
+		TEXT("<h2>%s</h2>\n"), *Escape(Report.FilterDescription.IsEmpty() ? FString(TEXT("Differences")) : FString::Printf(TEXT("Differences (filtered: %s)"), *Report.FilterDescription)));
+	if (Report.Differences.IsEmpty())
+	{
+		Body += TEXT("<p class=\"muted\">(none)</p>\n");
+	}
+
+	for (const FAssetPackageDiffEntry& Entry : Report.Differences)
+	{
+		Body += HtmlDifference(Entry, 0);
+	}
+
+	if (!Report.RepeatedSavePatterns.IsEmpty())
+	{
+		TArray<TArray<FString>> Rows;
+		for (const FRepeatedSavePattern& Pattern : Report.RepeatedSavePatterns)
+		{
+			Rows.Add({ Escape(Pattern.DisplayName.ToString()), Code(Pattern.SemanticPath), Escape(NameOf(Pattern.ValuePattern)),
+				Escape(FString::Printf(TEXT("%d of %d saves"), Pattern.ChangeCount, Pattern.ObservationCount)), Escape(FString::Printf(TEXT("%lld"), Pattern.TotalChangedBytes)) });
+		}
+
+		Body += TEXT("<h2>Repeated saves</h2>\n") + Table({ TEXT("Property"), TEXT("Path"), TEXT("Pattern"), TEXT("Changed in"), TEXT("Bytes") }, Rows);
+	}
+
+	return Page(TEXT("Asset Serialization Inspector report"), Body);
+}
+
 FString AssetReportWriter::ToJson(const FAssetAnalysisReport& Report)
 {
 	FString Output;
@@ -561,12 +753,28 @@ FString AssetReportWriter::ToJson(const FAssetAnalysisReport& Report)
 
 FString AssetReportWriter::Write(const FAssetAnalysisReport& Report, const EAssetReportFormat Format)
 {
-	return Format == EAssetReportFormat::Json ? ToJson(Report) : ToText(Report);
+	switch (Format)
+	{
+		case EAssetReportFormat::Json:
+			return ToJson(Report);
+		case EAssetReportFormat::Html:
+			return ToHtml(Report);
+		default:
+			return ToText(Report);
+	}
 }
 
 const TCHAR* AssetReportWriter::GetFileExtension(const EAssetReportFormat Format)
 {
-	return Format == EAssetReportFormat::Json ? TEXT("json") : TEXT("txt");
+	switch (Format)
+	{
+		case EAssetReportFormat::Json:
+			return TEXT("json");
+		case EAssetReportFormat::Html:
+			return TEXT("html");
+		default:
+			return TEXT("txt");
+	}
 }
 
 FString AssetReportWriter::MakeDefaultFilename(const FString& AssetFilename, const FDateTime& Time, const EAssetReportFormat Format)
@@ -583,7 +791,13 @@ FString AssetReportWriter::MakeDefaultFilename(const FString& AssetFilename, con
 
 EAssetReportFormat AssetReportWriter::GetFormatForFilename(const FString& Filename)
 {
-	return FPaths::GetExtension(Filename).Equals(TEXT("json"), ESearchCase::IgnoreCase) ? EAssetReportFormat::Json : EAssetReportFormat::Text;
+	const FString Extension = FPaths::GetExtension(Filename);
+	if (Extension.Equals(TEXT("json"), ESearchCase::IgnoreCase))
+	{
+		return EAssetReportFormat::Json;
+	}
+
+	return Extension.Equals(TEXT("html"), ESearchCase::IgnoreCase) || Extension.Equals(TEXT("htm"), ESearchCase::IgnoreCase) ? EAssetReportFormat::Html : EAssetReportFormat::Text;
 }
 
 bool AssetReportWriter::SaveToFile(const FAssetAnalysisReport& Report, const FString& Filename, FText& OutError)

@@ -30,6 +30,9 @@ namespace AssetFolderComparisonReportWriter
 	 */
 	FString ToJson(const FAssetFolderComparisonResult& Result);
 
+	/** A self-contained HTML page with the same content as the text report, plus the identical files counted. */
+	FString ToHtml(const FAssetFolderComparisonResult& Result);
+
 	FString Write(const FAssetFolderComparisonResult& Result, EAssetReportFormat Format);
 
 	/** A suggested filename such as "FolderComparison_Content_vs_Content_20261001-140743.txt". */

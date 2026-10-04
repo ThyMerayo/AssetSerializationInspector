@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+#include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageMemoryReader.h"
 
 struct FAssetPackageDocument;
