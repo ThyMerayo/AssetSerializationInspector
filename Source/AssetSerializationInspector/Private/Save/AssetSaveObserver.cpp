@@ -27,6 +27,11 @@ void FAssetSaveObserver::Startup()
 	PostSaveHandle = UPackage::PackageSavedWithContextEvent.AddRaw(this, &FAssetSaveObserver::HandlePackageSaved);
 }
 
+TSharedPtr<FObservedAssetSave> FAssetSaveObserver::FindLatestSave(const FName PackageName) const
+{
+	return ObservedSaves.FindRef(PackageName);
+}
+
 void FAssetSaveObserver::Shutdown()
 {
 	UPackage::PreSavePackageWithContextEvent.Remove(PreSaveHandle);
@@ -274,6 +279,7 @@ void FAssetMonitoringManager::AddMonitoredAsset(const FName PackageName)
 	if (!bAlreadyMonitored)
 	{
 		SaveToSettings();
+		ChangedEvent.Broadcast();
 	}
 }
 
@@ -282,13 +288,82 @@ void FAssetMonitoringManager::RemoveMonitoredAsset(const FName PackageName)
 	if (MonitoredPackages.Remove(PackageName) > 0)
 	{
 		SaveToSettings();
+		ChangedEvent.Broadcast();
 	}
+}
+
+void FAssetMonitoringManager::AddMonitoredAssets(const TArray<FName>& PackageNames)
+{
+	const int32 Before = MonitoredPackages.Num();
+	MonitoredPackages.Append(PackageNames);
+
+	if (MonitoredPackages.Num() != Before)
+	{
+		SaveToSettings();
+		ChangedEvent.Broadcast();
+	}
+}
+
+void FAssetMonitoringManager::RemoveMonitoredAssets(const TArray<FName>& PackageNames)
+{
+	int32 Removed = 0;
+	for (const FName PackageName : PackageNames)
+	{
+		Removed += MonitoredPackages.Remove(PackageName);
+	}
+
+	if (Removed > 0)
+	{
+		SaveToSettings();
+		ChangedEvent.Broadcast();
+	}
+}
+
+void FAssetMonitoringManager::ClearMonitoredAssets()
+{
+	if (!MonitoredPackages.IsEmpty())
+	{
+		MonitoredPackages.Reset();
+		SaveToSettings();
+		ChangedEvent.Broadcast();
+	}
+}
+
+TArray<FName> FAssetMonitoringManager::FindPackagesUnder(const FString& PackagePath, const bool bRecursive)
+{
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+
+	TArray<FAssetData> Assets;
+	AssetRegistry.GetAssetsByPath(FName(*PackagePath), Assets, bRecursive);
+
+	TSet<FName> Packages;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (!Asset.IsRedirector())
+		{
+			Packages.Add(Asset.PackageName);
+		}
+	}
+
+	TArray<FName> Result = Packages.Array();
+	Result.Sort(FNameLexicalLess());
+	return Result;
+}
+
+int32 FAssetMonitoringManager::AddMonitoredFolder(const FString& PackagePath, const bool bRecursive)
+{
+	const TArray<FName> Packages = FindPackagesUnder(PackagePath, bRecursive);
+
+	const int32 Before = MonitoredPackages.Num();
+	AddMonitoredAssets(Packages);
+	return MonitoredPackages.Num() - Before;
 }
 
 void FAssetMonitoringManager::SetMonitoredAssets(const TArray<FName>& PackageNames)
 {
 	MonitoredPackages.Reset();
 	MonitoredPackages.Append(PackageNames);
+	ChangedEvent.Broadcast();
 }
 
 void FAssetMonitoringManager::HandleAssetRenamed(const FName OldPackageName, const FName NewPackageName)
@@ -301,6 +376,7 @@ void FAssetMonitoringManager::HandleAssetRenamed(const FName OldPackageName, con
 	MonitoredPackages.Remove(OldPackageName);
 	MonitoredPackages.Add(NewPackageName);
 	SaveToSettings();
+	ChangedEvent.Broadcast();
 }
 
 void FAssetMonitoringManager::HandleAssetRemoved(const FName PackageName)

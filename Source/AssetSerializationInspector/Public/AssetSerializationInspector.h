@@ -37,6 +37,8 @@ private:
 	void ShowBatchResaveNotification(const FAssetBatchResaveResult& Result);
 	void SaveBatchResaveReport();
 	void ShowBatchResultsWindow();
+	void ShowMonitoredAssetsWindow();
+	void OpenMonitoredAssetLastSave(FName PackageName);
 	void OpenBatchEntryDiff(FName PackageName, bool bSecondResave);
 	void CompareAssetFolders();
 	void ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result);
@@ -59,6 +61,9 @@ private:
 
 	/** The window that lists the latest batch run's assets. */
 	TWeakPtr<class SWindow> BatchResultsWindow;
+
+	/** The window that lists the monitored assets. */
+	TWeakPtr<class SWindow> MonitoredAssetsWindow;
 
 	/** The latest folder comparison, kept so its report can be saved from the notification. */
 	TSharedPtr<FAssetFolderComparisonResult> LastFolderComparison;
