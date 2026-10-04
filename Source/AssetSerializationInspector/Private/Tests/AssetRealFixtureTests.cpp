@@ -8,10 +8,12 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 
+#include "Compare/AssetFolderComparison.h"
 #include "Coverage/AssetDecoderCoverage.h"
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Report/AssetFolderComparisonReportWriter.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
@@ -326,6 +328,99 @@ bool FAssetRealFixture_SaveAnalysisDescribesHeaderChanges::RunTest(const FString
 	}
 
 	TestTrue(TEXT("The summary lists the fields that changed"), bSummaryWithFields);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_ComparesFoldersAcrossEngineVersions, "AssetSerializationInspector.RealAssets.ComparesFoldersAcrossEngineVersions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetRealFixture_ComparesFoldersAcrossEngineVersions::RunTest(const FString& Parameters)
+{
+	using namespace AssetRealFixtureTestUtils;
+
+	// Two folders as they would be around an engine upgrade: a Blueprint saved by UE 5.0 that the new folder holds saved by this
+	// engine, one that did not change, and one that exists on one side only.
+	const FString Folder = GetFixtureFolder();
+	const FString UE50 = FPaths::Combine(Folder, TEXT("BP_BOX50.uasset"));
+	const FString Current = FPaths::Combine(Folder, TEXT("BP_Box1.uasset"));
+
+	const FString Root = FPaths::Combine(FPaths::AutomationTransientDir(), TEXT("AssetSerializationInspector"), TEXT("UpgradeFolders"));
+	IFileManager::Get().DeleteDirectory(*Root, false, true);
+	const FString OldFolder = FPaths::Combine(Root, TEXT("Old"));
+	const FString NewFolder = FPaths::Combine(Root, TEXT("New"));
+
+	IFileManager::Get().Copy(*FPaths::Combine(OldFolder, TEXT("Blueprints"), TEXT("Box.uasset")), *UE50);
+	IFileManager::Get().Copy(*FPaths::Combine(NewFolder, TEXT("Blueprints"), TEXT("Box.uasset")), *Current);
+	IFileManager::Get().Copy(*FPaths::Combine(OldFolder, TEXT("Same.uasset")), *Current);
+	IFileManager::Get().Copy(*FPaths::Combine(NewFolder, TEXT("Same.uasset")), *Current);
+	IFileManager::Get().Copy(*FPaths::Combine(OldFolder, TEXT("Removed.uasset")), *UE50);
+	IFileManager::Get().Copy(*FPaths::Combine(NewFolder, TEXT("Added.uasset")), *Current);
+
+	const FAssetFolderComparisonResult Result = AssetFolderComparison::Run(OldFolder, NewFolder, [](int32, int32, const FString&) { return true; });
+
+	const auto Find = [&Result](const TCHAR* Path) -> const FAssetFolderComparisonEntry* {
+		return Result.Entries.FindByPredicate([Path](const FAssetFolderComparisonEntry& Entry) { return Entry.RelativePath == Path; });
+	};
+
+	const FAssetFolderComparisonEntry* Upgraded = Find(TEXT("Blueprints/Box.uasset"));
+	if (TestNotNull(TEXT("The upgraded Blueprint is paired"), Upgraded))
+	{
+		TestEqual(TEXT("It changed"), Upgraded->Status, EAssetFolderComparisonStatus::Changed);
+		TestTrue(TEXT("The two sides were saved by different versions"), Upgraded->bVersionsDiffer);
+		TestEqual(TEXT("The old side is a UE 5.0 package"), Upgraded->OldFileVersion, FString(TEXT("UE4 522 / UE5 1004")));
+		TestEqual(TEXT("The new side is this engine's format"), Upgraded->NewFileVersion, FString(TEXT("UE4 522 / UE5 1018")));
+		TestFalse(TEXT("The old engine is named"), Upgraded->OldEngineVersion.IsEmpty());
+		// A source build without a changelist saves an empty engine version, so the file version is the reliable signal.
+		TestNotEqual(TEXT("They are not the same engine"), Upgraded->OldEngineVersion, Upgraded->NewEngineVersion);
+		TestFalse(TEXT("What changed is listed"), Upgraded->Changes.IsEmpty());
+		TestTrue(TEXT("Both sizes are known"), Upgraded->OldFileSize > 0 && Upgraded->NewFileSize > 0);
+	}
+
+	const FAssetFolderComparisonEntry* Same = Find(TEXT("Same.uasset"));
+	if (TestNotNull(TEXT("The unchanged file is paired"), Same))
+	{
+		TestEqual(TEXT("It is identical"), Same->Status, EAssetFolderComparisonStatus::Identical);
+		TestFalse(TEXT("With nothing to say about versions"), Same->bVersionsDiffer);
+	}
+
+	if (const FAssetFolderComparisonEntry* Removed = Find(TEXT("Removed.uasset")))
+	{
+		TestEqual(TEXT("A file only in the old folder"), Removed->Status, EAssetFolderComparisonStatus::OnlyInOldFolder);
+		TestEqual(TEXT("Its engine is still reported"), Removed->OldFileVersion, FString(TEXT("UE4 522 / UE5 1004")));
+	}
+	else
+	{
+		AddError(TEXT("Removed.uasset is missing from the result."));
+	}
+
+	if (const FAssetFolderComparisonEntry* Added = Find(TEXT("Added.uasset")))
+	{
+		TestEqual(TEXT("A file only in the new folder"), Added->Status, EAssetFolderComparisonStatus::OnlyInNewFolder);
+	}
+	else
+	{
+		AddError(TEXT("Added.uasset is missing from the result."));
+	}
+
+	const FAssetFolderComparisonSummary Summary = Result.Summarize();
+	TestEqual(TEXT("One changed file"), Summary.Changed, 1);
+	TestEqual(TEXT("Saved by different versions"), Summary.ChangedWithDifferentVersions, 1);
+	TestEqual(TEXT("One identical file"), Summary.Identical, 1);
+
+	// Identical files count too, so the unchanged file is a pair of its own.
+	const TArray<FAssetEngineVersionPair> Pairs = Result.FindEngineVersionPairs();
+	TestEqual(TEXT("Two kinds of engine version change are found"), Pairs.Num(), 2);
+	TestTrue(TEXT("One of them is the upgrade"), Upgraded != nullptr && Pairs.ContainsByPredicate([Upgraded](const FAssetEngineVersionPair& Pair) {
+		return Pair.OldEngineVersion == Upgraded->OldEngineVersion && Pair.NewEngineVersion == Upgraded->NewEngineVersion && Pair.AssetCount == 1;
+	}));
+
+	const FString Report = AssetFolderComparisonReportWriter::ToText(Result);
+	TestTrue(TEXT("The report names the upgraded file"), Report.Contains(TEXT("Blueprints/Box.uasset")));
+	TestTrue(TEXT("And the engine that saved the old side"), Upgraded != nullptr && Report.Contains(Upgraded->OldEngineVersion));
+	TestTrue(TEXT("And the package versions of both sides"), Report.Contains(TEXT("UE4 522 / UE5 1004")) && Report.Contains(TEXT("UE4 522 / UE5 1018")));
+	TestTrue(TEXT("An engine the package does not name is called unknown"), Report.Contains(TEXT("unknown")));
+
+	IFileManager::Get().DeleteDirectory(*Root, false, true);
 	return true;
 }
 
