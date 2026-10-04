@@ -481,7 +481,8 @@ FText SAssetSerializationDiff::GetAnalysisFilterResultText() const
 	}
 
 	const FAssetSaveAnalysis& Analysis = DiffSession->Analysis.GetValue();
-	const int32 Count = AnalysisFilter.CountMatches(Analysis.SemanticChanges) + AnalysisFilter.CountMatches(Analysis.LayoutChanges) + AnalysisFilter.CountMatches(Analysis.UnexplainedChanges);
+	const int32 Count = AnalysisFilter.CountMatches(Analysis.SemanticChanges) + AnalysisFilter.CountMatches(Analysis.LayoutChanges) + AnalysisFilter.CountMatches(Analysis.HeaderChanges) +
+						AnalysisFilter.CountMatches(Analysis.UnexplainedChanges);
 
 	return FText::Format(LOCTEXT("AnalysisFilterResultCount", "{0} matching"), FText::AsNumber(Count));
 }
@@ -617,6 +618,8 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildSaveAnalysisWidget()
 			  .AutoHeight()[BuildSaveAnalysisSection(LOCTEXT("MeaningfulChangesSection", "Meaningful Changes"), TEXT("Meaningful"), AnalysisFilter.FilterEntries(Analysis.SemanticChanges))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("LayoutChangesSection", "Layout / Serialization"), TEXT("Layout"), AnalysisFilter.FilterEntries(Analysis.LayoutChanges))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("HeaderChangesSection", "Package Header"), TEXT("Header"), AnalysisFilter.FilterEntries(Analysis.HeaderChanges))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			0.0f, 4.0f, 0.0f, 0.0f)[BuildSaveAnalysisSection(LOCTEXT("UnexplainedChangesSection", "Unexplained"), TEXT("Unexplained"), AnalysisFilter.FilterEntries(Analysis.UnexplainedChanges))];
 }

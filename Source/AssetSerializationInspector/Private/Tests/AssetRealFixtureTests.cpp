@@ -12,6 +12,7 @@
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetPackageFieldDecoder.h"
@@ -273,6 +274,52 @@ bool FAssetRealFixture_DiffsPackages::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Different packages are not identical"), Different.bFilesIdentical);
 	TestFalse(TEXT("The entries are not empty"), Different.Entries.IsEmpty());
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRealFixture_SaveAnalysisDescribesHeaderChanges, "AssetSerializationInspector.RealAssets.SaveAnalysisDescribesHeaderChanges", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetRealFixture_SaveAnalysisDescribesHeaderChanges::RunTest(const FString& Parameters)
+{
+	using namespace AssetRealFixtureTestUtils;
+
+	FFixture Older;
+	FFixture Newer;
+	if (!TestTrue(TEXT("BP_BOX50 loads"), LoadFixture(TEXT("BP_BOX50.uasset"), Older)) || !TestTrue(TEXT("BP_Box1 loads"), LoadFixture(TEXT("BP_Box1.uasset"), Newer)))
+	{
+		return false;
+	}
+
+	// A package against itself changes nothing, header included.
+	const FAssetPackageDiffResult Same = AssetPackageDiff::Compare(*Newer.Document, *Newer.Document, Newer.Traces.Get(), Newer.Traces.Get());
+	const FAssetSaveAnalysis SameAnalysis = FAssetSaveAnalyzer::Analyze(Same, *Newer.Document, *Newer.Document);
+	TestTrue(TEXT("An unchanged package has no header changes"), SameAnalysis.HeaderChanges.IsEmpty());
+
+	// Two packages saved by different engines differ in the header: versions, and the size of several tables.
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*Older.Document, *Newer.Document, Older.Traces.Get(), Newer.Traces.Get());
+	const FAssetSaveAnalysis Analysis = FAssetSaveAnalyzer::Analyze(Diff, *Older.Document, *Newer.Document);
+
+	if (!TestEqual(TEXT("The header is described as one entry"), Analysis.HeaderChanges.Num(), 1))
+	{
+		return false;
+	}
+
+	const FAssetSaveExplanationEntry& Header = Analysis.HeaderChanges[0];
+	TestFalse(TEXT("It says what happened to the header's size"), Header.Description.IsEmpty());
+	TestTrue(TEXT("Its tables are listed as children"), !Header.Children.IsEmpty());
+	TestEqual(TEXT("The change count is the number of tables listed"), Analysis.HeaderChangeCount, Header.Children.Num());
+
+	bool bSummaryWithFields = false;
+	for (const FAssetSaveExplanationEntry& Table : Header.Children)
+	{
+		TestFalse(FString::Printf(TEXT("%s says how it changed"), *Table.Title.ToString()), Table.Description.IsEmpty());
+		if (Table.Classification == EAssetSaveChangeClassification::PackageMetadataChanged)
+		{
+			bSummaryWithFields |= !Table.Children.IsEmpty();
+		}
+	}
+
+	TestTrue(TEXT("The summary lists the fields that changed"), bSummaryWithFields);
 	return true;
 }
 

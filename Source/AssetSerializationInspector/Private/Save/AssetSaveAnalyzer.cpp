@@ -183,10 +183,160 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 	OutAnalysis.UnexplainedChanges.Add(MoveTemp(Explanation));
 }
 
+static FText DescribeSizeChange(const int64 OldSize, const int64 NewSize)
+{
+	const int64 Delta = NewSize - OldSize;
+	if (Delta == 0)
+	{
+		return FText::GetEmpty();
+	}
+
+	return FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "SizeChange", "{0} by {1} bytes ({2} -> {3})"), Delta > 0 ? NSLOCTEXT("AssetSaveAnalyzer", "Grew", "grew") : NSLOCTEXT("AssetSaveAnalyzer", "Shrank", "shrank"),
+		FText::AsNumber(FMath::Abs(Delta)), FText::AsNumber(OldSize), FText::AsNumber(NewSize));
+}
+
+static FAssetSaveExplanationEntry BuildHeaderFieldExplanation(const FAssetPackageDiffEntry& Field)
+{
+	FAssetSaveExplanationEntry Result;
+	Result.Classification = EAssetSaveChangeClassification::PackageMetadataChanged;
+	Result.Confidence = EAssetExplanationConfidence::Certain;
+	Result.Key = Field.Key;
+	Result.SemanticPath = Field.SemanticPath;
+	Result.Title = Field.DisplayName;
+	Result.OldValue = Field.OldValue;
+	Result.NewValue = Field.NewValue;
+	Result.bHasOldValue = Field.State != EAssetPackageDiffState::Added;
+	Result.bHasNewValue = Field.State != EAssetPackageDiffState::Removed;
+	Result.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderFieldChanged", "{0} -> {1}"), FText::FromString(Field.OldValue), FText::FromString(Field.NewValue));
+
+	if (!Field.Explanation.IsEmpty())
+	{
+		Result.CauseDescription = Field.Explanation;
+		Result.CauseConfidence = EAssetExplanationConfidence::High;
+	}
+
+	return Result;
+}
+
+static FAssetSaveExplanationEntry BuildHeaderRegionExplanation(const FAssetPackageDiffEntry& Region)
+{
+	FAssetSaveExplanationEntry Result;
+	Result.Classification = EAssetSaveChangeClassification::TableChanged;
+	Result.Confidence = EAssetExplanationConfidence::Certain;
+	Result.Key = Region.Key;
+	Result.SemanticPath = Region.SemanticPath;
+	Result.Title = Region.DisplayName;
+	Result.OldOffset = Region.OldOffset;
+	Result.NewOffset = Region.NewOffset;
+	Result.OldSize = Region.OldSize;
+	Result.NewSize = Region.NewSize;
+	Result.ChangedByteCount = Region.ChangedByteCount;
+	Result.OldValue = Region.OldValue;
+	Result.NewValue = Region.NewValue;
+	Result.bHasOldValue = Region.State != EAssetPackageDiffState::Added;
+	Result.bHasNewValue = Region.State != EAssetPackageDiffState::Removed;
+
+	switch (Region.State)
+	{
+		case EAssetPackageDiffState::Added:
+			Result.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderTableAdded", "New table, {0} bytes."), FText::AsNumber(Region.NewSize));
+			break;
+
+		case EAssetPackageDiffState::Removed:
+			Result.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderTableRemoved", "Table removed; it held {0} bytes."), FText::AsNumber(Region.OldSize));
+			break;
+
+		default:
+		{
+			const FText SizeChange = DescribeSizeChange(Region.OldSize, Region.NewSize);
+			Result.Description = !SizeChange.IsEmpty() ? SizeChange : FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderTableBytesChanged", "{0} of {1} bytes changed."), FText::AsNumber(Region.ChangedByteCount), FText::AsNumber(Region.OldSize));
+			break;
+		}
+	}
+
+	if (!Region.Explanation.IsEmpty())
+	{
+		Result.CauseDescription = Region.Explanation;
+		Result.CauseConfidence = EAssetExplanationConfidence::High;
+	}
+
+	// The summary holds the individual fields.
+	for (const FAssetPackageDiffEntry& Field : Region.Children)
+	{
+		if (Field.Kind == EAssetPackageDiffKind::SummaryField && Field.State != EAssetPackageDiffState::Unchanged)
+		{
+			Result.Classification = EAssetSaveChangeClassification::PackageMetadataChanged;
+			Result.Children.Add(BuildHeaderFieldExplanation(Field));
+		}
+	}
+
+	return Result;
+}
+
+/** Describes what changed in the package header: its size, which tables grew, shrank, appeared or went, and which summary fields changed. */
+static void AnalyzeHeader(const FAssetPackageDiffEntry& Header, FAssetSaveAnalysis& OutAnalysis)
+{
+	if (Header.State == EAssetPackageDiffState::Unchanged)
+	{
+		return;
+	}
+
+	FAssetSaveExplanationEntry Result;
+	Result.Classification = EAssetSaveChangeClassification::TableChanged;
+	Result.Confidence = EAssetExplanationConfidence::Certain;
+	Result.Key = Header.Key;
+	Result.SemanticPath = Header.SemanticPath;
+	Result.Title = Header.DisplayName;
+	Result.OldSize = Header.OldSize;
+	Result.NewSize = Header.NewSize;
+	Result.OldValue = Header.OldValue;
+	Result.NewValue = Header.NewValue;
+	Result.bHasOldValue = true;
+	Result.bHasNewValue = true;
+
+	int32 MovedTables = 0;
+	for (const FAssetPackageDiffEntry& Region : Header.Children)
+	{
+		if (Region.State == EAssetPackageDiffState::Unchanged)
+		{
+			continue;
+		}
+
+		if (Region.State == EAssetPackageDiffState::Moved)
+		{
+			++MovedTables;
+			continue;
+		}
+
+		Result.Children.Add(BuildHeaderRegionExplanation(Region));
+		++OutAnalysis.HeaderChangeCount;
+	}
+
+	const FText SizeChange = DescribeSizeChange(Header.OldSize, Header.NewSize);
+	FText Description = SizeChange.IsEmpty() ? NSLOCTEXT("AssetSaveAnalyzer", "HeaderSameSize", "The header kept its size.") : FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderSizeChanged", "The header {0}."), SizeChange);
+	if (MovedTables > 0)
+	{
+		Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "HeaderMovedTables", "{0} {1} other tables were only moved (their stored offsets shifted)."), Description, FText::AsNumber(MovedTables));
+	}
+
+	Result.Description = Description;
+	if (!Header.Explanation.IsEmpty())
+	{
+		Result.CauseDescription = Header.Explanation;
+		Result.CauseConfidence = EAssetExplanationConfidence::High;
+	}
+
+	OutAnalysis.HeaderChanges.Add(MoveTemp(Result));
+}
+
 static void AnalyzeEntry(const FAssetPackageDiffEntry& Entry, const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, FAssetSaveAnalysis& OutAnalysis)
 {
 	switch (Entry.Kind)
 	{
+		case EAssetPackageDiffKind::Header:
+			AnalyzeHeader(Entry, OutAnalysis);
+			return;
+
 		case EAssetPackageDiffKind::Property:
 			AnalyzeProperty(Entry, OutAnalysis);
 			break;
