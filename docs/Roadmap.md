@@ -52,7 +52,7 @@ Next steps, in order:
 - [ ] Decode unversioned (tagless) properties of cooked packages from the class schema in live reflection
 - [x] Containers inside arrays of structs: final values and omitted-field defaults
 - [x] Headless commandlet for the no-op resave test and the folder comparison, with a report file, for CI and engine upgrades
-- [ ] Compare an asset with a source-control revision (Perforce, git) using the Save Analysis
+- [x] Compare an asset with a source-control revision (Perforce, git) using the Save Analysis
 - [ ] HTML report alongside the text and JSON ones
 - [ ] Window listing all monitored assets, with a way to add a folder
 - [ ] Show the elements that did decode when one element of an array fails, instead of only "the parent changed"
