@@ -231,6 +231,8 @@ The header is compared as its own part of the diff, not only as a few changed nu
 - Every region of the header, with offset, size and entry count: the summary, name/import/export maps, depends map, soft object paths, soft package references, searchable names, thumbnail table and thumbnail data, asset registry data, and so on. A region is **modified**, **moved** (identical bytes at another offset), **added** or **removed**, and selecting it shows the usual side-by-side hex view.
 - **Explanations** say why: the header's size change broken down by region, what a removed thumbnail table used to hold, that an offset moved by exactly the header's size change, that a region differs only in stored absolute file offsets (those bytes are shown in orange in the hex view, apart from real changes in red), and what the saved hash, package source and persistent GUID mean.
 
+The **Save Analysis** summarizes the header too, in a *Package Header* section (and in the exported reports): how the header's size changed, which tables grew, shrank, appeared or disappeared (with their old and new sizes and the reason, such as a thumbnail table that was removed), how many tables only moved, and which summary fields changed.
+
 ### Search and filters
 
 The structural diff has a search box (several terms must all match; names, paths, types and, optionally, values), toggles for added/removed/modified/moved entries, and the existing *Show unchanged*. Matching entries keep their parents visible, and an entry that matches brings what is inside it. The Save Analysis can be filtered by text and confidence, and the Repeated Save Analysis by text and value pattern. The tree keeps the expansion you chose while filters change.

@@ -418,10 +418,11 @@ FString AssetReportWriter::ToText(const FAssetAnalysisReport& Report)
 
 		Lines.Add(FString());
 		Lines.Add(FString::Printf(TEXT("Save analysis: %s"), NameOf(Analysis.ResultKind)));
-		Lines.Add(FString::Printf(TEXT("  %d property changes, %d relocations"), Analysis.PropertyChangeCount, Analysis.RelocationCount));
+		Lines.Add(FString::Printf(TEXT("  %d property changes, %d relocations, %d header table changes"), Analysis.PropertyChangeCount, Analysis.RelocationCount, Analysis.HeaderChangeCount));
 		Lines.Add(FString::Printf(TEXT("  %lld changed bytes: %lld explained, %lld unexplained"), Analysis.TotalChangedBytes, Analysis.ExplainedChangedBytes, Analysis.UnexplainedChangedBytes));
 		AppendExplanationSection(TEXT("Semantic changes"), Analysis.SemanticChanges, Lines);
 		AppendExplanationSection(TEXT("Layout changes"), Analysis.LayoutChanges, Lines);
+		AppendExplanationSection(TEXT("Package header changes"), Analysis.HeaderChanges, Lines);
 		AppendExplanationSection(TEXT("Unexplained changes"), Analysis.UnexplainedChanges, Lines);
 	}
 
@@ -507,11 +508,13 @@ FString AssetReportWriter::ToJson(const FAssetAnalysisReport& Report)
 		Writer->WriteValue(TEXT("result"), NameOf(Analysis.ResultKind));
 		Writer->WriteValue(TEXT("propertyChanges"), static_cast<int64>(Analysis.PropertyChangeCount));
 		Writer->WriteValue(TEXT("relocations"), static_cast<int64>(Analysis.RelocationCount));
+		Writer->WriteValue(TEXT("headerChanges"), static_cast<int64>(Analysis.HeaderChangeCount));
 		Writer->WriteValue(TEXT("totalChangedBytes"), Analysis.TotalChangedBytes);
 		Writer->WriteValue(TEXT("explainedChangedBytes"), Analysis.ExplainedChangedBytes);
 		Writer->WriteValue(TEXT("unexplainedChangedBytes"), Analysis.UnexplainedChangedBytes);
 		WriteExplanations(*Writer, TEXT("semanticChanges"), Analysis.SemanticChanges);
 		WriteExplanations(*Writer, TEXT("layoutChanges"), Analysis.LayoutChanges);
+		WriteExplanations(*Writer, TEXT("headerChangeDetails"), Analysis.HeaderChanges);
 		WriteExplanations(*Writer, TEXT("unexplainedChanges"), Analysis.UnexplainedChanges);
 		Writer->WriteObjectEnd();
 	}

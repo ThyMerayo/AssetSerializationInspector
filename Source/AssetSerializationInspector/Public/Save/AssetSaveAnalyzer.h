@@ -80,12 +80,18 @@ struct FAssetSaveAnalysis
 	int32 PropertyChangeCount = 0;
 	int32 RelocationCount = 0;
 
+	/** Tables and summary fields of the package header that changed, with what happened to each (grew, shrank, added, removed). */
+	int32 HeaderChangeCount = 0;
+
 	int64 TotalChangedBytes = 0;
 	int64 ExplainedChangedBytes = 0;
 	int64 UnexplainedChangedBytes = 0;
 
 	TArray<FAssetSaveExplanationEntry> SemanticChanges;
 	TArray<FAssetSaveExplanationEntry> LayoutChanges;
+
+	/** The package header as one entry: its size change, then the tables that changed and the summary fields that did. */
+	TArray<FAssetSaveExplanationEntry> HeaderChanges;
 	TArray<FAssetSaveExplanationEntry> UnexplainedChanges;
 };
 
