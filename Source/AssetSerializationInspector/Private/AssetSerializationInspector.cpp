@@ -22,14 +22,20 @@
 #include "AssetSerializationInspectorCommands.h"
 #include "AssetSerializationInspectorStyle.h"
 #include "Compare/AssetFolderComparison.h"
+#include "Diff/AssetPackageDiff.h"
+#include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackageReader.h"
 #include "Report/AssetBatchReportWriter.h"
 #include "Report/AssetFolderComparisonReportWriter.h"
 #include "Save/AssetBatchResave.h"
 #include "Save/AssetNoOpResaveTest.h"
+#include "Save/AssetSaveAnalyzer.h"
 #include "Save/AssetSaveObserver.h"
 #include "Widgets/SAssetBatchResults.h"
+#include "Widgets/SAssetFolderComparisonResults.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
+#include "Trace/AssetPackageFieldDecoder.h"
 
 static const FName AssetSerializationInspectorTabName("Asset Serialization Inspector");
 static const FName DiffTabName(TEXT("Asset Serialization Diff"));
@@ -127,6 +133,9 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 			Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
 				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
 				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
+			Section.AddMenuEntry("ShowFolderComparison", LOCTEXT("ShowFolderComparison", "Show Last Folder Comparison"),
+				LOCTEXT("ShowFolderComparisonTooltip", "Reopen the window with the files of the latest comparison of two asset folders."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
+				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow), FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
 			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
 				LOCTEXT("CompareAssetFoldersTooltip",
 					"Compare the .uasset files of two folders on disk, for example a project before and after moving it to another engine "
@@ -465,6 +474,78 @@ void FAssetSerializationInspectorModule::CompareAssetFolders()
 
 	LastFolderComparison = MakeShared<FAssetFolderComparisonResult>(MoveTemp(Result));
 	ShowFolderComparisonNotification(*LastFolderComparison);
+	ShowFolderComparisonWindow();
+}
+
+void FAssetSerializationInspectorModule::ShowFolderComparisonWindow()
+{
+	if (!LastFolderComparison.IsValid())
+	{
+		return;
+	}
+
+	const TSharedRef<SAssetFolderComparisonResults> Results = SNew(SAssetFolderComparisonResults)
+																  .Result(LastFolderComparison)
+																  .OnOpenPair(FOnOpenFolderComparisonPair::CreateRaw(this, &FAssetSerializationInspectorModule::OpenFolderComparisonPairDiff))
+																  .OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport));
+
+	// A new comparison replaces the content of the window that is already open.
+	if (const TSharedPtr<SWindow> Existing = FolderComparisonWindow.Pin())
+	{
+		Existing->SetContent(Results);
+		Existing->BringToFront();
+		return;
+	}
+
+	const TSharedRef<SWindow> Window = SNew(SWindow)
+										   .Title(LOCTEXT("FolderComparisonTitle", "Folder Comparison"))
+										   .ClientSize(FVector2D(960.0f, 640.0f))
+										   .SupportsMinimize(true)
+										   .SupportsMaximize(true)[Results];
+
+	FolderComparisonWindow = Window;
+	FSlateApplication::Get().AddWindow(Window);
+}
+
+void FAssetSerializationInspectorModule::OpenFolderComparisonPairDiff(const FString& RelativePath)
+{
+	if (!LastFolderComparison.IsValid())
+	{
+		return;
+	}
+
+	// The comparison kept only condensed results, so both files are read again for the full comparison.
+	FScopedSlowTask SlowTask(1.0f, LOCTEXT("ReadingPair", "Reading the files..."));
+	SlowTask.MakeDialog();
+	SlowTask.EnterProgressFrame(1.0f, FText::FromString(RelativePath));
+
+	FText OldError;
+	FText NewError;
+	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(LastFolderComparison->OldFolder, RelativePath), OldError);
+	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(LastFolderComparison->NewFolder, RelativePath), NewError);
+
+	if (!OldDocument.IsValid() || !NewDocument.IsValid())
+	{
+		FNotificationInfo Info(FText::Format(LOCTEXT("PairNotReadable", "The files could not be read again: {0}"), !OldDocument.IsValid() ? OldError : NewError));
+		Info.ExpireDuration = 8.0f;
+
+		if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
+		{
+			Notification->SetCompletionState(SNotificationItem::CS_Fail);
+		}
+		return;
+	}
+
+	const TSharedRef<FAssetSerializationDiffSession> Session = MakeShared<FAssetSerializationDiffSession>();
+	Session->Old.Document = OldDocument;
+	Session->Old.Traces = FAssetPackageFieldDecoder::Decode(*OldDocument);
+	Session->New.Document = NewDocument;
+	Session->New.Traces = FAssetPackageFieldDecoder::Decode(*NewDocument);
+	Session->DiffResult = AssetPackageDiff::Compare(*OldDocument, *NewDocument, Session->Old.Traces.Get(), Session->New.Traces.Get());
+	Session->Analysis = FAssetSaveAnalyzer::Analyze(Session->DiffResult.GetValue(), *OldDocument, *NewDocument);
+	Session->PackageName = FName(*FPaths::GetBaseFilename(RelativePath));
+
+	ShowDiffSession(Session);
 }
 
 void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const FAssetFolderComparisonResult& Result)
@@ -479,6 +560,9 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const 
 	FNotificationInfo Info(Message);
 	Info.ExpireDuration = 20.0f;
 	Info.bFireAndForget = true;
+	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("ViewFolderComparisonButton", "View Results"),
+		LOCTEXT("ViewFolderComparisonTooltip", "Browse the files of this comparison, see what differs in each and open the comparison of a changed pair."),
+		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow), SNotificationItem::CS_None));
 	Info.ButtonDetails.Add(FNotificationButtonInfo(LOCTEXT("SaveFolderComparisonButton", "Save Report..."),
 		LOCTEXT("SaveFolderComparisonTooltip", "Save what changed per file, the engine versions involved and the changes found in several files as a text or JSON report."),
 		FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport), SNotificationItem::CS_None));
@@ -662,7 +746,12 @@ void FAssetSerializationInspectorModule::OpenObservedSaveDiff(TSharedPtr<FObserv
 		return;
 	}
 
-	PendingDiffSession = FAssetSerializationDiffSession::FromObservedSave(*Save);
+	ShowDiffSession(FAssetSerializationDiffSession::FromObservedSave(*Save));
+}
+
+void FAssetSerializationInspectorModule::ShowDiffSession(TSharedPtr<FAssetSerializationDiffSession> Session)
+{
+	PendingDiffSession = MoveTemp(Session);
 
 	TSharedPtr<SDockTab> Tab = FGlobalTabmanager::Get()->TryInvokeTab(DiffTabName);
 
