@@ -233,6 +233,10 @@ The header is compared as its own part of the diff, not only as a few changed nu
 
 The **Save Analysis** summarizes the header too, in a *Package Header* section (and in the exported reports): how the header's size changed, which tables grew, shrank, appeared or disappeared (with their old and new sizes and the reason, such as a thumbnail table that was removed), how many tables only moved, and which summary fields changed.
 
+### Native data
+
+Bytes of an export that no tagged property accounts for (mesh and texture data, compiled Blueprint classes, DNA, import data) cannot be decoded, but they are no longer opaque. Each native range that changed gets its own entry in the diff, with the number of changed bytes, and the Save Analysis counts them as *unexplained* changes. The entry says what the data is for the export's class and gives facts read from its properties, for example `SkeletalMesh: mesh render data (LODs, vertices, skin weights, morph targets) (934,452 of 969,237 bytes are native data). Source LODs: 3, skeleton: ...` or `Texture2D: texture data (mips and platform data). imported size: X=4096 Y=4096, source format: TSF_BGRA8`. The *Changed bytes*, *Explained* and *Unexplained* totals of the Save Analysis (and of the batch and folder reports) now add up the property changes, the header changes and these native changes.
+
 ### Search and filters
 
 The structural diff has a search box (several terms must all match; names, paths, types and, optionally, values), toggles for added/removed/modified/moved entries, and the existing *Show unchanged*. Matching entries keep their parents visible, and an entry that matches brings what is inside it. The Save Analysis can be filtered by text and confidence, and the Repeated Save Analysis by text and value pattern. The tree keeps the expansion you chose while filters change.

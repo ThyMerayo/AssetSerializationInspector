@@ -10,6 +10,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Summary/AssetExportSummary.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
@@ -688,6 +689,128 @@ namespace
 		}
 	}
 
+	/** The ranges of an export's payload that no property accounts for, in order. */
+	TArray<const FAssetSerializationTraceNode*> CollectNativeNodes(const FAssetSerializationTrace* Trace)
+	{
+		TArray<const FAssetSerializationTraceNode*> Result;
+
+		if (Trace != nullptr && Trace->Root.IsValid())
+		{
+			for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+			{
+				if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
+				{
+					Result.Add(Node.Get());
+				}
+			}
+		}
+
+		return Result;
+	}
+
+	/**
+	 * Adds an entry for every native range of the two exports that changed: the bytes the inspector cannot decode. Ranges are
+	 * paired by their reason (before the properties, after them, ...) and their order within it, and compared byte by byte, so a
+	 * save that changes only native data is reported instead of passing as no change.
+	 */
+	void AppendNativeRangeDiffs(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& PayloadEntry)
+	{
+		const TArray<const FAssetSerializationTraceNode*> OldNodes = CollectNativeNodes(OldTrace);
+		const TArray<const FAssetSerializationTraceNode*> NewNodes = CollectNativeNodes(NewTrace);
+
+		const auto Find = [](const TArray<const FAssetSerializationTraceNode*>& Nodes, const FString& Reason, const int32 Occurrence) -> const FAssetSerializationTraceNode* {
+			int32 Seen = 0;
+			for (const FAssetSerializationTraceNode* Node : Nodes)
+			{
+				if (Node->TypeName == Reason && Seen++ == Occurrence)
+				{
+					return Node;
+				}
+			}
+			return nullptr;
+		};
+
+		TSet<FString> Keys;
+		TArray<TPair<FString, int32>> Order;
+		const auto Collect = [&](const TArray<const FAssetSerializationTraceNode*>& Nodes) {
+			TMap<FString, int32> Counts;
+			for (const FAssetSerializationTraceNode* Node : Nodes)
+			{
+				const int32 Occurrence = Counts.FindOrAdd(Node->TypeName)++;
+				const FString Key = FString::Printf(TEXT("%s#%d"), *Node->TypeName, Occurrence);
+				if (!Keys.Contains(Key))
+				{
+					Keys.Add(Key);
+					Order.Emplace(Node->TypeName, Occurrence);
+				}
+			}
+		};
+		Collect(NewNodes);
+		Collect(OldNodes);
+
+		const FAssetExportSummary Summary = AssetExportSummary::Summarize(NewDocument, NewExport, NewTrace);
+
+		for (const TPair<FString, int32>& Item : Order)
+		{
+			const FAssetSerializationTraceNode* OldNode = Find(OldNodes, Item.Key, Item.Value);
+			const FAssetSerializationTraceNode* NewNode = Find(NewNodes, Item.Key, Item.Value);
+
+			FAssetPackageDiffEntry Entry;
+			Entry.Kind = EAssetPackageDiffKind::UnknownPayloadRange;
+			Entry.Key = Item.Value == 0 ? Item.Key : FString::Printf(TEXT("%s (%d)"), *Item.Key, Item.Value + 1);
+			Entry.DisplayName = FText::FromString(Entry.Key);
+			Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
+			Entry.TypeName = Item.Key;
+			Entry.OldExportIndex = OldExport.Index;
+			Entry.NewExportIndex = NewExport.Index;
+
+			if (OldNode != nullptr)
+			{
+				Entry.OldOffset = OldExport.SerialOffset + OldNode->Offset;
+				Entry.OldSize = OldNode->Size;
+				Entry.OldValue = FString::Printf(TEXT("%lld bytes"), OldNode->Size);
+			}
+
+			if (NewNode != nullptr)
+			{
+				Entry.NewOffset = NewExport.SerialOffset + NewNode->Offset;
+				Entry.NewSize = NewNode->Size;
+				Entry.NewValue = FString::Printf(TEXT("%lld bytes"), NewNode->Size);
+			}
+
+			if (OldNode == nullptr)
+			{
+				Entry.State = EAssetPackageDiffState::Added;
+				Entry.ChangedByteCount = NewNode->Size;
+			}
+			else if (NewNode == nullptr)
+			{
+				Entry.State = EAssetPackageDiffState::Removed;
+				Entry.ChangedByteCount = OldNode->Size;
+			}
+			else
+			{
+				Entry.ChangedSpans = FAssetByteDiff::Compare(OldDocument, Entry.OldOffset, Entry.OldSize, NewDocument, Entry.NewOffset, Entry.NewSize);
+
+				for (const FAssetByteDiffSpan& Span : Entry.ChangedSpans)
+				{
+					Entry.ChangedByteCount += Span.Size;
+				}
+
+				if (Entry.ChangedByteCount == 0 && Entry.OldSize == Entry.NewSize)
+				{
+					continue;
+				}
+
+				Entry.State = EAssetPackageDiffState::Modified;
+			}
+
+			Entry.Explanation = FText::FromString(Summary.ToText());
+			PayloadEntry.Children.Add(MoveTemp(Entry));
+		}
+	}
+
 	void CompareExports(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, const FAssetPackageTraceCollection* OldTraces,
 		const FAssetPackageTraceCollection* NewTraces, FAssetPackageDiffResult& Result)
 	{
@@ -781,6 +904,7 @@ namespace
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
 					BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace, OldResolver.Get() }, { NewDocument, B, NewTrace, NewResolver.Get() }, Payload);
+					AppendNativeRangeDiffs(OldDocument, A, OldTrace, NewDocument, B, NewTrace, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
 				{

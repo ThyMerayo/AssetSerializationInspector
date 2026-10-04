@@ -81,6 +81,9 @@ static void AnalyzeProperty(const FAssetPackageDiffEntry& Entry, FAssetSaveAnaly
 		}
 	}
 
+	// A property that appeared or went accounts for all its bytes; a modified one for the bytes that differ.
+	OutAnalysis.ExplainedChangedBytes += Entry.State == EAssetPackageDiffState::Added ? Entry.NewSize : (Entry.State == EAssetPackageDiffState::Removed ? Entry.OldSize : Entry.ChangedByteCount);
+
 	OutAnalysis.PropertyChangeCount++;
 	OutAnalysis.SemanticChanges.Add(MoveTemp(Explanation));
 }
@@ -172,14 +175,16 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 	Explanation.Key = Entry.Key;
 	Explanation.Title = NSLOCTEXT("AssetSaveAnalyzer", "NativeUndecoded", "Native / undecoded serialization");
 	Explanation.ChangedByteCount = Entry.ChangedByteCount;
-	Explanation.Description =
-		FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "NativeBytesChanged", "{0} changed bytes could not be attributed to a decoded serialized property."), FText::AsNumber(Entry.ChangedByteCount));
+	Explanation.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "NativeBytesChanged", "{0} changed bytes of {1} could not be attributed to a decoded serialized property."),
+		FText::AsNumber(Entry.ChangedByteCount), FText::AsNumber(FMath::Max(Entry.OldSize, Entry.NewSize)));
+	Explanation.CauseDescription = Entry.Explanation;
 	Explanation.OldOffset = Entry.OldOffset;
 	Explanation.NewOffset = Entry.NewOffset;
 	Explanation.OldSize = Entry.OldSize;
 	Explanation.NewSize = Entry.NewSize;
 	Explanation.SemanticPath = AssetPackageDiff::AppendSemanticPath(Entry.OldFieldPath, Entry.Key);
 
+	OutAnalysis.UnexplainedChangedBytes += Entry.ChangedByteCount;
 	OutAnalysis.UnexplainedChanges.Add(MoveTemp(Explanation));
 }
 
@@ -313,6 +318,10 @@ static void AnalyzeHeader(const FAssetPackageDiffEntry& Header, FAssetSaveAnalys
 
 		Result.Children.Add(BuildHeaderRegionExplanation(Region));
 		++OutAnalysis.HeaderChangeCount;
+
+		// The header's changes are understood (they are tables with a stated reason), so their bytes count as explained.
+		OutAnalysis.ExplainedChangedBytes +=
+			Region.State == EAssetPackageDiffState::Added ? Region.NewSize : (Region.State == EAssetPackageDiffState::Removed ? Region.OldSize : Region.ChangedByteCount);
 	}
 
 	const FText SizeChange = DescribeSizeChange(Header.OldSize, Header.NewSize);
@@ -519,6 +528,8 @@ FAssetSaveAnalysis FAssetSaveAnalyzer::Analyze(const FAssetPackageDiffResult& Di
 	}
 
 	AnalyzeExportLayout(Diff, Result);
+
+	Result.TotalChangedBytes = Result.ExplainedChangedBytes + Result.UnexplainedChangedBytes;
 
 	FinalizeResult(Result);
 
