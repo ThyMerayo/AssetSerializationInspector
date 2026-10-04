@@ -5,6 +5,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
+#include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "UObject/CoreObjectVersion.h"
@@ -87,6 +88,9 @@ struct FAssetPropertyDecodeContext
 
 	/** Set by whoever read the property's tag for the next value decoded: the tag says its type writes the value itself. */
 	mutable bool bNextValueIsNativelySerialized = false;
+
+	/** The live struct whose tagged fields are being read, when the running editor has it; it names the struct elements older packages leave out. */
+	const UStruct* OwnerStruct = nullptr;
 };
 
 static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
@@ -126,6 +130,8 @@ static bool DecodeTaggedStruct(const FAssetPropertyDecodeContext& Context, FAsse
 			OutValue.Error = FString::Printf(TEXT("Struct field '%s' extends beyond the struct value range."), *Tag.ResolvedName);
 			return false;
 		}
+
+		AssetSchemaReflection::CompleteType(Context.OwnerStruct, Tag.ResolvedName, Tag.Type);
 
 		FAssetDecodedPropertyValue Child;
 		Child.Name = Tag.ResolvedName;
@@ -1074,7 +1080,9 @@ static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, F
 		return false;
 	}
 
-	return DecodeTaggedStruct(Context, Reader, ValueEnd, OutValue, Depth);
+	FAssetPropertyDecodeContext FieldContext = Context;
+	FieldContext.OwnerStruct = AssetSchemaReflection::FindNativeStruct(StructName);
+	return DecodeTaggedStruct(FieldContext, Reader, ValueEnd, OutValue, Depth);
 }
 
 static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,

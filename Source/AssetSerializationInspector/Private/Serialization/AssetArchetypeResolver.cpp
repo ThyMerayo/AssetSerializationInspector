@@ -10,6 +10,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetContainerFinalValue.h"
+#include "Serialization/AssetSchemaReflection.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -141,48 +142,10 @@ namespace
 		return false;
 	}
 
-	/**
-	 * Follows an export's class (through the Blueprint classes generated in the package) to the native class it derives from and
-	 * returns the class when the running editor has it loaded.
-	 */
-	UClass* FindNativeClass(const FAssetPackageDocument& Document, const int32 ExportIndex)
-	{
-		if (!Document.ExportMap.IsValidIndex(ExportIndex))
-		{
-			return nullptr;
-		}
-
-		FAssetPackageIndexReference Index = Document.ExportMap[ExportIndex].ClassIndex;
-
-		for (int32 Guard = 0; Guard < MaximumArchetypeDepth; ++Guard)
-		{
-			if (Index.GetKind() == EAssetPackageIndexKind::Export)
-			{
-				if (!Document.ExportMap.IsValidIndex(Index.GetArrayIndex()))
-				{
-					return nullptr;
-				}
-
-				Index = Document.ExportMap[Index.GetArrayIndex()].SuperIndex;
-				continue;
-			}
-
-			FString Path;
-			if (Index.GetKind() != EAssetPackageIndexKind::Import || !Document.ResolvePackageIndexPath(Index, Path) || !Path.StartsWith(TEXT("/Script/")))
-			{
-				return nullptr;
-			}
-
-			return FindObject<UClass>(nullptr, *Path);
-		}
-
-		return nullptr;
-	}
-
 	/** Exports a property's value on the class default object of the native class an export derives from. */
 	bool ReflectNativeDefault(const FAssetPackageDocument& Document, const int32 ExportIndex, const FString& PropertyName, const int32 ArrayIndex, FString& OutText, FString& OutClassName)
 	{
-		UClass* Class = FindNativeClass(Document, ExportIndex);
+		UClass* Class = AssetSchemaReflection::FindNativeClass(Document, ExportIndex);
 		if (Class == nullptr)
 		{
 			return false;

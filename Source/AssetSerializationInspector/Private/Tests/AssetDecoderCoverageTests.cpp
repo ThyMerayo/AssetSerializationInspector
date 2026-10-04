@@ -210,12 +210,30 @@ bool FAssetDecoderCoverage_ReadsAPackageFromUE50::RunTest(const FString& Paramet
 	TestEqual(TEXT("Every export has a property stream"), Result.ExportsScanned, 16);
 	TestEqual(TEXT("Its tagged properties are found"), Result.PropertiesScanned, 73);
 
-	// The one property left is a Map<Name, Guid>: packages before UE 5.4 do not store the struct type of a map value.
-	TestEqual(TEXT("All but one decode"), Result.PropertiesDecoded, 72);
-	if (TestEqual(TEXT("One kind of failure"), Result.Issues.Num(), 1))
+	// A Map<Name, Guid> does not store the struct type of its values before UE 5.4; the class in the running editor names it.
+	TestEqual(TEXT("Every property decodes"), Result.PropertiesDecoded, 73);
+	TestEqual(TEXT("There is nothing to report"), Result.Issues.Num(), 0);
+
+	// The map's tag names the struct after the fix-up, wherever the trace was built from.
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+	bool bFoundMap = false;
+	for (const TPair<int32, FAssetSerializationTrace>& Item : Traces->ExportTraces)
 	{
-		TestTrue(TEXT("It is the map"), Result.Issues[0].TypeName.StartsWith(TEXT("MapProperty")));
+		if (!Item.Value.Root.IsValid())
+		{
+			continue;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Item.Value.Root->Children)
+		{
+			if (Node.IsValid() && Node->PropertyType.Name == TEXT("MapProperty") && Node->PropertyType.Parameters.Num() == 2 && Node->PropertyType.Parameters[1].Name == TEXT("StructProperty"))
+			{
+				bFoundMap = true;
+				TestEqual(TEXT("The value struct is named"), Node->PropertyType.Parameters[1].Parameters.Num(), 1);
+			}
+		}
 	}
+	TestTrue(TEXT("The map of structs is in the package"), bFoundMap);
 
 	return true;
 }

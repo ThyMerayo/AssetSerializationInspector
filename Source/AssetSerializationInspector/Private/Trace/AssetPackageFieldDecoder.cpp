@@ -8,6 +8,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetPropertyTagDecoder.h"
+#include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -185,6 +186,7 @@ namespace
 			return true;
 		}
 
+		const UStruct* NativeClass = AssetSchemaReflection::FindNativeClass(Document, Export.Index);
 		bool bFoundTerminator = false;
 		bool bRestAttributed = false;
 		const int64 ExportEnd = Export.SerialOffset + Export.SerialSize;
@@ -252,6 +254,9 @@ namespace
 				bFoundTerminator = true;
 				break;
 			}
+
+			// Packages saved before UE 5.4 leave the struct of a map or set element unnamed; the class in the running editor knows it.
+			AssetSchemaReflection::CompleteType(NativeClass, Tag.ResolvedName, Tag.Type);
 
 			TSharedPtr<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
 			Node->Kind = EAssetSerializationTraceKind::Property;
