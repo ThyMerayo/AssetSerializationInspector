@@ -1835,6 +1835,9 @@ FText SAssetSerializationDiff::GetExplanationPrefix(const EAssetSaveChangeClassi
 		case EAssetSaveChangeClassification::NativeOrUndecodedChanged:
 			return FText::FromString(TEXT("?"));
 
+		case EAssetSaveChangeClassification::PropertyStoredDifferently:
+			return FText::FromString(TEXT("="));
+
 		default:
 			return FText::FromString(TEXT("•"));
 	}

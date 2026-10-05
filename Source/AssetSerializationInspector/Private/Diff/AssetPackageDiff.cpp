@@ -761,6 +761,15 @@ namespace
 		{
 			const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);
 
+			// Bytes that differ with nothing different in the decoded values: the same entries stored in another order.
+			if (OldPtr != nullptr && NewPtr != nullptr && OldDecoded.IsSuccess() && NewDecoded.IsSuccess() && ValueDiff.State == EAssetDecodedValueDiffState::Unchanged
+				&& (OldDecoded.Kind == EAssetDecodedValueKind::Set || OldDecoded.Kind == EAssetDecodedValueKind::Map))
+			{
+				Entry.bRepresentationOnly = true;
+				Entry.Explanation = FText::FromString(
+					TEXT("The entries are the same; they are stored in another order. Maps and sets are written in the order of an internal hash table, which can change between saves."));
+			}
+
 			FStructFieldContext FieldContext;
 			FieldContext.OldData = &OldData;
 			FieldContext.NewData = &NewData;

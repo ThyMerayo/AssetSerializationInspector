@@ -26,6 +26,27 @@ static void AnalyzeProperty(const FAssetPackageDiffEntry& Entry, FAssetSaveAnaly
 		return;
 	}
 
+	// Nothing differs in the value, only how it is stored: a layout change, not a change of the asset.
+	if (Entry.bRepresentationOnly)
+	{
+		FAssetSaveExplanationEntry Stored;
+		Stored.Classification = EAssetSaveChangeClassification::PropertyStoredDifferently;
+		Stored.Confidence = EAssetExplanationConfidence::Certain;
+		Stored.Key = Entry.Key;
+		Stored.Title = FText::FromString(Entry.Key);
+		Stored.Description = NSLOCTEXT("AssetSaveAnalyzer", "PropertyStoredDifferently", "Same entries, stored in another order (maps and sets are written in hash table order).");
+		Stored.ChangedByteCount = Entry.ChangedByteCount;
+		Stored.OldOffset = Entry.OldOffset;
+		Stored.NewOffset = Entry.NewOffset;
+		Stored.OldSize = Entry.OldSize;
+		Stored.NewSize = Entry.NewSize;
+		Stored.SemanticPath = Entry.SemanticPath;
+
+		OutAnalysis.ExplainedChangedBytes += Entry.ChangedByteCount;
+		OutAnalysis.LayoutChanges.Add(MoveTemp(Stored));
+		return;
+	}
+
 	FAssetSaveExplanationEntry Explanation;
 	Explanation.Key = Entry.Key;
 	Explanation.ChangedByteCount = Entry.ChangedByteCount;

@@ -118,6 +118,8 @@ When an element of an array cannot be decoded, the elements before it are kept i
 
 Set and map comparisons use decoded semantic keys. Map entries are matched by key and values are compared recursively. Serialized container operations such as add, remove, replace, or add/modify remain distinguishable when the package contains delta serialization.
 
+The entries of a map or set are written in the order of an internal hash table, which can change from one editor session to the next (a map keyed by objects, for example, can come out in another order after any save). When the bytes of such a property differ but the decoded entries are identical, the diff marks it as the same value stored in another order, and the Save Analysis lists it as a layout change (*Same entries, stored in another order*), not as a property change, so saving a Blueprint no longer reports a map variable that did not change as modified.
+
 ### Property-level change attribution
 
 Changed byte spans are mapped back to decoded serialized properties. For example:

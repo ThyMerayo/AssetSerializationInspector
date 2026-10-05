@@ -30,7 +30,10 @@ enum class EAssetSaveChangeClassification : uint8
 	PackageMetadataChanged,
 	TableChanged,
 
-	NativeOrUndecodedChanged
+	NativeOrUndecodedChanged,
+
+	/** The value is the same; only the way it is stored differs (the entries of a map or set were written in another order). */
+	PropertyStoredDifferently
 };
 
 enum class EAssetSaveResultKind : uint8
