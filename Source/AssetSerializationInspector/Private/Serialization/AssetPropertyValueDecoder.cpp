@@ -13,6 +13,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
+#include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializationPrimitives.h"
@@ -294,18 +295,25 @@ static bool DecodeColorFromReader(const FAssetPropertyDecodeContext& Context, FA
 	return true;
 }
 
-bool DecodeEdGraphPinTypeFromReader(FAssetPackagePayloadReader& Reader, FAssetDecodedPropertyValue& OutValue)
+bool DecodeEdGraphPinTypeFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	const int64 Start = Reader.Tell();
 
+	// The engine's own serializer finds where the value ends; the description is read separately because the engine's value holds
+	// objects that were never resolved. The description is used only when it ends at the same byte.
 	FEdGraphPinType Value{};
 	Value.Serialize(Reader);
+	const int64 End = Reader.Tell();
+
+	FString Description;
+	int64 DescribedEnd = 0;
+	const bool bDescribed = AssetGraphNodePins::ReadPinType(Context.Document, Start, ValueEnd, Description, DescribedEnd) && DescribedEnd == End;
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
-	OutValue.Value = TEXT("EdGraphPinType value");
+	OutValue.Value = bDescribed ? Description : FString(TEXT("EdGraphPinType value"));
 	OutValue.AbsoluteOffset = Start;
-	OutValue.Size = Reader.Tell() - Start;
+	OutValue.Size = End - Start;
 	return true;
 }
 
@@ -1021,7 +1029,7 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 
 	if (StructName == TEXT("EdGraphPinType"))
 	{
-		return DecodeEdGraphPinTypeFromReader(Reader, OutValue);
+		return DecodeEdGraphPinTypeFromReader(Context, Reader, ValueEnd, OutValue);
 	}
 
 	return false;
