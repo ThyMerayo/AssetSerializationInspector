@@ -58,53 +58,60 @@ namespace
 		return FSHA1::HashBuffer(Document.FileData.GetData(), static_cast<uint64>(Document.FileData.Num())).ToString();
 	}
 
+	/**
+	 * The name maps are compared by what the names are, not by where they are: a name that is new shifts every name after it by one
+	 * place, and comparing place by place would report all of those as changed (a variable that was not touched would show up as a
+	 * different name). A name that is in both maps is unchanged, or moved when its place changed; a name only in the new map was
+	 * added, and one only in the old map was removed.
+	 */
 	void CompareNames(const FAssetPackageDocument& OldDocument, const FAssetPackageDocument& NewDocument, FAssetPackageDiffResult& Result)
 	{
-		const int32 MaximumCount = FMath::Max(OldDocument.NameMap.Num(), NewDocument.NameMap.Num());
-
 		FAssetPackageDiffEntry Root;
 		Root.Kind = EAssetPackageDiffKind::Name;
 		Root.DisplayName = NSLOCTEXT("AssetPackageDiff", "NameMap", "Name Map");
 
-		for (int32 Index = 0; Index < MaximumCount; ++Index)
+		TMap<FString, int32> OldIndexByName;
+		for (int32 Index = 0; Index < OldDocument.NameMap.Num(); ++Index)
 		{
-			const bool bHasOld = OldDocument.NameMap.IsValidIndex(Index);
-			const bool bHasNew = NewDocument.NameMap.IsValidIndex(Index);
+			OldIndexByName.FindOrAdd(OldDocument.NameMap[Index].Name, Index);
+		}
+
+		TSet<FString> NewNames;
+		for (int32 Index = 0; Index < NewDocument.NameMap.Num(); ++Index)
+		{
+			const FAssetPackageNameEntry& B = NewDocument.NameMap[Index];
+			NewNames.Add(B.Name);
 
 			FAssetPackageDiffEntry Entry;
 			Entry.Kind = EAssetPackageDiffKind::Name;
 			Entry.Key = FString::Printf(TEXT("Name[%d]"), Index);
 			Entry.DisplayName = FText::FromString(Entry.Key);
+			Entry.NewValue = B.Name;
+			Entry.NewOffset = B.Offset;
+			Entry.NewSize = B.Size;
 
-			if (!bHasOld)
+			const int32* OldIndex = OldIndexByName.Find(B.Name);
+			if (OldIndex == nullptr)
 			{
 				Entry.State = EAssetPackageDiffState::Added;
-				Entry.NewValue = NewDocument.NameMap[Index].Name;
-				Entry.NewOffset = NewDocument.NameMap[Index].Offset;
-				Entry.NewSize = NewDocument.NameMap[Index].Size;
-			}
-			else if (!bHasNew)
-			{
-				Entry.State = EAssetPackageDiffState::Removed;
-				Entry.OldValue = OldDocument.NameMap[Index].Name;
-				Entry.OldOffset = OldDocument.NameMap[Index].Offset;
-				Entry.OldSize = OldDocument.NameMap[Index].Size;
 			}
 			else
 			{
-				const FAssetPackageNameEntry& A = OldDocument.NameMap[Index];
-				const FAssetPackageNameEntry& B = NewDocument.NameMap[Index];
-
+				const FAssetPackageNameEntry& A = OldDocument.NameMap[*OldIndex];
 				Entry.OldValue = A.Name;
-				Entry.NewValue = B.Name;
 				Entry.OldOffset = A.Offset;
-				Entry.NewOffset = B.Offset;
 				Entry.OldSize = A.Size;
-				Entry.NewSize = B.Size;
 
-				if (A.Name != B.Name || A.NonCasePreservingHash != B.NonCasePreservingHash || A.CasePreservingHash != B.CasePreservingHash)
+				if (A.NonCasePreservingHash != B.NonCasePreservingHash || A.CasePreservingHash != B.CasePreservingHash)
 				{
 					Entry.State = EAssetPackageDiffState::Modified;
+				}
+				else if (*OldIndex != Index)
+				{
+					Entry.State = EAssetPackageDiffState::Moved;
+					Entry.Explanation =
+						FText::Format(NSLOCTEXT("AssetPackageDiff", "NameMoved", "The name is the same; it moved from Name[{0}] to Name[{1}] because names before it were added or removed."),
+							FText::AsNumber(*OldIndex), FText::AsNumber(Index));
 				}
 				else if (A.Offset != B.Offset)
 				{
@@ -116,6 +123,25 @@ namespace
 				}
 			}
 
+			Root.Children.Add(MoveTemp(Entry));
+		}
+
+		for (int32 Index = 0; Index < OldDocument.NameMap.Num(); ++Index)
+		{
+			const FAssetPackageNameEntry& A = OldDocument.NameMap[Index];
+			if (NewNames.Contains(A.Name))
+			{
+				continue;
+			}
+
+			FAssetPackageDiffEntry Entry;
+			Entry.Kind = EAssetPackageDiffKind::Name;
+			Entry.Key = FString::Printf(TEXT("Name[%d] (old)"), Index);
+			Entry.DisplayName = FText::FromString(Entry.Key);
+			Entry.State = EAssetPackageDiffState::Removed;
+			Entry.OldValue = A.Name;
+			Entry.OldOffset = A.Offset;
+			Entry.OldSize = A.Size;
 			Root.Children.Add(MoveTemp(Entry));
 		}
 
