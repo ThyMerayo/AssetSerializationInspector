@@ -83,6 +83,7 @@ void SAssetMonitoredAssets::Construct(const FArguments& InArgs)
 {
 	Manager = InArgs._Manager != nullptr ? InArgs._Manager : &FAssetMonitoringManager::Get();
 	OnOpenLastSave = InArgs._OnOpenLastSave;
+	History = InArgs._History != nullptr ? InArgs._History : &FAssetSaveHistoryManager::Get();
 
 	ChangedHandle = Manager->OnChanged().AddSP(this, &SAssetMonitoredAssets::Refresh);
 	SaveEvent = InArgs._SaveEvent != nullptr ? InArgs._SaveEvent : &FAssetSaveObserver::Get().OnObservedAssetSave();
@@ -262,7 +263,7 @@ void SAssetMonitoredAssets::Refresh()
 		}
 	}
 
-	AllItems = BuildItems(*Manager, FAssetSaveHistoryManager::Get());
+	AllItems = BuildItems(*Manager, *History);
 	VisibleItems = Filter(AllItems, SearchText);
 
 	if (ListView.IsValid())

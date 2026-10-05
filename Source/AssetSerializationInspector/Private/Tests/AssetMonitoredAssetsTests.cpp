@@ -184,8 +184,11 @@ bool FAssetMonitoredAssets_ConstructsTheWindow::RunTest(const FString& Parameter
 
 	// The window gets its own save event: announcing a made-up save through the save observer would make the plugin show a
 	// notification about it.
+	// The same goes for the history: a history of its own keeps the made-up save out of the editor's, so the test gives the same
+	// result however often it runs.
 	FOnObservedAssetSave SaveEvent;
-	const TSharedRef<SAssetMonitoredAssets> Own = SNew(SAssetMonitoredAssets).Manager(&Manager).SaveEvent(&SaveEvent);
+	FAssetSaveHistoryManager History;
+	const TSharedRef<SAssetMonitoredAssets> Own = SNew(SAssetMonitoredAssets).Manager(&Manager).SaveEvent(&SaveEvent).History(&History);
 	TestEqual(TEXT("It lists the manager's assets"), Own->GetVisibleItems().Num(), 2);
 
 	Manager.RemoveMonitoredAsset(FName(TEXT("/Game/Alpha/Thing")));
@@ -199,7 +202,7 @@ bool FAssetMonitoredAssets_ConstructsTheWindow::RunTest(const FString& Parameter
 	Save->SaveId = 987654321;
 	Save->Timestamp = FDateTime::Now();
 	Save->Analysis.ResultKind = EAssetSaveResultKind::SemanticChanges;
-	FAssetSaveHistoryManager::Get().RecordSave(Save);
+	History.RecordSave(Save);
 	SaveEvent.Broadcast(Save);
 
 	TestEqual(TEXT("The save is counted after the observer announces it"), Own->GetVisibleItems()[0]->SavesRecorded, 1);

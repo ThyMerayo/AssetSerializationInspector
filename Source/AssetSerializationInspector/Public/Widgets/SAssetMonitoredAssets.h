@@ -50,6 +50,8 @@ public:
 	SLATE_ARGUMENT_DEFAULT(FAssetMonitoringManager*, Manager) = nullptr;
 	/** The event that announces recorded saves. The save observer's when not given. */
 	SLATE_ARGUMENT_DEFAULT(FOnObservedAssetSave*, SaveEvent) = nullptr;
+	/** The history the recorded saves are read from. The global one when not given. */
+	SLATE_ARGUMENT_DEFAULT(FAssetSaveHistoryManager*, History) = nullptr;
 	SLATE_EVENT(FOnOpenMonitoredAssetLastSave, OnOpenLastSave)
 	SLATE_END_ARGS()
 
@@ -84,6 +86,7 @@ private:
 	FAssetMonitoringManager* Manager = nullptr;
 	FOnOpenMonitoredAssetLastSave OnOpenLastSave;
 	FDelegateHandle ChangedHandle;
+	FAssetSaveHistoryManager* History = nullptr;
 	FOnObservedAssetSave* SaveEvent = nullptr;
 	FDelegateHandle SaveHandle;
 
