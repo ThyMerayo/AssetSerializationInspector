@@ -131,4 +131,66 @@ bool FAssetDecodedValueDiff_ArrayElementInsertionDoesNotShiftUnrelatedElements::
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecodedValueDiff_ComparesTheDecodedPartOfAnArray, "AssetSerializationInspector.Diff.AssetDecodedValueDiff.ComparesTheDecodedPartOfAnArray",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDecodedValueDiff_ComparesTheDecodedPartOfAnArray::RunTest(const FString& Parameters)
+{
+	using namespace AssetDecodedValueDiffTestUtils;
+
+	const auto MakeArray = [](const TArray<FString>& Values, const bool bPartial) {
+		FAssetDecodedPropertyValue Array;
+		Array.Status = bPartial ? EAssetPropertyDecodeStatus::Partial : EAssetPropertyDecodeStatus::Success;
+		Array.Kind = EAssetDecodedValueKind::Array;
+		Array.TypeName = TEXT("ArrayProperty(IntProperty)");
+		Array.Value = bPartial ? FString::Printf(TEXT("%d of 9 elements decoded"), Values.Num()) : FString::Printf(TEXT("%d elements"), Values.Num());
+
+		for (int32 Index = 0; Index < Values.Num(); ++Index)
+		{
+			FAssetDecodedPropertyValue Element = MakeScalar(FString::Printf(TEXT("[%d]"), Index), TEXT("IntProperty"), Values[Index]);
+			Element.SemanticKey = FAssetPropertyValueDecoder::BuildSemanticValueKey(Element);
+			Array.Children.Add(Element);
+		}
+
+		if (bPartial)
+		{
+			FAssetDecodedPropertyValue Failed;
+			Failed.Status = EAssetPropertyDecodeStatus::InvalidData;
+			Failed.Name = FString::Printf(TEXT("[%d]"), Values.Num());
+			Array.Children.Add(Failed);
+		}
+
+		return Array;
+	};
+
+	// The old array decoded three elements before failing; the new one is complete. The third differs, the rest is not compared.
+	const FAssetDecodedPropertyValue Old = MakeArray({ TEXT("1"), TEXT("2"), TEXT("9") }, true);
+	const FAssetDecodedPropertyValue New = MakeArray({ TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5") }, false);
+	const FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(&Old, &New);
+
+	TestEqual(TEXT("The array is modified"), Diff.State, EAssetDecodedValueDiffState::Modified);
+	if (TestEqual(TEXT("The compared elements and the stop marker are reported"), Diff.Children.Num(), 4))
+	{
+		TestEqual(TEXT("The first element is unchanged"), Diff.Children[0].State, EAssetDecodedValueDiffState::Unchanged);
+		TestEqual(TEXT("The second element is unchanged"), Diff.Children[1].State, EAssetDecodedValueDiffState::Unchanged);
+		TestEqual(TEXT("The third element changed"), Diff.Children[2].State, EAssetDecodedValueDiffState::Modified);
+		TestEqual(TEXT("From the old value"), Diff.Children[2].OldValue, FString(TEXT("9")));
+		TestEqual(TEXT("To the new one"), Diff.Children[2].NewValue, FString(TEXT("3")));
+
+		const FAssetDecodedValueDiff& Rest = Diff.Children[3];
+		TestEqual(TEXT("The marker says where the comparison stops"), Rest.Name, FString(TEXT("[3...]")));
+		TestEqual(TEXT("The partial side says why"), Rest.OldValue, FString(TEXT("3 of 9 elements decoded; not compared")));
+		TestEqual(TEXT("The complete side says what was left out"), Rest.NewValue, FString(TEXT("2 more elements; not compared")));
+	}
+
+	// Elements nobody could read are not reported as removed.
+	const FAssetDecodedPropertyValue Same = MakeArray({ TEXT("1"), TEXT("2"), TEXT("3") }, false);
+	const FAssetDecodedValueDiff SamePrefix = FAssetDecodedValueDiffer::Compare(&Old, &Same);
+	for (const FAssetDecodedValueDiff& Child : SamePrefix.Children)
+	{
+		TestTrue(TEXT("Nothing is added or removed"), Child.State != EAssetDecodedValueDiffState::Added && Child.State != EAssetDecodedValueDiffState::Removed);
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

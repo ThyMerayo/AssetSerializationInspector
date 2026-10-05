@@ -661,12 +661,15 @@ namespace
 			Entry.NewPresence = EAssetSerializedPropertyPresence::Present;
 
 			const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-			if (NewDecoded.IsSuccess())
+			if (NewDecoded.HasDecodedChildren())
 			{
 				Entry.bHasNewDecodedValue = true;
 				Entry.NewDecodedValue = NewDecoded.Value;
 				Entry.NewValue = NewDecoded.Value;
-				ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
+				if (NewDecoded.IsSuccess())
+				{
+					ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
+				}
 			}
 
 			Entry.bHasOldDecodedValue = true;
@@ -685,12 +688,15 @@ namespace
 			Entry.NewPresence = EAssetSerializedPropertyPresence::NotSerialized;
 
 			const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-			if (OldDecoded.IsSuccess())
+			if (OldDecoded.HasDecodedChildren())
 			{
 				Entry.bHasOldDecodedValue = true;
 				Entry.OldDecodedValue = OldDecoded.Value;
 				Entry.OldValue = OldDecoded.Value;
-				ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
+				if (OldDecoded.IsSuccess())
+				{
+					ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
+				}
 			}
 
 			Entry.bHasNewDecodedValue = true;
@@ -720,24 +726,36 @@ namespace
 		Entry.SemanticPath = AssetPackageDiff::AppendSemanticPath(PayloadEntry.SemanticPath, Entry.Key);
 
 		const FAssetDecodedPropertyValue OldDecoded = FAssetPropertyValueDecoder::Decode(OldData.Document, *OldData.Node, OldData.Export.SerialOffset);
-		if (OldDecoded.IsSuccess())
+		if (OldDecoded.HasDecodedChildren())
 		{
 			Entry.bHasOldDecodedValue = true;
 			Entry.OldDecodedValue = OldDecoded.Value;
 			Entry.OldValue = OldDecoded.Value;
-			ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
+			if (OldDecoded.IsSuccess())
+			{
+				ResolveFinalValue(OldData, OldDecoded, Entry.OldFinalValue, Entry.OldFinalValueNote);
+			}
 		}
 		const FAssetDecodedPropertyValue NewDecoded = FAssetPropertyValueDecoder::Decode(NewData.Document, *NewData.Node, NewData.Export.SerialOffset);
-		if (NewDecoded.IsSuccess())
+		if (NewDecoded.HasDecodedChildren())
 		{
 			Entry.bHasNewDecodedValue = true;
 			Entry.NewDecodedValue = NewDecoded.Value;
 			Entry.NewValue = NewDecoded.Value;
-			ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
+			if (NewDecoded.IsSuccess())
+			{
+				ResolveFinalValue(NewData, NewDecoded, Entry.NewFinalValue, Entry.NewFinalValueNote);
+			}
 		}
 
-		const FAssetDecodedPropertyValue* OldPtr = OldDecoded.IsSuccess() ? &OldDecoded : nullptr;
-		const FAssetDecodedPropertyValue* NewPtr = NewDecoded.IsSuccess() ? &NewDecoded : nullptr;
+		if (OldDecoded.Status == EAssetPropertyDecodeStatus::Partial || NewDecoded.Status == EAssetPropertyDecodeStatus::Partial)
+		{
+			Entry.Explanation = FText::FromString(TEXT(
+				"An element of this array could not be decoded, so only the elements before it are compared. Elements from the first one that failed on are shown as not compared; see the hex view for their bytes."));
+		}
+
+		const FAssetDecodedPropertyValue* OldPtr = OldDecoded.HasDecodedChildren() ? &OldDecoded : nullptr;
+		const FAssetDecodedPropertyValue* NewPtr = NewDecoded.HasDecodedChildren() ? &NewDecoded : nullptr;
 		if (OldPtr != nullptr || NewPtr != nullptr)
 		{
 			const FAssetDecodedValueDiff ValueDiff = FAssetDecodedValueDiffer::Compare(OldPtr, NewPtr);

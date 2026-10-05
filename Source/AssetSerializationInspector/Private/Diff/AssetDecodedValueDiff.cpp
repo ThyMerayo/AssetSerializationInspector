@@ -197,8 +197,60 @@ static void CompareArrayChildrenByIndex(const FAssetDecodedPropertyValue& OldVal
 	}
 }
 
+/** The array with only its first Count elements, as if it had been complete. */
+static FAssetDecodedPropertyValue TrimToDecodedPrefix(const FAssetDecodedPropertyValue& Value, const int32 Count)
+{
+	FAssetDecodedPropertyValue Trimmed = Value;
+	Trimmed.Children.SetNum(Count);
+	Trimmed.Status = EAssetPropertyDecodeStatus::Success;
+	return Trimmed;
+}
+
+static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff);
+
+/**
+ * Arrays of which one side decoded only in part: the elements both sides decoded are compared, and one entry says where the
+ * comparison stops, so that the elements nobody could read are not reported as added or removed.
+ */
+static void ComparePartialArrayChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
+{
+	const int32 Compared = FMath::Min(OldValue.CountDecodedElements(), NewValue.CountDecodedElements());
+
+	CompareArrayChildren(TrimToDecodedPrefix(OldValue, Compared), TrimToDecodedPrefix(NewValue, Compared), OutDiff);
+
+	const auto Describe = [Compared](const FAssetDecodedPropertyValue& Side, FString& OutText) {
+		if (Side.Status == EAssetPropertyDecodeStatus::Partial)
+		{
+			OutText = FString::Printf(TEXT("%s; not compared"), *Side.Value);
+			return true;
+		}
+
+		if (Side.Children.Num() > Compared)
+		{
+			OutText = FString::Printf(TEXT("%d more elements; not compared"), Side.Children.Num() - Compared);
+			return true;
+		}
+
+		return false;
+	};
+
+	FAssetDecodedValueDiff Rest;
+	Rest.State = EAssetDecodedValueDiffState::Modified;
+	Rest.Name = FString::Printf(TEXT("[%d...]"), Compared);
+	Rest.TypeName = TEXT("not compared");
+	Rest.bHasOldValue = Describe(OldValue, Rest.OldValue);
+	Rest.bHasNewValue = Describe(NewValue, Rest.NewValue);
+	OutDiff.Children.Add(MoveTemp(Rest));
+}
+
 static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
 {
+	if (OldValue.Status == EAssetPropertyDecodeStatus::Partial || NewValue.Status == EAssetPropertyDecodeStatus::Partial)
+	{
+		ComparePartialArrayChildren(OldValue, NewValue, OutDiff);
+		return;
+	}
+
 	static constexpr int64 MaximumLcsCells = 4000000;
 	const int64 CellCount = static_cast<int64>(OldValue.Children.Num() + 1) * static_cast<int64>(NewValue.Children.Num() + 1);
 

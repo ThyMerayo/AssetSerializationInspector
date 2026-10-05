@@ -11,7 +11,14 @@ enum class EAssetPropertyDecodeStatus : uint8
 {
 	Success,
 	Unsupported,
-	InvalidData
+	InvalidData,
+
+	/**
+	 * An array some of whose elements could not be decoded. The elements before the first failure are in Children (the element that
+	 * failed is the last child, with its own error), and Value says how many decoded. The elements after it are not read, because an
+	 * element that fails leaves the reader at an unknown position.
+	 */
+	Partial
 };
 
 enum class EAssetDecodedValueKind : uint8
@@ -62,6 +69,24 @@ struct FAssetDecodedPropertyValue
 	TArray<FAssetDecodedPropertyValue> Children;
 
 	bool IsSuccess() const { return Status == EAssetPropertyDecodeStatus::Success; }
+
+	/** Whether the children that decoded can be shown and compared: a complete value, or an array that decoded in part. */
+	bool HasDecodedChildren() const { return Status == EAssetPropertyDecodeStatus::Success || Status == EAssetPropertyDecodeStatus::Partial; }
+
+	/** How many leading elements decoded: all of them for a complete array, those before the first failure for a partial one. */
+	int32 CountDecodedElements() const
+	{
+		int32 Count = 0;
+		for (const FAssetDecodedPropertyValue& Child : Children)
+		{
+			if (!Child.IsSuccess())
+			{
+				break;
+			}
+			++Count;
+		}
+		return Count;
+	}
 };
 
 class FAssetPropertyValueDecoder
