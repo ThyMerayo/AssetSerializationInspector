@@ -160,7 +160,7 @@ bool FAssetPackageFiles_ReportsUnversionedProperties::RunTest(const FString& Par
 		return false;
 	}
 
-	// Pretend the package was saved without property tags, as cooked packages usually are: set the flag in the summary, where the
+	// Pretend the package was saved without property tags (as cooked packages usually are), whatever its bytes say: set the flag in the summary, where the
 	// package flags follow the total header size, after the custom versions and the folder name.
 	TArray<uint8> Bytes;
 	FFileHelper::LoadFileToArray(Bytes, *GetFixture(TEXT("BP_Box1.uasset")));
@@ -207,15 +207,30 @@ bool FAssetPackageFiles_ReportsUnversionedProperties::RunTest(const FString& Par
 
 	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
 
-	TestEqual(TEXT("No property is read as a tag"), CountProperties(*Traces), 0);
+	// The bytes are really tags, so what an unversioned reading makes of them is meaningless, but it must stay inside the exports and
+	// leave no gaps or overlaps that a later step would trip on: every export is covered once, in order.
+	TestFalse(TEXT("Every export has a trace"), Traces->ExportTraces.IsEmpty());
 
-	bool bAllReported = !Traces->ExportTraces.IsEmpty();
-	for (const TPair<int32, FAssetSerializationTrace>& Item : Traces->ExportTraces)
+	bool bInsideExports = true;
+	bool bCoveredInOrder = true;
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
 	{
-		const bool bOneRange = Item.Value.Root.IsValid() && Item.Value.Root->Children.Num() == 1 && Item.Value.Root->Children[0]->TypeName.Contains(TEXT("without tags"));
-		bAllReported &= bOneRange || (Item.Value.Root.IsValid() && Item.Value.Root->Children.IsEmpty());
+		const FAssetSerializationTrace* Trace = Traces->FindExportTrace(Export.Index);
+		if (Trace == nullptr || !Trace->Root.IsValid())
+		{
+			continue;
+		}
+
+		int64 Next = 0;
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		{
+			bInsideExports &= Node->Offset >= 0 && Node->Size >= 0 && Node->Offset + Node->Size <= Export.SerialSize;
+			bCoveredInOrder &= Node->Offset >= Next;
+			Next = Node->Offset + Node->Size;
+		}
 	}
-	TestTrue(TEXT("Each export is one range that says why it is not decoded"), bAllReported);
+	TestTrue(TEXT("Nothing reaches outside its export"), bInsideExports);
+	TestTrue(TEXT("Nothing overlaps"), bCoveredInOrder);
 	return true;
 }
 

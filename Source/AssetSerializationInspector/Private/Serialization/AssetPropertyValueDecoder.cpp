@@ -9,6 +9,7 @@
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializationPrimitives.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
+#include "Serialization/AssetUnversionedProperties.h"
 #include "Trace/AssetSerializationTrace.h"
 #include "UObject/CoreObjectVersion.h"
 #include "UObject/EditorObjectVersion.h"
@@ -93,6 +94,9 @@ struct FAssetPropertyDecodeContext
 
 	/** The live struct whose tagged fields are being read, when the running editor has it; it names the struct elements older packages leave out. */
 	const UStruct* OwnerStruct = nullptr;
+
+	/** The package saved its properties without tags: enums are integers, bools are bytes, and structs have a header, not tags. */
+	bool IsUnversioned() const { return AssetUnversionedProperties::IsUsedBy(Document); }
 };
 
 static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
@@ -1022,6 +1026,61 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 	return false;
 }
 
+/** A struct of a package saved without tags: a property header and the values, in the order of the struct's property list. */
+static bool DecodeUnversionedStructFromReader(
+	const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FString& StructName, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
+{
+	const int64 Start = Reader.Tell();
+
+	const UScriptStruct* Struct = Cast<UScriptStruct>(AssetSchemaReflection::FindNativeStruct(StructName));
+	if (Struct == nullptr)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = FString::Printf(TEXT("%s is not a struct of this editor, and a package saved without tags cannot be read without its definition."), *StructName);
+		return false;
+	}
+
+	if ((Struct->StructFlags & STRUCT_SerializeNative) != 0)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::Unsupported;
+		OutValue.Error = FString::Printf(TEXT("%s is serialized by its own native code, whose layout this inspector does not know."), *StructName);
+		return false;
+	}
+
+	TArray<FAssetUnversionedValue> Values;
+	int64 EndOffset = Start;
+	FString Error;
+	const bool bRead = AssetUnversionedProperties::Read(Context.Document, Struct, Start, ValueEnd, Values, EndOffset, Error);
+
+	for (FAssetUnversionedValue& Slot : Values)
+	{
+		FAssetDecodedPropertyValue Child = MoveTemp(Slot.Decoded);
+		Child.Name = Slot.Property->ArrayDim > 1 ? FString::Printf(TEXT("%s[%d]"), *Slot.Property->GetName(), Slot.ArrayIndex) : Slot.Property->GetName();
+		Child.TypeName = Slot.Type.ToString();
+		Child.AbsoluteOffset = Slot.Offset;
+		Child.Size = Slot.Size;
+		OutValue.Children.Add(MoveTemp(Child));
+	}
+
+	// The nested reading used a reader of its own, so this one moves on by what it used.
+	Reader.Seek(EndOffset);
+
+	OutValue.Kind = EAssetDecodedValueKind::Struct;
+	OutValue.AbsoluteOffset = Start;
+	OutValue.Size = EndOffset - Start;
+
+	if (!bRead)
+	{
+		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+		OutValue.Error = Error;
+		return false;
+	}
+
+	OutValue.Status = EAssetPropertyDecodeStatus::Success;
+	OutValue.Value = FString::Printf(TEXT("%d fields"), OutValue.Children.Num());
+	return true;
+}
+
 static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const FAssetSerializedPropertyType& Type, const int64 ValueEnd,
 	FAssetDecodedPropertyValue& OutValue, const int32 Depth, const bool bNativelySerialized = false)
 {
@@ -1056,6 +1115,11 @@ static bool DecodeStructFromReader(const FAssetPropertyDecodeContext& Context, F
 	if (TryDecodeKnownStruct(Context, Reader, StructName, ValueEnd, OutValue))
 	{
 		return true;
+	}
+
+	if (Context.IsUnversioned())
+	{
+		return DecodeUnversionedStructFromReader(Context, Reader, StructName, ValueEnd, OutValue);
 	}
 
 	if (bNativelySerialized)
@@ -1117,7 +1181,8 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 	FAssetSerializedPropertyType InnerType = Type.Parameters[0];
 
 	// Before PROPERTY_TAG_COMPLETE_TYPE_NAME an array of structs carries a tag for the inner struct right after the count.
-	if (Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME && Reader.UEVer() >= VER_UE4_INNER_ARRAY_TAG_INFO && InnerType.Name == TEXT("StructProperty"))
+	if (!Context.IsUnversioned() && Reader.UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME && Reader.UEVer() >= VER_UE4_INNER_ARRAY_TAG_INFO
+		&& InnerType.Name == TEXT("StructProperty"))
 	{
 		FAssetSerializedPropertyTag InnerTag;
 		FText InnerError;
@@ -2414,6 +2479,17 @@ static bool DecodeByteFromReader(
 	 * A ByteProperty that carries an enum parameter is written as the enum value's FName
 	 * in tagged serialization; a plain ByteProperty is a single raw byte.
 	 */
+	if (Context.IsUnversioned())
+	{
+		// Unversioned streams store the byte itself, enum or not.
+		const bool bDecoded = DecodePrimitiveFromReader<uint8>(Reader, ValueEnd, OutValue);
+		if (bDecoded && !Type.Parameters.IsEmpty())
+		{
+			OutValue.Value = AssetUnversionedProperties::DescribeEnumValue(Type.Parameters[0].Name, FCString::Atoi64(*OutValue.Value));
+		}
+		return bDecoded;
+	}
+
 	if (!Type.Parameters.IsEmpty())
 	{
 		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
@@ -2494,6 +2570,39 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 
 	if (Type.Name == TEXT("EnumProperty"))
 	{
+		if (Context.IsUnversioned() && Type.Parameters.Num() == 2)
+		{
+			// Unversioned streams store the integer the enum is made of, not its name.
+			const FString& Underlying = Type.Parameters[1].Name;
+			int64 Number = 0;
+			bool bDecoded = false;
+
+			if (Underlying == TEXT("Int8Property") || Underlying == TEXT("ByteProperty"))
+			{
+				bDecoded = DecodePrimitiveFromReader<uint8>(Reader, ValueEnd, OutValue);
+			}
+			else if (Underlying == TEXT("Int16Property") || Underlying == TEXT("UInt16Property"))
+			{
+				bDecoded = DecodePrimitiveFromReader<uint16>(Reader, ValueEnd, OutValue);
+			}
+			else if (Underlying == TEXT("Int64Property") || Underlying == TEXT("UInt64Property"))
+			{
+				bDecoded = DecodePrimitiveFromReader<int64>(Reader, ValueEnd, OutValue);
+			}
+			else
+			{
+				bDecoded = DecodePrimitiveFromReader<int32>(Reader, ValueEnd, OutValue);
+			}
+
+			if (bDecoded)
+			{
+				Number = FCString::Atoi64(*OutValue.Value);
+				OutValue.Value = AssetUnversionedProperties::DescribeEnumValue(Type.Parameters[0].Name, Number);
+			}
+
+			return bDecoded;
+		}
+
 		// Enum values are stored by name, regardless of the underlying integer type.
 		return DecodeNameFromReader(Context, Reader, ValueEnd, OutValue);
 	}
@@ -2632,6 +2741,14 @@ FAssetDecodedPropertyValue FAssetPropertyValueDecoder::Decode(const FAssetPackag
 {
 	FAssetDecodedPropertyValue Result;
 
+	if (Node.bIsZeroValue)
+	{
+		Result = AssetUnversionedProperties::MakeZeroValue(Node.PropertyType);
+		Result.Name = Node.Name;
+		Result.AbsoluteOffset = ExportSerialOffset + Node.Offset;
+		return Result;
+	}
+
 	const int64 AbsoluteOffset = ExportSerialOffset + Node.Offset;
 
 	if (!Document.IsValidRange(AbsoluteOffset, Node.Size))
@@ -2660,6 +2777,34 @@ FAssetDecodedPropertyValue FAssetPropertyValueDecoder::Decode(const FAssetPackag
 	}
 
 	return Result;
+}
+
+bool FAssetPropertyValueDecoder::DecodeTypeAt(
+	const FAssetPackageDocument& Document, const FAssetSerializedPropertyType& Type, const int64 AbsoluteOffset, const int64 AvailableSize, FAssetDecodedPropertyValue& Out)
+{
+	if (AvailableSize <= 0 || !Document.IsValidRange(AbsoluteOffset, AvailableSize))
+	{
+		Out.Status = EAssetPropertyDecodeStatus::InvalidData;
+		Out.Error = TEXT("The property value range is invalid.");
+		return false;
+	}
+
+	FAssetPackagePayloadReader Reader(Document, AbsoluteOffset, AvailableSize);
+	FAssetPropertyDecodeContext Context{ Document };
+
+	Out.TypeName = Type.ToString();
+	const bool bDecoded = DecodeValueFromReader(Context, Reader, Type, AbsoluteOffset + AvailableSize, Out, 0);
+
+	// The caller moves on by what the value used, so it is set whatever the decoder reported.
+	Out.AbsoluteOffset = AbsoluteOffset;
+	Out.Size = Reader.Tell() - AbsoluteOffset;
+
+	if (bDecoded && Type.Name == TEXT("BoolProperty"))
+	{
+		Out.Value = Out.Value == TEXT("0") ? TEXT("false") : TEXT("true");
+	}
+
+	return bDecoded;
 }
 
 FString FAssetPropertyValueDecoder::BuildSemanticValueKey(const FAssetDecodedPropertyValue& Value)

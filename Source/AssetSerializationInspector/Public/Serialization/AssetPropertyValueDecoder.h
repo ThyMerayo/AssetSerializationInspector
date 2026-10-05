@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 
 struct FAssetPackageDocument;
+struct FAssetSerializedPropertyType;
 struct FAssetSerializationTraceNode;
 
 enum class EAssetPropertyDecodeStatus : uint8
@@ -93,6 +94,15 @@ class FAssetPropertyValueDecoder
 {
 public:
 	static FAssetDecodedPropertyValue Decode(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, int64 ExportSerialOffset);
+
+	/**
+	 * Decodes a value of a given type that starts at an offset of the document, without a trace node: what unversioned property
+	 * streams need, since they store values one after the other with no lengths. On success (and also on a failure that read part of
+	 * the value) Out.Size is the number of bytes the value used.
+	 *
+	 * @param AvailableSize How many bytes may be read from AbsoluteOffset.
+	 */
+	static bool DecodeTypeAt(const FAssetPackageDocument& Document, const FAssetSerializedPropertyType& Type, int64 AbsoluteOffset, int64 AvailableSize, FAssetDecodedPropertyValue& Out);
 
 	static FString BuildSemanticValueKey(const FAssetDecodedPropertyValue& Value);
 
