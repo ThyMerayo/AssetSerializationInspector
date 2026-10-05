@@ -123,6 +123,10 @@ bool FAssetBlueprintVariableType_ShowsTheTypeThatChanged::RunTest(const FString&
 		return false;
 	}
 
+	// Changing the type of a variable of a compiled Blueprint makes the engine reinstance its default object, and it warns that the old
+	// value had another type. It is what the test provokes (twice), not a fault of the plugin.
+	AddExpectedMessage(TEXT("Type mismatch in Beta of BP_VariableType_C"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
+
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Alpha"), MakeType(TEXT("int")));
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Beta"), MakeType(TEXT("name")));
 	const FString AsName = SaveCopy(Blueprint, TEXT("name.uasset"));
