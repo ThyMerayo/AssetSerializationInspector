@@ -12,8 +12,8 @@ user-facing overview and `docs/Roadmap.md` for what has landed and what is still
   the same object with and without tags and require identical values).
 - **Never commit or push to `main`.** For every piece of work:
   1. `git fetch`, then branch from `origin/main`: `fix/<short-name>`, `feat/<short-name>`, `test/<short-name>`,
-     `docs/<short-name>` or `style/<short-name>` (`main` may be checked out in another worktree, so branch from
-     `origin/main` rather than checking `main` out; re-check `git branch --show-current` before committing)
+     `docs/<short-name>` or `style/<short-name>` (branch from `origin/main` rather than a local `main`; re-check
+     `git branch --show-current` before committing)
   2. Keep each branch scoped to one root cause or feature
   3. Push the branch and open a pull request against `main` (`gh pr create --base main`)
   4. Never merge PRs yourself — the owner reviews and merges
@@ -31,8 +31,8 @@ user-facing overview and `docs/Roadmap.md` for what has landed and what is still
 
 ## Build and test
 
-- The plugin is built inside a host project (`D:\dev\ASIHost`, with the plugin linked or copied into its `Plugins` folder)
-  and an engine built from source. `Scripts/RunAutomationTests.ps1 -EngineRoot <engine> -HostProject <.uproject>
+- The plugin is built inside a host project (any project that loads it, with the plugin linked or copied into its `Plugins`
+  folder) and an engine built from source. `Scripts/RunAutomationTests.ps1 -EngineRoot <engine> -HostProject <.uproject>
   [-LinkPlugin]` builds, runs every test with `UnrealEditor-Cmd`, runs the widget tests with the full editor, and fails on a
   failed test, an unfinished queue or no tests. Run it before opening a PR. There is no CI: the tests need an engine built
   from source and a self-hosted runner on a public repository would run fork code.
@@ -40,7 +40,6 @@ user-facing overview and `docs/Roadmap.md` for what has landed and what is still
 - **Widget (Slate) tests are skipped under `UnrealEditor-Cmd`** (Slate is not initialized): they must also run with
   `UnrealEditor.exe -nullrhi`. A widget that was never constructed has crashed in the editor before.
 - Commandlet: `-run=AssetSerializationInspector -Mode=NoOpResave|CompareFolders|DecodeCoverage` (see its header).
-- In Git Bash, prefix commands that take `/Game/...` paths with `MSYS_NO_PATHCONV=1`.
 
 ## Architecture (`Source/AssetSerializationInspector`, `Public/` and `Private/` mirror each other)
 
