@@ -188,6 +188,20 @@ bool FAssetMonitoredAssets_ConstructsTheWindow::RunTest(const FString& Parameter
 	Manager.RemoveMonitoredAsset(FName(TEXT("/Game/Alpha/Thing")));
 	TestEqual(TEXT("It follows the manager"), Own->GetVisibleItems().Num(), 1);
 
+	// A recorded save of a monitored asset shows up without reopening the window.
+	TestEqual(TEXT("No save is recorded yet"), Own->GetVisibleItems()[0]->SavesRecorded, 0);
+
+	const TSharedRef<FObservedAssetSave> Save = MakeShared<FObservedAssetSave>();
+	Save->PackageName = FName(TEXT("/Game/Beta/Other"));
+	Save->SaveId = 987654321;
+	Save->Timestamp = FDateTime::Now();
+	Save->Analysis.ResultKind = EAssetSaveResultKind::SemanticChanges;
+	FAssetSaveHistoryManager::Get().RecordSave(Save);
+	FAssetSaveObserver::Get().OnObservedAssetSave().Broadcast(Save);
+
+	TestEqual(TEXT("The save is counted after the observer announces it"), Own->GetVisibleItems()[0]->SavesRecorded, 1);
+	TestEqual(TEXT("With what it did"), Own->GetVisibleItems()[0]->LastResult, EAssetSaveResultKind::SemanticChanges);
+
 	const TSharedRef<SAssetMonitoredAssets> Global = SNew(SAssetMonitoredAssets);
 	TestEqual(TEXT("Without a manager it lists the global one"), Global->GetVisibleItems().Num(), FAssetMonitoringManager::Get().GetMonitoredAssets().Num());
 	return true;

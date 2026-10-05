@@ -85,6 +85,7 @@ void SAssetMonitoredAssets::Construct(const FArguments& InArgs)
 	OnOpenLastSave = InArgs._OnOpenLastSave;
 
 	ChangedHandle = Manager->OnChanged().AddSP(this, &SAssetMonitoredAssets::Refresh);
+	SaveHandle = FAssetSaveObserver::Get().OnObservedAssetSave().AddSP(this, &SAssetMonitoredAssets::HandleObservedSave);
 
 	ChildSlot[SNew(SVerticalBox)
 
@@ -102,6 +103,13 @@ void SAssetMonitoredAssets::Construct(const FArguments& InArgs)
 					.ButtonContent()[SNew(STextBlock).Text(LOCTEXT("AddFolder", "Add Folder..."))]
 					.ToolTipText(LOCTEXT("AddFolderTooltip", "Monitor every asset in a content folder and its subfolders."))
 					.OnGetMenuContent(this, &SAssetMonitoredAssets::BuildFolderPicker)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("Refresh", "Refresh"))
+					.ToolTipText(LOCTEXT("RefreshTooltip", "Read the list, the recorded saves and the files on disk again. The list also refreshes by itself when a monitored asset is saved."))
+					.OnClicked_Lambda([this]() {
+						Refresh();
+						return FReply::Handled();
+					})]
 			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)[SAssignNew(StatusText, STextBlock).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(
 				220.0f)[SNew(SSearchBox).HintText(LOCTEXT("SearchMonitored", "Search assets")).OnTextChanged(this, &SAssetMonitoredAssets::HandleSearchChanged)]]
@@ -150,6 +158,8 @@ SAssetMonitoredAssets::~SAssetMonitoredAssets()
 	{
 		Manager->OnChanged().Remove(ChangedHandle);
 	}
+
+	FAssetSaveObserver::Get().OnObservedAssetSave().Remove(SaveHandle);
 }
 
 TArray<TSharedPtr<FAssetMonitoredItem>> SAssetMonitoredAssets::BuildItems(const FAssetMonitoringManager& Manager, const FAssetSaveHistoryManager& History)
@@ -238,13 +248,38 @@ void SAssetMonitoredAssets::HandleFolderPicked(const FString& Path)
 
 void SAssetMonitoredAssets::Refresh()
 {
+	// The items are rebuilt, so the selection is kept by package name.
+	TSet<FName> SelectedPackages;
+	if (ListView.IsValid())
+	{
+		for (const TSharedPtr<FAssetMonitoredItem>& Item : ListView->GetSelectedItems())
+		{
+			SelectedPackages.Add(Item->PackageName);
+		}
+	}
+
 	AllItems = BuildItems(*Manager, FAssetSaveHistoryManager::Get());
 	VisibleItems = Filter(AllItems, SearchText);
 
 	if (ListView.IsValid())
 	{
+		ListView->ClearSelection();
+		for (const TSharedPtr<FAssetMonitoredItem>& Item : VisibleItems)
+		{
+			if (SelectedPackages.Contains(Item->PackageName))
+			{
+				ListView->SetItemSelection(Item, true);
+			}
+		}
+
 		ListView->RequestListRefresh();
 	}
+}
+
+void SAssetMonitoredAssets::HandleObservedSave(TSharedPtr<FObservedAssetSave> Save)
+{
+	// Only the saves of monitored assets are observed, so any save changes a row.
+	Refresh();
 }
 
 void SAssetMonitoredAssets::HandleSearchChanged(const FText& Text)

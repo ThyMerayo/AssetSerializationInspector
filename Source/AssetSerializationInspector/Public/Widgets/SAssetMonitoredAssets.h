@@ -38,7 +38,8 @@ struct FAssetMonitoredItem
  * selected assets or all of them, and open the comparison of an asset's latest save.
  *
  * The list follows the monitoring manager, so it also updates when assets are monitored from the Content Browser or the editor
- * preferences are edited.
+ * preferences are edited, and it refreshes whenever a monitored save is recorded. The Refresh button reads everything again, for
+ * changes nothing announces (a file deleted outside the editor, for example).
  */
 class SAssetMonitoredAssets : public SCompoundWidget
 {
@@ -68,6 +69,7 @@ private:
 	TSharedRef<class ITableRow> GenerateRow(TSharedPtr<FAssetMonitoredItem> Item, const TSharedRef<class STableViewBase>& OwnerTable);
 	TSharedRef<SWidget> BuildFolderPicker();
 	void Refresh();
+	void HandleObservedSave(TSharedPtr<struct FObservedAssetSave> Save);
 	void HandleSearchChanged(const FText& Text);
 	void HandleFolderPicked(const FString& Path);
 	FReply HandleRemoveSelected();
@@ -79,6 +81,7 @@ private:
 	FAssetMonitoringManager* Manager = nullptr;
 	FOnOpenMonitoredAssetLastSave OnOpenLastSave;
 	FDelegateHandle ChangedHandle;
+	FDelegateHandle SaveHandle;
 
 	TArray<TSharedPtr<FAssetMonitoredItem>> AllItems;
 	TArray<TSharedPtr<FAssetMonitoredItem>> VisibleItems;
