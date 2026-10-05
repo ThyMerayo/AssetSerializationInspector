@@ -2,6 +2,14 @@
 
 #include "Serialization/AssetPropertyValueDecoder.h"
 
+#include "UObject/CoreObjectVersion.h"
+#include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/FrameworkObjectVersion.h"
+#include "UObject/ObjectVersion.h"
+#include "UObject/SequencerObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
+
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
@@ -11,13 +19,6 @@
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "Serialization/AssetUnversionedProperties.h"
 #include "Trace/AssetSerializationTrace.h"
-#include "UObject/CoreObjectVersion.h"
-#include "UObject/EditorObjectVersion.h"
-#include "UObject/FortniteMainBranchObjectVersion.h"
-#include "UObject/FrameworkObjectVersion.h"
-#include "UObject/ObjectVersion.h"
-#include "UObject/SequencerObjectVersion.h"
-#include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 static FAssetDecodedPropertyValue DecodeBool(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 AbsoluteOffset)
 {
