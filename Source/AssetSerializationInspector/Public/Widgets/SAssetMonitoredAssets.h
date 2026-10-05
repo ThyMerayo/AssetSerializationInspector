@@ -45,7 +45,7 @@ class SAssetMonitoredAssets : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SAssetMonitoredAssets) {}
 	/** The manager whose set is shown. The global one when not given. */
-	SLATE_ARGUMENT(FAssetMonitoringManager*, Manager)
+	SLATE_ARGUMENT_DEFAULT(FAssetMonitoringManager*, Manager) = nullptr;
 	SLATE_EVENT(FOnOpenMonitoredAssetLastSave, OnOpenLastSave)
 	SLATE_END_ARGS()
 

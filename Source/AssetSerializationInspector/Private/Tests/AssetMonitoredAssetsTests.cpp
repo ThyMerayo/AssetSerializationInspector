@@ -6,6 +6,7 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Curves/CurveFloat.h"
+#include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
@@ -163,6 +164,32 @@ bool FAssetMonitoredAssets_BuildsItems::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Including property changes"), SAssetMonitoredAssets::GetResultText(EAssetSaveResultKind::SemanticChanges).IsEmpty());
 
 	DeleteTestFolder(TEXT("/Game/__AssetSerializationInspectorTests/MonitoringList"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetMonitoredAssets_ConstructsTheWindow, "AssetSerializationInspector.Widgets.AssetMonitoredAssets.ConstructsTheWindow",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetMonitoredAssets_ConstructsTheWindow::RunTest(const FString& Parameters)
+{
+	if (!FSlateApplication::IsInitialized())
+	{
+		AddInfo(TEXT("Slate is not initialized in this run; the window itself was not constructed."));
+		return true;
+	}
+
+	// With a manager of its own, and with none given (the window then follows the global one, as the menu entry opens it).
+	FAssetMonitoringManager Manager(false);
+	Manager.AddMonitoredAssets({ FName(TEXT("/Game/Alpha/Thing")), FName(TEXT("/Game/Beta/Other")) });
+
+	const TSharedRef<SAssetMonitoredAssets> Own = SNew(SAssetMonitoredAssets).Manager(&Manager);
+	TestEqual(TEXT("It lists the manager's assets"), Own->GetVisibleItems().Num(), 2);
+
+	Manager.RemoveMonitoredAsset(FName(TEXT("/Game/Alpha/Thing")));
+	TestEqual(TEXT("It follows the manager"), Own->GetVisibleItems().Num(), 1);
+
+	const TSharedRef<SAssetMonitoredAssets> Global = SNew(SAssetMonitoredAssets);
+	TestEqual(TEXT("Without a manager it lists the global one"), Global->GetVisibleItems().Num(), FAssetMonitoringManager::Get().GetMonitoredAssets().Num());
 	return true;
 }
 
