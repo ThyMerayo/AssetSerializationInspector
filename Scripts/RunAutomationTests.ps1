@@ -119,7 +119,9 @@ function Read-Results([string] $LogPath, [string] $Name) {
     $Lines = Get-Content $LogPath
     $Passed = @($Lines | Where-Object { $_ -match 'Test Completed\. Result=\{Success\}' }).Count
     $FailedLines = @($Lines | Where-Object { $_ -match 'Test Completed\. Result=\{Fail\}' })
-    $Finished = @($Lines | Where-Object { $_ -match 'Automation Test Queue Empty' }).Count -gt 0
+    # The line the editor logs when it leaves because the queue is empty. The command line, which the log echoes, also holds the words
+    # 'Automation Test Queue Empty' (it is the -TestExit argument), so matching them alone passes a run that crashed.
+    $Finished = @($Lines | Where-Object { $_ -match '\*\*\*\* TestExit: Automation Test Queue Empty \*\*\*\*' }).Count -gt 0
 
     Write-Host "${Name}: $Passed passed, $($FailedLines.Count) failed, queue finished: $Finished"
 
