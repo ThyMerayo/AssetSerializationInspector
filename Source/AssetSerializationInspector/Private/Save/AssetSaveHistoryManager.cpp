@@ -56,6 +56,7 @@ void FAssetSaveHistoryManager::RecordSave(const TSharedPtr<FObservedAssetSave>& 
 	Entry.ResultKind = Save->Analysis.ResultKind;
 	Entry.SemanticChanges = Save->Analysis.SemanticChanges;
 	Entry.LayoutChanges = Save->Analysis.LayoutChanges;
+	Entry.HeaderChanges = Save->Analysis.HeaderChanges;
 	Entry.UnexplainedChanges = Save->Analysis.UnexplainedChanges;
 
 	// Populate PropertyStates, etc.

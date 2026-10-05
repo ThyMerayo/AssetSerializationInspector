@@ -20,6 +20,20 @@ static void CollectExplanations(const FAssetSaveExplanationEntry& Entry, FExplan
 	}
 }
 
+/** The changes of a save that repeat across saves: property changes, and the package header's tables. */
+static void CollectSaveChanges(const FObservedSaveHistoryEntry& Save, FExplanationMap& OutChanges)
+{
+	for (const FAssetSaveExplanationEntry& Entry : Save.SemanticChanges)
+	{
+		CollectExplanations(Entry, OutChanges);
+	}
+
+	for (const FAssetSaveExplanationEntry& Entry : Save.HeaderChanges)
+	{
+		CollectExplanations(Entry, OutChanges);
+	}
+}
+
 static bool IsContinuouslyChanging(const FRepeatedSavePattern& Pattern)
 {
 	FString PreviousValue;
@@ -131,10 +145,7 @@ TArray<FRepeatedSavePattern> FRepeatedSaveAnalyzer::Analyze(const FAssetSaveHist
 		}
 
 		FExplanationMap Changes;
-		for (const FAssetSaveExplanationEntry& Entry : Save.SemanticChanges)
-		{
-			CollectExplanations(Entry, Changes);
-		}
+		CollectSaveChanges(Save, Changes);
 
 		for (const auto& Pair : Changes)
 		{
@@ -152,11 +163,7 @@ TArray<FRepeatedSavePattern> FRepeatedSaveAnalyzer::Analyze(const FAssetSaveHist
 		for (const FObservedSaveHistoryEntry& Save : History.Entries)
 		{
 			FExplanationMap Changes;
-
-			for (const FAssetSaveExplanationEntry& Entry : Save.SemanticChanges)
-			{
-				CollectExplanations(Entry, Changes);
-			}
+			CollectSaveChanges(Save, Changes);
 
 			const FAssetSaveExplanationEntry* const* ChangeFound = Changes.Find(Path);
 

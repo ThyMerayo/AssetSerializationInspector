@@ -2,6 +2,7 @@
 
 #include "Widgets/SAssetBatchResults.h"
 
+#include "HAL/PlatformApplicationMisc.h"
 #include "Misc/PackageName.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
@@ -21,12 +22,17 @@
 
 #define LOCTEXT_NAMESPACE "AssetBatchResults"
 
+const FName SAssetBatchResults::AssetColumnId(TEXT("Asset"));
+const FName SAssetBatchResults::OutcomeColumnId(TEXT("Outcome"));
+const FName SAssetBatchResults::ChangedColumnId(TEXT("Changed"));
+const FName SAssetBatchResults::NoteColumnId(TEXT("Note"));
+
 namespace
 {
-	const FName BatchResultsAssetColumn(TEXT("Asset"));
-	const FName BatchResultsOutcomeColumn(TEXT("Outcome"));
-	const FName BatchResultsChangedColumn(TEXT("Changed"));
-	const FName BatchResultsNoteColumn(TEXT("Note"));
+	const FName& BatchResultsAssetColumn = SAssetBatchResults::AssetColumnId;
+	const FName& BatchResultsOutcomeColumn = SAssetBatchResults::OutcomeColumnId;
+	const FName& BatchResultsChangedColumn = SAssetBatchResults::ChangedColumnId;
+	const FName& BatchResultsNoteColumn = SAssetBatchResults::NoteColumnId;
 } // namespace
 
 class SAssetBatchResultRow : public SMultiColumnTableRow<TSharedPtr<FAssetBatchResultItem>>
@@ -216,13 +222,30 @@ void SAssetBatchResults::Construct(const FArguments& InArgs)
 
 			+ SSplitter::Slot().Value(0.6f)[SNew(SBorder).Padding(0.0f)[SAssignNew(ListView, SListView<TSharedPtr<FAssetBatchResultItem>>)
 					.ListItemsSource(&VisibleItems)
-					.SelectionMode(ESelectionMode::Single)
+					.SelectionMode(ESelectionMode::Multi)
 					.OnGenerateRow(this, &SAssetBatchResults::GenerateRow)
 					.OnSelectionChanged(this, &SAssetBatchResults::HandleSelectionChanged)
-					.HeaderRow(SNew(SHeaderRow) + SHeaderRow::Column(BatchResultsAssetColumn).DefaultLabel(LOCTEXT("AssetColumn", "Asset")).FillWidth(0.35f)
-						+ SHeaderRow::Column(BatchResultsOutcomeColumn).DefaultLabel(LOCTEXT("OutcomeColumn", "Result")).FillWidth(0.2f)
-						+ SHeaderRow::Column(BatchResultsChangedColumn).DefaultLabel(LOCTEXT("ChangedColumn", "First resave")).FillWidth(0.2f)
-						+ SHeaderRow::Column(BatchResultsNoteColumn).DefaultLabel(LOCTEXT("NoteColumn", "Note")).FillWidth(0.25f))]]
+					.HeaderRow(SNew(SHeaderRow)
+						+ SHeaderRow::Column(BatchResultsAssetColumn)
+							.SortMode(this, &SAssetBatchResults::GetSortMode, BatchResultsAssetColumn)
+							.OnSort(this, &SAssetBatchResults::HandleSort)
+							.DefaultLabel(LOCTEXT("AssetColumn", "Asset"))
+							.FillWidth(0.35f)
+						+ SHeaderRow::Column(BatchResultsOutcomeColumn)
+							.SortMode(this, &SAssetBatchResults::GetSortMode, BatchResultsOutcomeColumn)
+							.OnSort(this, &SAssetBatchResults::HandleSort)
+							.DefaultLabel(LOCTEXT("OutcomeColumn", "Result"))
+							.FillWidth(0.2f)
+						+ SHeaderRow::Column(BatchResultsChangedColumn)
+							.SortMode(this, &SAssetBatchResults::GetSortMode, BatchResultsChangedColumn)
+							.OnSort(this, &SAssetBatchResults::HandleSort)
+							.DefaultLabel(LOCTEXT("ChangedColumn", "First resave"))
+							.FillWidth(0.2f)
+						+ SHeaderRow::Column(BatchResultsNoteColumn)
+							.SortMode(this, &SAssetBatchResults::GetSortMode, BatchResultsNoteColumn)
+							.OnSort(this, &SAssetBatchResults::HandleSort)
+							.DefaultLabel(LOCTEXT("NoteColumn", "Note"))
+							.FillWidth(0.25f))]]
 
 			+ SSplitter::Slot().Value(0.4f)[SNew(SBorder).Padding(4.0f)[SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
 				+ SGridPanel::Slot(0, 0)[SAssignNew(DetailsText, SMultiLineEditableText)
@@ -245,6 +268,11 @@ void SAssetBatchResults::Construct(const FArguments& InArgs)
 						LOCTEXT("OpenSecondResaveTooltip", "Compare the first resave with a second one, which shows what keeps changing. The asset is tested again to produce the comparison."))
 					.IsEnabled_Lambda([this]() { return CanOpenSelected(true); })
 					.OnClicked_Lambda([this]() { return OpenSelected(true); })]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("CopyNames", "Copy Names"))
+					.ToolTipText(LOCTEXT("CopyNamesTooltip", "Copy the package names of the selected assets, one per line."))
+					.IsEnabled_Lambda([this]() { return ListView.IsValid() && ListView->GetNumItemsSelected() > 0; })
+					.OnClicked(this, &SAssetBatchResults::CopySelectedNames)]
 			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)] + SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
 				  OnSaveReport.ExecuteIfBound();
 				  return FReply::Handled();
@@ -300,6 +328,97 @@ TSharedRef<ITableRow> SAssetBatchResults::GenerateRow(TSharedPtr<FAssetBatchResu
 	return SNew(SAssetBatchResultRow, OwnerTable).Item(Item);
 }
 
+void SAssetBatchResults::SortItems(TArray<TSharedPtr<FAssetBatchResultItem>>& Items, const FName ColumnId, const EColumnSortMode::Type Mode)
+{
+	if (Mode == EColumnSortMode::None)
+	{
+		return;
+	}
+
+	const bool bAscending = Mode == EColumnSortMode::Ascending;
+
+	// Negative when A comes first in ascending order.
+	const auto Compare = [&ColumnId](const FAssetBatchResultItem& A, const FAssetBatchResultItem& B) -> int32 {
+		if (ColumnId == AssetColumnId)
+		{
+			return A.DisplayName.Compare(B.DisplayName, ESearchCase::IgnoreCase);
+		}
+
+		if (ColumnId == OutcomeColumnId)
+		{
+			return static_cast<int32>(GetOutcome(A.Entry)) - static_cast<int32>(GetOutcome(B.Entry));
+		}
+
+		if (ColumnId == ChangedColumnId)
+		{
+			// Assets that were not tested have no result and go with the smallest.
+			const int64 BytesA = A.Entry.Status == EAssetBatchResaveStatus::Tested ? A.Entry.FirstResaveChangedBytes : -1;
+			const int64 BytesB = B.Entry.Status == EAssetBatchResaveStatus::Tested ? B.Entry.FirstResaveChangedBytes : -1;
+			return BytesA < BytesB ? -1 : (BytesA > BytesB ? 1 : 0);
+		}
+
+		return A.Entry.Message.Compare(B.Entry.Message, ESearchCase::IgnoreCase);
+	};
+
+	Items.StableSort([&](const TSharedPtr<FAssetBatchResultItem>& A, const TSharedPtr<FAssetBatchResultItem>& B) { return bAscending ? Compare(*A, *B) < 0 : Compare(*A, *B) > 0; });
+}
+
+void SAssetBatchResults::SortBy(const FName ColumnId, const EColumnSortMode::Type Mode)
+{
+	SortColumn = ColumnId;
+	SortMode = Mode;
+	RebuildVisibleItems();
+}
+
+EColumnSortMode::Type SAssetBatchResults::GetSortMode(const FName ColumnId) const
+{
+	return SortColumn == ColumnId ? SortMode : EColumnSortMode::None;
+}
+
+void SAssetBatchResults::HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode)
+{
+	SortBy(ColumnId, Mode);
+}
+
+FString SAssetBatchResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
+{
+	if (Items.Num() == 1)
+	{
+		return BuildDetailsText(Items[0]->Entry);
+	}
+
+	TArray<FString> Parts;
+	Parts.Add(FString::Printf(TEXT("%d assets selected"), Items.Num()));
+
+	for (const TSharedPtr<FAssetBatchResultItem>& Item : Items)
+	{
+		Parts.Add(BuildDetailsText(Item->Entry));
+	}
+
+	return FString::Join(Parts, TEXT("\n\n--------------------------------\n\n"));
+}
+
+FString SAssetBatchResults::BuildNamesText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
+{
+	TArray<FString> Names;
+	for (const TSharedPtr<FAssetBatchResultItem>& Item : Items)
+	{
+		Names.Add(Item->Entry.PackageName.ToString());
+	}
+
+	return FString::Join(Names, TEXT("\n"));
+}
+
+FReply SAssetBatchResults::CopySelectedNames() const
+{
+	if (ListView.IsValid())
+	{
+		FPlatformApplicationMisc::ClipboardCopy(*BuildNamesText(ListView->GetSelectedItems()));
+	}
+
+	return FReply::Handled();
+}
+
 void SAssetBatchResults::RebuildVisibleItems()
 {
 	VisibleItems.Reset();
@@ -319,6 +438,8 @@ void SAssetBatchResults::RebuildVisibleItems()
 		VisibleItems.Add(Item);
 	}
 
+	SortItems(VisibleItems, SortColumn, SortMode);
+
 	if (ListView.IsValid())
 	{
 		ListView->RequestListRefresh();
@@ -327,11 +448,14 @@ void SAssetBatchResults::RebuildVisibleItems()
 
 void SAssetBatchResults::HandleSelectionChanged(TSharedPtr<FAssetBatchResultItem> Item, ESelectInfo::Type SelectInfo)
 {
-	SelectedItem = Item;
+	const TArray<TSharedPtr<FAssetBatchResultItem>> Selected = ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FAssetBatchResultItem>>();
+
+	// The comparison buttons need exactly one asset; the details cover them all.
+	SelectedItem = Selected.Num() == 1 ? Selected[0] : nullptr;
 
 	if (DetailsText.IsValid())
 	{
-		DetailsText->SetText(Item.IsValid() ? FText::FromString(BuildDetailsText(Item->Entry)) : LOCTEXT("SelectAnAssetAgain", "Select an asset to see what resaving it changed."));
+		DetailsText->SetText(Selected.IsEmpty() ? LOCTEXT("SelectAnAssetAgain", "Select an asset to see what resaving it changed.") : FText::FromString(BuildSelectionDetailsText(Selected)));
 	}
 }
 

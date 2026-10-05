@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/Views/SHeaderRow.h"
 
 #include "Compare/AssetFolderComparison.h"
 
@@ -45,6 +46,27 @@ public:
 
 	static FText GetStatusText(const FAssetFolderComparisonEntry& Entry);
 
+	/** The ids of the list's columns, for sorting. */
+	static const FName FileColumnId;
+	static const FName StatusColumnId;
+	static const FName VersionColumnId;
+	static const FName SizeColumnId;
+
+	/**
+	 * Sorts items by a column: files by path, statuses from the most interesting, versions by text, sizes by the size of the new
+	 * file (the old one when there is none). Equal items keep their order. EColumnSortMode::None leaves the items as they are.
+	 */
+	static void SortItems(TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items, FName ColumnId, EColumnSortMode::Type Mode);
+
+	/** Sorts the list by a column, as a click on its header does. */
+	void SortBy(FName ColumnId, EColumnSortMode::Type Mode);
+
+	/** The details of several files: how many, then each file's details in turn. One file gives its own details. */
+	static FString BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items);
+
+	/** The relative paths of the items, one per line, for the clipboard. */
+	static FString BuildNamesText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items);
+
 private:
 	static int32 GetStatusRank(const FAssetFolderComparisonEntry& Entry);
 
@@ -53,6 +75,9 @@ private:
 	void RebuildVisibleItems();
 	void HandleSelectionChanged(TSharedPtr<FAssetFolderComparisonItem> Item, ESelectInfo::Type SelectInfo);
 	void HandleSearchChanged(const FText& Text);
+	EColumnSortMode::Type GetSortMode(FName ColumnId) const;
+	void HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode);
+	FReply CopySelectedNames() const;
 	FText GetCountText() const;
 	bool CanOpenSelected() const;
 
@@ -66,6 +91,8 @@ private:
 
 	bool bShowStatus[5];
 	FString SearchText;
+	FName SortColumn;
+	EColumnSortMode::Type SortMode = EColumnSortMode::None;
 
 	TSharedPtr<SListView<TSharedPtr<FAssetFolderComparisonItem>>> ListView;
 	TSharedPtr<SMultiLineEditableText> DetailsText;
