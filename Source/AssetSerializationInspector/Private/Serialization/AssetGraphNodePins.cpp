@@ -453,6 +453,25 @@ bool AssetGraphNodePins::Decode(const FAssetPackageDocument& Document, const FAs
 	return true;
 }
 
+bool AssetGraphNodePins::ReadPinType(const FAssetPackageDocument& Document, const int64 Offset, const int64 EndOffset, FString& OutType, int64& OutEnd)
+{
+	if (EndOffset <= Offset || !Document.IsValidRange(Offset, EndOffset - Offset))
+	{
+		return false;
+	}
+
+	FNativeReader Reader(Document, Offset, EndOffset - Offset);
+	const FString Type = ::ReadPinType(Reader);
+	if (!Reader.Ok())
+	{
+		return false;
+	}
+
+	OutType = Type;
+	OutEnd = Reader.Tell();
+	return true;
+}
+
 FString AssetGraphNodePins::Describe(const FAssetGraphPin& Pin, const FAssetGraphPinNames& Names)
 {
 	FString Text = FString::Printf(TEXT("%s (%s, %s)"), *Pin.Name, Pin.bOutput ? TEXT("output") : TEXT("input"), *Pin.Type);

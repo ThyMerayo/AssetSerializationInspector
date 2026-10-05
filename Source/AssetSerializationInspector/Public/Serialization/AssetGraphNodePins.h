@@ -111,6 +111,13 @@ namespace AssetGraphNodePins
 	 */
 	TArray<FAssetNativeDataChange> Compare(const FAssetGraphNodePins& Old, const FAssetGraphPinNames& OldNames, const FAssetGraphNodePins& New, const FAssetGraphPinNames& NewNames);
 
+	/**
+	 * Reads a pin type (FEdGraphPinType::Serialize: what a pin or a Blueprint variable holds) that starts at Offset, within the bytes
+	 * before EndOffset. Returns false when it does not read; otherwise OutType describes it ("int", "array of object (/Script/Engine.Actor)",
+	 * "map of name to int") and OutEnd is where it ended.
+	 */
+	bool ReadPinType(const FAssetPackageDocument& Document, int64 Offset, int64 EndOffset, FString& OutType, int64& OutEnd);
+
 	/** One line about a pin: its name, direction, type, default value and what it is linked to. */
 	FString Describe(const FAssetGraphPin& Pin, const FAssetGraphPinNames& Names);
 } // namespace AssetGraphNodePins
