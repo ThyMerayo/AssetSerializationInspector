@@ -123,6 +123,8 @@ private:
  * by reloading the config) and writes it back whenever the set changes. Monitoring follows an asset when it is renamed or moved
  * and stops when it is deleted, so a monitored asset is not silently lost.
  */
+DECLARE_MULTICAST_DELEGATE(FOnMonitoredAssetsChanged);
+
 class FAssetMonitoringManager
 {
 public:
@@ -139,6 +141,25 @@ public:
 	/** Adds the package to the set. Monitoring an asset twice is the same as once. */
 	void AddMonitoredAsset(FName PackageName);
 	void RemoveMonitoredAsset(FName PackageName);
+
+	/** The same for many packages at once: the settings are written once and the change is announced once. */
+	void AddMonitoredAssets(const TArray<FName>& PackageNames);
+	void RemoveMonitoredAssets(const TArray<FName>& PackageNames);
+
+	/** Stops monitoring everything. */
+	void ClearMonitoredAssets();
+
+	/**
+	 * Monitors every asset under a content path such as "/Game/Characters" (levels included, redirectors left out). Returns how many
+	 * were not monitored before.
+	 */
+	int32 AddMonitoredFolder(const FString& PackagePath, bool bRecursive);
+
+	/** The packages of the assets under a content path, sorted. Redirectors are left out. */
+	static TArray<FName> FindPackagesUnder(const FString& PackagePath, bool bRecursive);
+
+	/** Called whenever the set changes, by this manager or by an edit of the settings. */
+	FOnMonitoredAssetsChanged& OnChanged() { return ChangedEvent; }
 
 	/** Replaces the whole set, for example with the list the settings now hold. Nothing is written back. */
 	void SetMonitoredAssets(const TArray<FName>& PackageNames);
@@ -159,6 +180,7 @@ private:
 	void OnRegistryAssetRemoved(const struct FAssetData& Asset);
 
 	TSet<FName> MonitoredPackages;
+	FOnMonitoredAssetsChanged ChangedEvent;
 
 	bool bPersistent = true;
 	FDelegateHandle SettingsChangedHandle;

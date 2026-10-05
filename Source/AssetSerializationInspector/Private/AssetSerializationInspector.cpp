@@ -39,6 +39,7 @@
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Widgets/SAssetBatchResults.h"
 #include "Widgets/SAssetFolderComparisonResults.h"
+#include "Widgets/SAssetMonitoredAssets.h"
 #include "Widgets/SAssetSerializationDiff.h"
 #include "Widgets/SAssetSerializationInspector.h"
 
@@ -146,6 +147,9 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 					"saved and whether they do so every time. The assets on disk are not modified."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
 				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
+			Section.AddMenuEntry("ShowMonitoredAssets", LOCTEXT("ShowMonitoredAssets", "Monitored Assets..."),
+				LOCTEXT("ShowMonitoredAssetsTooltip", "List the assets whose saves are monitored, with what was recorded for each, and monitor or stop monitoring assets and whole folders."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Eye"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowMonitoredAssetsWindow)));
 			Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
 				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
@@ -276,6 +280,20 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 			const TArray<FString> PackagePaths = Context->SelectedPackagePaths;
 			const FString Scope = PackagePaths.Num() == 1 ? PackagePaths[0] : FString::Printf(TEXT("%d folders"), PackagePaths.Num());
 
+			InSection.AddMenuEntry("MonitorFolder", LOCTEXT("MonitorFolder", "Monitor Assets in Folder"),
+				LOCTEXT("MonitorFolderTooltip", "Monitor every asset in the selected folders and their subfolders, and record what changes whenever they are saved."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Eye"), FUIAction(FExecuteAction::CreateLambda([this, PackagePaths]() {
+					int32 Added = 0;
+					for (const FString& Path : PackagePaths)
+					{
+						Added += FAssetMonitoringManager::Get().AddMonitoredFolder(Path, true);
+					}
+
+					FNotificationInfo Info(FText::Format(LOCTEXT("FolderMonitored", "Now monitoring {0} more assets."), FText::AsNumber(Added)));
+					Info.ExpireDuration = 5.0f;
+					FSlateNotificationManager::Get().AddNotification(Info);
+				})));
+
 			InSection.AddMenuEntry("RunFolderNoOpResaveTest", LOCTEXT("FolderNoOpResaveTest", "Run No-op Resave Test on Folder"),
 				LOCTEXT("FolderNoOpResaveTestTooltip",
 					"Save every asset in the selected folders and their subfolders twice to temporary files, without changing them, and report "
@@ -358,6 +376,36 @@ void FAssetSerializationInspectorModule::ShowBatchResultsWindow()
 
 	BatchResultsWindow = Window;
 	FSlateApplication::Get().AddWindow(Window);
+}
+
+void FAssetSerializationInspectorModule::ShowMonitoredAssetsWindow()
+{
+	if (const TSharedPtr<SWindow> Existing = MonitoredAssetsWindow.Pin())
+	{
+		Existing->BringToFront();
+		return;
+	}
+
+	const TSharedRef<SAssetMonitoredAssets> Content =
+		SNew(SAssetMonitoredAssets).OnOpenLastSave(FOnOpenMonitoredAssetLastSave::CreateRaw(this, &FAssetSerializationInspectorModule::OpenMonitoredAssetLastSave));
+
+	const TSharedRef<SWindow> Window =
+		SNew(SWindow).Title(LOCTEXT("MonitoredAssetsTitle", "Monitored Assets")).ClientSize(FVector2D(860.0f, 560.0f)).SupportsMinimize(true).SupportsMaximize(true)[Content];
+
+	MonitoredAssetsWindow = Window;
+	FSlateApplication::Get().AddWindow(Window);
+}
+
+void FAssetSerializationInspectorModule::OpenMonitoredAssetLastSave(const FName PackageName)
+{
+	const TSharedPtr<FObservedAssetSave> Save = FAssetSaveObserver::Get().FindLatestSave(PackageName);
+	if (!Save.IsValid())
+	{
+		NotifyFailure(LOCTEXT("NoLatestSave", "That save is no longer kept; only the most recent saves are."));
+		return;
+	}
+
+	OpenObservedSaveDiff(Save);
 }
 
 void FAssetSerializationInspectorModule::OpenBatchEntryDiff(const FName PackageName, const bool bSecondResave)

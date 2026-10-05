@@ -571,6 +571,10 @@ The list of monitored assets is a per-user preference: it is saved in the editor
 
 Use the search box and the *Added / Removed / Modified / Moved* toggles to narrow a large diff. **Export report...** saves the whole comparison.
 
+### The monitored assets window
+
+*Window -> Monitored Assets...* lists every monitored asset with its folder, how many saves were recorded for it in this editor session, what the latest one did (identical, layout only, property changes, native data changes, ...) and a note when the package has no file on disk. The list has a search box and updates by itself when assets are monitored from the Content Browser, the editor preferences are edited or a monitored asset is saved (the selection is kept); *Refresh* reads everything again, for changes nothing announces, such as a file deleted outside the editor. *Add Folder...* opens a content folder picker and monitors every asset in that folder and its subfolders (redirectors are left out; levels are included); the same is available as *Monitor Assets in Folder* in a folder's Content Browser menu. *Stop Monitoring Selected* and *Stop Monitoring All* (which asks first) remove assets in one step, and *Open Latest Save* (or a double-click) opens the comparison of the selected asset's latest recorded save.
+
 ### Reviewing a monitored save
 
 When a monitored asset changes on save, open its diff to review **Save Analysis**. This view summarizes semantic changes, layout/relocation changes, and any bytes that remain native or undecoded. Selecting an explanation navigates to the corresponding semantic diff and hex range.
