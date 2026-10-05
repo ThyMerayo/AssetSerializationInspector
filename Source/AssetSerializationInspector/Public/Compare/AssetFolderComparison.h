@@ -102,6 +102,12 @@ namespace AssetFolderComparison
 	/** The engine that saved the package, such as "5.5.1" (empty when the summary does not say). */
 	FString DescribeEngineVersion(const FAssetPackageDocument& Document);
 
+	/**
+	 * The engine that saved the package: its name when the package has one, otherwise what the package file version says about it
+	 * ("5.4.0 to 5.4.4 (inferred)", see AssetEngineVersionInference). Never empty for a readable package.
+	 */
+	FString DescribeEngineVersionOrInferred(const FAssetPackageDocument& Document);
+
 	/** The package file version, such as "UE4 522 / UE5 1012". */
 	FString DescribeFileVersion(const FAssetPackageDocument& Document);
 

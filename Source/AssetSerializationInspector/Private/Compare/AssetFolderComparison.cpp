@@ -173,6 +173,18 @@ FString AssetFolderComparison::DescribeEngineVersion(const FAssetPackageDocument
 	return Version.GetMajor() == 0 && Version.GetMinor() == 0 && Version.GetPatch() == 0 ? FString() : Version.ToString(EVersionComponent::Patch);
 }
 
+FString AssetFolderComparison::DescribeEngineVersionOrInferred(const FAssetPackageDocument& Document)
+{
+	const FString Named = DescribeEngineVersion(Document);
+	if (!Named.IsEmpty())
+	{
+		return Named;
+	}
+
+	const FPackageFileVersion Version = Document.PackageSummary.GetFileVersionUE();
+	return AssetEngineVersionInference::Infer(static_cast<int32>(Version.FileVersionUE4), static_cast<int32>(Version.FileVersionUE5));
+}
+
 FString AssetFolderComparison::DescribeFileVersion(const FAssetPackageDocument& Document)
 {
 	const FPackageFileVersion Version = Document.PackageSummary.GetFileVersionUE();
@@ -232,8 +244,8 @@ FAssetFolderComparisonEntry AssetFolderComparison::ComparePair(const FString& Re
 
 	FAssetFolderComparisonEntry Entry;
 	Entry.RelativePath = RelativePath;
-	Entry.OldEngineVersion = DescribeEngineVersion(*OldDocument);
-	Entry.NewEngineVersion = DescribeEngineVersion(*NewDocument);
+	Entry.OldEngineVersion = DescribeEngineVersionOrInferred(*OldDocument);
+	Entry.NewEngineVersion = DescribeEngineVersionOrInferred(*NewDocument);
 	Entry.OldFileVersion = DescribeFileVersion(*OldDocument);
 	Entry.NewFileVersion = DescribeFileVersion(*NewDocument);
 	Entry.bVersionsDiffer = HaveDifferentVersions(*OldDocument, *NewDocument);
