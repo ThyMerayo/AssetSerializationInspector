@@ -2,6 +2,7 @@
 
 #include "Trace/AssetPackageFieldDecoder.h"
 
+#include "UObject/Class.h"
 #include "UObject/OverriddenPropertySet.h"
 #include "UObject/PropertyTag.h"
 
@@ -12,7 +13,6 @@
 #include "Serialization/AssetSerializedPropertyTag.h"
 #include "Serialization/AssetUnversionedProperties.h"
 #include "Trace/AssetSerializationTrace.h"
-#include "UObject/Class.h"
 
 #define LOCTEXT_NAMESPACE "FAssetPackageFieldDecoder"
 

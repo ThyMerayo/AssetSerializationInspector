@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
+#include "UObject/ObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
@@ -14,7 +15,6 @@
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
-#include "UObject/ObjectVersion.h"
 
 namespace AssetArchetypeResolverTestUtils
 {

@@ -4,11 +4,12 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "UObject/EditorObjectVersion.h"
+#include "UObject/ObjectVersion.h"
+
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
-#include "UObject/EditorObjectVersion.h"
-#include "UObject/ObjectVersion.h"
 
 namespace AssetTextPropertyDecoderTestUtils
 {
