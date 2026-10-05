@@ -8,6 +8,7 @@
 #include "Diff/AssetByteDiff.h"
 #include "Diff/AssetDecodedValueDiff.h"
 #include "Model/AssetPackageDocument.h"
+#include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetGraphNodePins.h"
@@ -673,6 +674,75 @@ namespace
 		}
 	}
 
+	/** The place in the Name Map that the name stored at an offset of a document points at. */
+	int32 ReadNameIndex(const FAssetPackageDocument& Document, const int64 Offset)
+	{
+		if (!Document.IsValidRange(Offset, 8))
+		{
+			return INDEX_NONE;
+		}
+
+		FAssetPackagePayloadReader Reader(Document, Offset, 8);
+		FAssetPackageNameReference Reference;
+		return Reader.ReadNameReference(Reference) ? Reference.NameIndex : INDEX_NONE;
+	}
+
+	/** A name a value holds that is the same in both versions but sits at another place in the Name Map. */
+	struct FMovedName
+	{
+		FString Name;
+		int32 OldIndex = INDEX_NONE;
+		int32 NewIndex = INDEX_NONE;
+	};
+
+	/** Walks two decoded values of the same shape side by side and collects the names whose place in the Name Map differs. */
+	void CollectMovedNames(
+		const FAssetPackageDocument& OldDocument, const FAssetDecodedPropertyValue& Old, const FAssetPackageDocument& NewDocument, const FAssetDecodedPropertyValue& New, TArray<FMovedName>& Out)
+	{
+		if (Old.Children.Num() != New.Children.Num())
+		{
+			return;
+		}
+
+		if (Old.Children.IsEmpty())
+		{
+			if (Old.TypeName == TEXT("NameProperty") && New.TypeName == TEXT("NameProperty") && Old.Value == New.Value)
+			{
+				const int32 OldIndex = ReadNameIndex(OldDocument, Old.AbsoluteOffset);
+				const int32 NewIndex = ReadNameIndex(NewDocument, New.AbsoluteOffset);
+				if (OldIndex != INDEX_NONE && NewIndex != INDEX_NONE && OldIndex != NewIndex)
+				{
+					Out.Add({ Old.Value, OldIndex, NewIndex });
+				}
+			}
+			return;
+		}
+
+		for (int32 Index = 0; Index < Old.Children.Num(); ++Index)
+		{
+			CollectMovedNames(OldDocument, Old.Children[Index], NewDocument, New.Children[Index], Out);
+		}
+	}
+
+	/** Says why a value that decoded the same is stored with other bytes, when it holds names that moved in the Name Map. */
+	FText DescribeMovedNames(const TArray<FMovedName>& Moved)
+	{
+		TArray<FString> Parts;
+		for (int32 Index = 0; Index < Moved.Num() && Index < 3; ++Index)
+		{
+			Parts.Add(FString::Printf(TEXT("\"%s\" from Name[%d] to Name[%d]"), *Moved[Index].Name, Moved[Index].OldIndex, Moved[Index].NewIndex));
+		}
+
+		FString Text = FString::Printf(
+			TEXT("The value is the same. A name is stored as its place in the Name Map, and it moved because names were added or removed before it: %s"), *FString::Join(Parts, TEXT(", ")));
+		if (Moved.Num() > 3)
+		{
+			Text += FString::Printf(TEXT(" and %d more"), Moved.Num() - 3);
+		}
+
+		return FText::FromString(Text + TEXT("."));
+	}
+
 	void BuildOnePropertyDiff(const FPropertyDiffNodeData& OldData, const FPropertyDiffNodeData& NewData, const FAssetSerializedPropertyIdentity& Identity, FAssetPackageDiffEntry& PayloadEntry)
 	{
 		FAssetPackageDiffEntry Entry;
@@ -795,6 +865,17 @@ namespace
 				Entry.bRepresentationOnly = true;
 				Entry.Explanation = FText::FromString(
 					TEXT("The entries are the same; they are stored in another order. Maps and sets are written in the order of an internal hash table, which can change between saves."));
+			}
+
+			// Bytes that differ with nothing different in the decoded values, and a name that moved in the Name Map: say which.
+			if (OldPtr != nullptr && NewPtr != nullptr && OldDecoded.IsSuccess() && NewDecoded.IsSuccess() && ValueDiff.State == EAssetDecodedValueDiffState::Unchanged && Entry.Explanation.IsEmpty())
+			{
+				TArray<FMovedName> Moved;
+				CollectMovedNames(OldData.Document, OldDecoded, NewData.Document, NewDecoded, Moved);
+				if (!Moved.IsEmpty())
+				{
+					Entry.Explanation = DescribeMovedNames(Moved);
+				}
 			}
 
 			FStructFieldContext FieldContext;

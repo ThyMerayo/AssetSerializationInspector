@@ -568,6 +568,8 @@ The package tree exposes decoded regions and allows navigating between related N
 
 The two Name Maps are compared by name, not place by place: a new name shifts every name after it by one place, so a name that is in both maps is *unchanged* or *moved* (with where it came from), only a name that is in one map alone is *added* or *removed*. Adding a variable to a Blueprint therefore adds its names and moves the rest, instead of reporting every later name, including the other variables', as a different name.
 
+A Name property is stored as its place in the Name Map, so adding a variable (and with it a name) can change the bytes of a Name property that holds the same name as before. The property is still reported as modified, because its bytes did change, but the diff now says why: *The value is the same. A name is stored as its place in the Name Map, and it moved because names were added or removed before it: "NewVar" from Name[11] to Name[12]*. The hint covers names inside structs, arrays and other containers, and shows the first three names that moved.
+
 ### Comparing two assets
 
 Open the Asset Serialization Diff window and select:
