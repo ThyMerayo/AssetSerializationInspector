@@ -85,7 +85,8 @@ void SAssetMonitoredAssets::Construct(const FArguments& InArgs)
 	OnOpenLastSave = InArgs._OnOpenLastSave;
 
 	ChangedHandle = Manager->OnChanged().AddSP(this, &SAssetMonitoredAssets::Refresh);
-	SaveHandle = FAssetSaveObserver::Get().OnObservedAssetSave().AddSP(this, &SAssetMonitoredAssets::HandleObservedSave);
+	SaveEvent = InArgs._SaveEvent != nullptr ? InArgs._SaveEvent : &FAssetSaveObserver::Get().OnObservedAssetSave();
+	SaveHandle = SaveEvent->AddSP(this, &SAssetMonitoredAssets::HandleObservedSave);
 
 	ChildSlot[SNew(SVerticalBox)
 
@@ -159,7 +160,10 @@ SAssetMonitoredAssets::~SAssetMonitoredAssets()
 		Manager->OnChanged().Remove(ChangedHandle);
 	}
 
-	FAssetSaveObserver::Get().OnObservedAssetSave().Remove(SaveHandle);
+	if (SaveEvent != nullptr)
+	{
+		SaveEvent->Remove(SaveHandle);
+	}
 }
 
 TArray<TSharedPtr<FAssetMonitoredItem>> SAssetMonitoredAssets::BuildItems(const FAssetMonitoringManager& Manager, const FAssetSaveHistoryManager& History)

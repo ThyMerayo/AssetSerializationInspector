@@ -6,6 +6,7 @@
 #include "Widgets/SCompoundWidget.h"
 
 #include "Save/AssetSaveAnalyzer.h"
+#include "Save/AssetSaveObserver.h"
 
 class FAssetMonitoringManager;
 class FAssetSaveHistoryManager;
@@ -47,6 +48,8 @@ public:
 	SLATE_BEGIN_ARGS(SAssetMonitoredAssets) {}
 	/** The manager whose set is shown. The global one when not given. */
 	SLATE_ARGUMENT_DEFAULT(FAssetMonitoringManager*, Manager) = nullptr;
+	/** The event that announces recorded saves. The save observer's when not given. */
+	SLATE_ARGUMENT_DEFAULT(FOnObservedAssetSave*, SaveEvent) = nullptr;
 	SLATE_EVENT(FOnOpenMonitoredAssetLastSave, OnOpenLastSave)
 	SLATE_END_ARGS()
 
@@ -81,6 +84,7 @@ private:
 	FAssetMonitoringManager* Manager = nullptr;
 	FOnOpenMonitoredAssetLastSave OnOpenLastSave;
 	FDelegateHandle ChangedHandle;
+	FOnObservedAssetSave* SaveEvent = nullptr;
 	FDelegateHandle SaveHandle;
 
 	TArray<TSharedPtr<FAssetMonitoredItem>> AllItems;
