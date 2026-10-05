@@ -1,0 +1,74 @@
+name: Automation tests
+
+# Builds a host project with the plugin on a self-hosted Windows runner that has the engine installed, and runs the plugin's
+# automation tests (Scripts/RunAutomationTests.ps1 does the work, so the same command reproduces a failure locally).
+#
+# Set these in the repository settings (Settings -> Secrets and variables -> Actions -> Variables):
+#
+#   UE_ENGINE_ROOT   the engine, built from source, the folder that holds Engine\          e.g. D:\dev\UnrealEngine
+#   UE_HOST_PROJECT  a project (.uproject) that can load the plugin, kept outside the checkout   e.g. D:\dev\ASIHost\ASIHost.uproject
+#
+# The runner needs the labels listed under runs-on, Visual Studio with the C++ workload, and nothing else running the same engine
+# (an open editor locks the plugin's DLL). The workflow links the checkout into the host project's Plugins folder for the run and
+# removes the link afterwards.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One run at a time on the host project, newer pushes to the same pull request replace older runs.
+concurrency:
+  group: automation-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and run the automation tests
+    runs-on: [self-hosted, windows, unreal]
+    timeout-minutes: 90
+
+    steps:
+      - name: Check the runner is set up
+        shell: powershell
+        run: |
+          if (-not $env:UE_ENGINE_ROOT -or -not $env:UE_HOST_PROJECT) {
+            Write-Error "Set the repository variables UE_ENGINE_ROOT and UE_HOST_PROJECT (see the comment at the top of this workflow)."
+          }
+          Write-Host "Engine:  $env:UE_ENGINE_ROOT"
+          Write-Host "Project: $env:UE_HOST_PROJECT"
+        env:
+          UE_ENGINE_ROOT: ${{ vars.UE_ENGINE_ROOT }}
+          UE_HOST_PROJECT: ${{ vars.UE_HOST_PROJECT }}
+
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Build and run the tests
+        shell: powershell
+        run: >
+          .\Scripts\RunAutomationTests.ps1
+          -EngineRoot "$env:UE_ENGINE_ROOT"
+          -HostProject "$env:UE_HOST_PROJECT"
+          -LinkPlugin
+          -TimeoutMinutes 30
+          -OutputDir "$env:GITHUB_WORKSPACE\AutomationLogs"
+        env:
+          UE_ENGINE_ROOT: ${{ vars.UE_ENGINE_ROOT }}
+          UE_HOST_PROJECT: ${{ vars.UE_HOST_PROJECT }}
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-logs
+          path: AutomationLogs/
+          if-no-files-found: ignore
+          retention-days: 14
