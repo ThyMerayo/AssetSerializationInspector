@@ -289,6 +289,8 @@ Levels (`.umap`) are read like any other package: the inspector, the diff window
 
 When the comparison finishes, a **results window** opens (*Window -> Show Last Folder Comparison* reopens it): every file with its status (could not compare, changed, only in the new or old folder, identical), the engine that saved each side and the file sizes, with status filters and a search box. Selecting a file shows what differs, and *Open Comparison* opens a changed pair in the diff window (both files are read again for it).
 
+Both results windows (this one and the no-op resave results) sort by a click on a column header (click again to reverse it; the default order puts the most worrying rows first) and select several rows with Ctrl and Shift: the details show every selected row, *Copy Names* puts their names on the clipboard, and the comparison buttons work on a single row.
+
 In the two-file diff, differences in the engine, file or custom versions are explained, including that some differences can come from the format rather than from edits.
 
 ---
@@ -382,6 +384,8 @@ Compares two documents and produces structural and semantic results independentl
 Interprets the diff and answers what the save means: semantic property changes, serialization/default transitions, layout-only movement, export relocation, and residual unexplained/native changes. It also performs changed-byte attribution and layout-cause inference.
 
 ### Save history and repeated-pattern analysis
+
+The package header takes part in this analysis: a table of the header that changes in many saves (the thumbnail table, the name map, the asset registry data) becomes a pattern like a property does, with how often it changed and the bytes it cost, so a header that is rewritten on every save shows up in the repeated-save report next to the properties.
 
 Recent monitored saves are retained by stable save ID. Semantic paths are aggregated across observations to identify recurring, every-save, continuously changing, and alternating behavior. Historical samples can reopen their original diff session.
 
