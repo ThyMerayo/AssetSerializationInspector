@@ -1146,9 +1146,14 @@ static bool DecodeArrayFromReader(const FAssetPropertyDecodeContext& Context, FA
 
 		if (!DecodeValueFromReader(Context, Reader, InnerType, ValueEnd, Element, Depth))
 		{
+			// Keep what did decode: the elements before this one are good, and this one carries its own error.
 			OutValue.Children.Add(MoveTemp(Element));
-			OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
+			OutValue.Status = EAssetPropertyDecodeStatus::Partial;
+			OutValue.Kind = EAssetDecodedValueKind::Array;
+			OutValue.Value = FString::Printf(TEXT("%d of %d elements decoded"), Index, Count);
 			OutValue.Error = FString::Printf(TEXT("Could not decode array element %d."), Index);
+			OutValue.AbsoluteOffset = Start;
+			OutValue.Size = ValueEnd - Start;
 			return false;
 		}
 
@@ -2705,7 +2710,11 @@ static FString FormatForDisplayInternal(const FAssetDecodedPropertyValue& Value,
 		}
 
 		FString Text;
-		if (Child.Kind == EAssetDecodedValueKind::MapEntry && Child.Children.Num() == 2)
+		if (!Child.IsSuccess() && Child.Value.IsEmpty() && Child.Children.IsEmpty())
+		{
+			Text = TEXT("(could not be decoded)");
+		}
+		else if (Child.Kind == EAssetDecodedValueKind::MapEntry && Child.Children.Num() == 2)
 		{
 			Text = FString::Printf(TEXT("%s=%s"), *FormatForDisplayInternal(Child.Children[0], MaximumElements, Depth + 1), *FormatForDisplayInternal(Child.Children[1], MaximumElements, Depth + 1));
 		}

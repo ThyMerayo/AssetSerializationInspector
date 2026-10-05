@@ -114,6 +114,8 @@ Arrays use sequence-aware matching rather than a simple index-by-index compariso
 
 The elements of an array of structs are saved against the defaults of their struct, not against the owning object's archetype. So a set or map inside such an element is shown as its final contents against the struct's empty defaults (unless it was written with removals, which prove the defaults were not empty; those are left as stored), and a struct field one side leaves out is described with the default the struct has in the running editor (`struct default (live): ...`).
 
+When an element of an array cannot be decoded, the elements before it are kept instead of the whole array being reported as undecoded: the value reads "3 of 5 elements decoded", the display lists the elements that decoded followed by "(could not be decoded)", and a comparison of two arrays, one of which decoded only in part, compares the elements both sides decoded and ends with one `[3...]` entry that says what was not compared, so elements nobody could read are never reported as added or removed. The elements after the first failure are not read, because a failed element leaves the reader at an unknown position; their bytes are in the hex view.
+
 Set and map comparisons use decoded semantic keys. Map entries are matched by key and values are compared recursively. Serialized container operations such as add, remove, replace, or add/modify remain distinguishable when the package contains delta serialization.
 
 ### Property-level change attribution

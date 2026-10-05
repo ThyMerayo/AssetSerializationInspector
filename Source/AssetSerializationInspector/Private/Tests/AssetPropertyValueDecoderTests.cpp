@@ -915,4 +915,41 @@ bool FAssetPropertyValueDecoder_FormatsValuesForDisplay::RunTest(const FString& 
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPropertyValueDecoder_KeepsTheElementsOfAnArrayThatDecoded,
+	"AssetSerializationInspector.Serialization.AssetPropertyValueDecoder.KeepsTheElementsOfAnArrayThatDecoded", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetPropertyValueDecoder_KeepsTheElementsOfAnArrayThatDecoded::RunTest(const FString& Parameters)
+{
+	using namespace AssetPropertyValueDecoderTestUtils;
+
+	// An array that says it has five integers but holds the bytes of three: the first three are good.
+	FAssetPackageDocument Document;
+	AppendValue<int32>(Document, 5);
+	AppendValue<int32>(Document, 11);
+	AppendValue<int32>(Document, 22);
+	AppendValue<int32>(Document, 33);
+
+	FAssetSerializedPropertyType Type = MakeType(TEXT("ArrayProperty"));
+	Type.Parameters.Add(MakeType(TEXT("IntProperty")));
+	const FAssetDecodedPropertyValue Result = DecodeWholeFile(Document, Type);
+
+	TestEqual(TEXT("The array is partly decoded"), Result.Status, EAssetPropertyDecodeStatus::Partial);
+	TestFalse(TEXT("It is not a success"), Result.IsSuccess());
+	TestTrue(TEXT("But its children can be used"), Result.HasDecodedChildren());
+	TestEqual(TEXT("It is still an array"), Result.Kind, EAssetDecodedValueKind::Array);
+	TestEqual(TEXT("It says how many elements decoded"), Result.Value, FString(TEXT("3 of 5 elements decoded")));
+	TestTrue(TEXT("And what went wrong"), Result.Error.Contains(TEXT("element 3")));
+	TestEqual(TEXT("Three elements decoded"), Result.CountDecodedElements(), 3);
+
+	if (TestEqual(TEXT("The failed element is the last child"), Result.Children.Num(), 4))
+	{
+		TestEqual(TEXT("The first element has its value"), Result.Children[0].Value, FString(TEXT("11")));
+		TestEqual(TEXT("The third element has its value"), Result.Children[2].Value, FString(TEXT("33")));
+		TestFalse(TEXT("The failed one is marked"), Result.Children[3].IsSuccess());
+	}
+
+	TestEqual(TEXT("The display shows the elements and the gap"), FAssetPropertyValueDecoder::FormatForDisplay(Result), FString(TEXT("3 of 5 elements decoded: 11, 22, 33, (could not be decoded)")));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
