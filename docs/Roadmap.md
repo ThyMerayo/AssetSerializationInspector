@@ -58,4 +58,4 @@ Next steps, in order:
 - [x] Show the elements that did decode when one element of an array fails, instead of only "the parent changed"
 - [x] Infer the engine version from the package file version when the package does not name one (source builds)
 - [x] Track header changes in the repeated-save analysis; sortable columns and multi-select in the two results windows
-- [x] Run the automation suite in CI on a self-hosted runner (the workflow needs a registered runner and two repository variables)
+- [x] Run the automation suite from one script (`Scripts/RunAutomationTests.ps1`); no CI, because the tests need an engine built from source and a self-hosted runner on a public repository would run fork code
