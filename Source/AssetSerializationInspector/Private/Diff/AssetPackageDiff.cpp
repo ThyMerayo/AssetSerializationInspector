@@ -12,6 +12,7 @@
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -817,6 +818,60 @@ namespace
 		return Result;
 	}
 
+	/** Reads the native data of a class or function on both sides and adds what differs in it as children of the range's entry. */
+	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetStructNativeData OldData;
+		FAssetStructNativeData NewData;
+		if (!AssetStructNativeData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetStructNativeData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return;
+		}
+
+		// Data that did not read to its last byte on both sides is not understood: what is read of it could be anything, so the range
+		// stays opaque rather than being explained wrongly.
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return;
+		}
+
+		for (const FAssetNativeDataChange& Change : AssetStructNativeData::Compare(OldDocument, OldData, NewDocument, NewData))
+		{
+			FAssetPackageDiffEntry Child;
+			Child.Kind = EAssetPackageDiffKind::Property;
+			Child.Key = Change.Key;
+			Child.DisplayName = FText::FromString(Change.Title);
+			Child.TypeName = TEXT("native data");
+			Child.SemanticPath = AssetPackageDiff::AppendSemanticPath(RangeEntry.SemanticPath, Change.Key);
+			Child.OldExportIndex = RangeEntry.OldExportIndex;
+			Child.NewExportIndex = RangeEntry.NewExportIndex;
+			Child.State = Change.State == FAssetNativeDataChange::EState::Added ? EAssetPackageDiffState::Added
+				: Change.State == FAssetNativeDataChange::EState::Removed		? EAssetPackageDiffState::Removed
+																				: EAssetPackageDiffState::Modified;
+
+			if (Change.State != FAssetNativeDataChange::EState::Added)
+			{
+				Child.bHasOldDecodedValue = true;
+				Child.OldDecodedValue = Change.OldValue;
+				Child.OldValue = Change.OldValue;
+			}
+
+			if (Change.State != FAssetNativeDataChange::EState::Removed)
+			{
+				Child.bHasNewDecodedValue = true;
+				Child.NewDecodedValue = Change.NewValue;
+				Child.NewValue = Change.NewValue;
+			}
+
+			RangeEntry.Children.Add(MoveTemp(Child));
+		}
+
+		// Both sides were read to their last byte, so what differs is what the children say.
+		RangeEntry.bNativeDataDecoded = !RangeEntry.Children.IsEmpty();
+	}
+
 	/**
 	 * Adds an entry for every native range of the two exports that changed: the bytes the inspector cannot decode. Ranges are
 	 * paired by their reason (before the properties, after them, ...) and their order within it, and compared byte by byte, so a
@@ -913,9 +968,28 @@ namespace
 				}
 
 				Entry.State = EAssetPackageDiffState::Modified;
+
+				// The last range of an export is what its class writes after the properties. For a class or a function that is
+				// readable (its variables, functions, bytecode), so say what differs in it instead of only how many bytes.
+				if (OldNode == OldNodes.Last() && NewNode == NewNodes.Last())
+				{
+					AppendNativeDataChanges(OldDocument, OldExport, NewDocument, NewExport, Entry);
+				}
 			}
 
-			Entry.Explanation = FText::FromString(Summary.ToText());
+			FString Explanation = Summary.ToText();
+			if (Entry.bNativeDataDecoded && !Entry.Children.IsEmpty())
+			{
+				TArray<FString> Titles;
+				for (const FAssetPackageDiffEntry& Child : Entry.Children)
+				{
+					Titles.Add(Child.DisplayName.ToString());
+				}
+
+				Explanation += FString::Printf(TEXT(" Read: %d changes (%s)."), Entry.Children.Num(), *FString::Join(Titles, TEXT("; ")));
+			}
+
+			Entry.Explanation = FText::FromString(Explanation);
 			PayloadEntry.Children.Add(MoveTemp(Entry));
 		}
 	}
