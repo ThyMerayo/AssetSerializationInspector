@@ -49,7 +49,7 @@ Next steps, in order:
 - [x] Summaries for native export data: changed native ranges are reported and described by class with facts from the properties; the byte totals of the Save Analysis are now computed (native bytes themselves not parsed)
 - [x] Class schemas from live reflection: untyped struct elements in older packages' maps and sets (packages saved with unversioned properties move to the cooked-package item below)
 - [x] Levels (`.umap`) and split packages (`.uexp`); cooked packages without property tags are reported as undecoded (`.ubulk` is not read)
-- [ ] Decode unversioned (tagless) properties of cooked packages from the class schema in live reflection
+- [x] Decode unversioned (tagless) properties of cooked packages from the class schema in live reflection
 - [x] Containers inside arrays of structs: final values and omitted-field defaults
 - [x] Headless commandlet for the no-op resave test and the folder comparison, with a report file, for CI and engine upgrades
 - [x] Compare an asset with a source-control revision (Perforce, git) using the Save Analysis
