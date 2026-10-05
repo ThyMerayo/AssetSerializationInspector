@@ -271,7 +271,7 @@ Every report the plugin saves (the diff window's analysis, the batch no-op resav
 
 With a source control provider connected (Perforce, Git or any other the editor supports, through the Revision Control menu), *Compare with Source Control Revision...* in an asset's Content Browser menu asks the provider for the file's history and lists the latest revisions at the cursor, newest first. Picking one gets that revision into `Saved/AssetSerializationInspector/Revisions`, and the diff window opens with the revision as the old side and the asset on disk as the new one, with the same Save Analysis (what changed, and whether it is explained by properties, the header or native data) as for an observed save. It works on the file on disk, so unsaved changes in the editor are not part of the comparison. The entry is disabled when source control is not connected, and a file that is not under source control, or has no earlier revision, is reported. Only the `.uasset`/`.umap` of a revision is fetched, so a package saved in two files is compared by its header and the exports of the file on disk.
 
-### Automated tests and CI
+### Automated tests
 
 The plugin's automation tests run with `Scripts\RunAutomationTests.ps1`, which builds a host project that has the plugin, runs every test with `UnrealEditor-Cmd`, then runs the widget tests with the full editor (Slate is only initialized there; under `-Cmd` the widget tests skip themselves), and fails on a failed test, a run that did not finish its queue (a crash or a timeout) and a run that found no tests:
 
@@ -281,7 +281,7 @@ The plugin's automation tests run with `Scripts\RunAutomationTests.ps1`, which b
 
 `-LinkPlugin` links this repository into the host project's `Plugins` folder for the run (a junction, removed afterwards); without it the plugin must already be there. The logs are copied to `Saved\AutomationLogs`. Close the editor first: an open editor locks the plugin's DLL.
 
-`.github/workflows/automation-tests.yml` runs that script for every pull request and push to `main` on a self-hosted Windows runner (labels `self-hosted`, `windows`, `unreal`) that has the engine, built from source, and Visual Studio's C++ workload. Set two repository variables (Settings, Secrets and variables, Actions, Variables): `UE_ENGINE_ROOT` (the folder that holds `Engine\`) and `UE_HOST_PROJECT` (the `.uproject` of a project outside the checkout that can load the plugin). The run uploads the logs as the `automation-logs` artifact.
+There is no CI for the tests: they need an Unreal Engine built from source, which GitHub's hosted runners cannot provide, and a self-hosted runner on a public repository would run the code of any fork's pull request on its machine. Run the script before opening a pull request.
 
 ### Running the checks without the editor UI
 
