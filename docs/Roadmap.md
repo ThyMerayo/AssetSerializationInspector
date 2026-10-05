@@ -59,3 +59,12 @@ Next steps, in order:
 - [x] Infer the engine version from the package file version when the package does not name one (source builds)
 - [x] Track header changes in the repeated-save analysis; sortable columns and multi-select in the two results windows
 - [x] Run the automation suite from one script (`Scripts/RunAutomationTests.ps1`); no CI, because the tests need an engine built from source and a self-hosted runner on a public repository would run fork code
+
+Open items, in order:
+
+- [ ] A hint for a Name property whose value only changed because its index in the Name Map shifted (a Name is stored as an index, so a new name before it changes the bytes)
+- [ ] Scan for other natively stored structs that decode to a constant placeholder (the pin type did, and hid a changed variable type); decode them or report them as undecoded
+- [ ] Tests for the type of variables that hold an object (struct or class) and for maps
+- [ ] Graph nodes whose class writes more than the pins (read them, or say what is left); formatted texts in pin display names and default values; a run over a large real graph
+- [ ] Disassemble the bytecode of functions instead of comparing its size and bytes
+- [ ] Decode the contents of meshes and textures (they are described by class only)
