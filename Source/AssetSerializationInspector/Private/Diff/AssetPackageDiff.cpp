@@ -10,6 +10,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetContainerFinalValue.h"
+#include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetStructNativeData.h"
@@ -853,26 +854,10 @@ namespace
 		return Result;
 	}
 
-	/** Reads the native data of a class or function on both sides and adds what differs in it as children of the range's entry. */
-	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	/** Adds what the reading of a range's native data found different as the children of its entry. */
+	void AddNativeDataChildren(const TArray<FAssetNativeDataChange>& Changes, FAssetPackageDiffEntry& RangeEntry)
 	{
-		FAssetStructNativeData OldData;
-		FAssetStructNativeData NewData;
-		if (!AssetStructNativeData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetStructNativeData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
-		{
-			return;
-		}
-
-		// Data that did not read to its last byte on both sides is not understood: what is read of it could be anything, so the range
-		// stays opaque rather than being explained wrongly.
-		if (!OldData.bComplete || !NewData.bComplete)
-		{
-			return;
-		}
-
-		for (const FAssetNativeDataChange& Change : AssetStructNativeData::Compare(OldDocument, OldData, NewDocument, NewData))
+		for (const FAssetNativeDataChange& Change : Changes)
 		{
 			FAssetPackageDiffEntry Child;
 			Child.Kind = EAssetPackageDiffKind::Property;
@@ -907,13 +892,73 @@ namespace
 		RangeEntry.bNativeDataDecoded = !RangeEntry.Children.IsEmpty();
 	}
 
+	/** The data of a class or function, read on both sides. Returns false when the export is not one. */
+	bool AppendStructDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetStructNativeData OldData;
+		FAssetStructNativeData NewData;
+		if (!AssetStructNativeData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetStructNativeData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return false;
+		}
+
+		// Data that did not read to its last byte on both sides is not understood: what is read of it could be anything, so the range
+		// stays opaque rather than being explained wrongly.
+		if (OldData.bComplete && NewData.bComplete)
+		{
+			RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "ClassOrFunctionData", "Class or function data");
+			AddNativeDataChildren(AssetStructNativeData::Compare(OldDocument, OldData, NewDocument, NewData), RangeEntry);
+		}
+
+		return true;
+	}
+
+	/**
+	 * The pins of a graph node, read on both sides. When the pins are the same but the bytes differ, the references to other objects
+	 * were renumbered (a node was added or removed before them in the export map), which is not a change of the graph.
+	 */
+	void AppendPinChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetGraphNodePins OldData;
+		FAssetGraphNodePins NewData;
+		if (!AssetGraphNodePins::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetGraphNodePins::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData) || !OldData.bComplete || !NewData.bComplete)
+		{
+			return;
+		}
+
+		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "GraphNodePins", "Graph node pins");
+		AddNativeDataChildren(AssetGraphNodePins::Compare(OldData, OldNames, NewData, NewNames), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation =
+				NSLOCTEXT("AssetPackageDiff", "PinsRenumbered", "The pins, their values and their links are the same; the bytes differ because the objects they refer to are numbered differently.");
+		}
+	}
+
+	/** Reads the native data of a class, function or graph node on both sides and adds what differs in it as children of the range's entry. */
+	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
+	{
+		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+		{
+			AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry);
+		}
+	}
+
 	/**
 	 * Adds an entry for every native range of the two exports that changed: the bytes the inspector cannot decode. Ranges are
 	 * paired by their reason (before the properties, after them, ...) and their order within it, and compared byte by byte, so a
 	 * save that changes only native data is reported instead of passing as no change.
 	 */
 	void AppendNativeRangeDiffs(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& PayloadEntry)
+		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, const FAssetGraphPinNames& OldNames, const FAssetGraphPinNames& NewNames,
+		FAssetPackageDiffEntry& PayloadEntry)
 	{
 		const TArray<const FAssetSerializationTraceNode*> OldNodes = CollectNativeNodes(OldTrace);
 		const TArray<const FAssetSerializationTraceNode*> NewNodes = CollectNativeNodes(NewTrace);
@@ -1008,11 +1053,16 @@ namespace
 				// readable (its variables, functions, bytecode), so say what differs in it instead of only how many bytes.
 				if (OldNode == OldNodes.Last() && NewNode == NewNodes.Last())
 				{
-					AppendNativeDataChanges(OldDocument, OldExport, NewDocument, NewExport, Entry);
+					AppendNativeDataChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, Entry);
 				}
 			}
 
 			FString Explanation = Summary.ToText();
+			if (Entry.bRepresentationOnly)
+			{
+				Explanation = Entry.Explanation.ToString() + TEXT(" ") + Explanation;
+			}
+
 			if (Entry.bNativeDataDecoded && !Entry.Children.IsEmpty())
 			{
 				TArray<FString> Titles;
@@ -1038,6 +1088,10 @@ namespace
 		// Resolvers cache the archetype packages they load, so they live for the whole comparison.
 		const TUniquePtr<FAssetArchetypeResolver> OldResolver = OldTraces != nullptr ? MakeUnique<FAssetArchetypeResolver>(OldDocument, *OldTraces) : nullptr;
 		const TUniquePtr<FAssetArchetypeResolver> NewResolver = NewTraces != nullptr ? MakeUnique<FAssetArchetypeResolver>(NewDocument, *NewTraces) : nullptr;
+
+		// The names of the pins that links refer to, read the first time a link is described.
+		const FAssetGraphPinNames OldPinNames(OldDocument, OldTraces);
+		const FAssetGraphPinNames NewPinNames(NewDocument, NewTraces);
 
 		TSet<FString> Keys;
 		for (const auto& Pair : OldExports)
@@ -1122,7 +1176,7 @@ namespace
 					const FAssetSerializationTrace* OldTrace = FindExportTrace(OldTraces, A.Index);
 					const FAssetSerializationTrace* NewTrace = FindExportTrace(NewTraces, B.Index);
 					BuildSemanticPropertyDiffs({ OldDocument, A, OldTrace, OldResolver.Get() }, { NewDocument, B, NewTrace, NewResolver.Get() }, Payload);
-					AppendNativeRangeDiffs(OldDocument, A, OldTrace, NewDocument, B, NewTrace, Payload);
+					AppendNativeRangeDiffs(OldDocument, A, OldTrace, NewDocument, B, NewTrace, OldPinNames, NewPinNames, Payload);
 				}
 				else if (A.SerialOffset != B.SerialOffset)
 				{

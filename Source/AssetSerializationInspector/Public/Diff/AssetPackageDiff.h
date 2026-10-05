@@ -116,9 +116,13 @@ struct FAssetPackageDiffEntry
 	 */
 	bool bNativeDataDecoded = false;
 
+	/** What the decoded native data of the range is called ("Class or function data", "Graph node pins"). Set with bNativeDataDecoded. */
+	FText NativeDataTitle;
+
 	/**
-	 * A property whose bytes differ although its decoded value is identical on both sides: a map or set saved with its entries in
-	 * another order (they are written in the order of an internal hash table, which can change between sessions).
+	 * A property, or a native range, whose bytes differ although its decoded value is identical on both sides: a map or set saved with
+	 * its entries in another order (they are written in the order of an internal hash table, which can change between sessions), or
+	 * the pins of a graph node whose references to other objects were renumbered.
 	 */
 	bool bRepresentationOnly = false;
 
