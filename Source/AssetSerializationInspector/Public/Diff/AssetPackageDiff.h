@@ -116,6 +116,12 @@ struct FAssetPackageDiffEntry
 	 */
 	bool bNativeDataDecoded = false;
 
+	/**
+	 * A property whose bytes differ although its decoded value is identical on both sides: a map or set saved with its entries in
+	 * another order (they are written in the order of an internal hash table, which can change between sessions).
+	 */
+	bool bRepresentationOnly = false;
+
 	TArray<FAssetByteDiffSpan> ChangedSpans;
 
 	/**

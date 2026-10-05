@@ -91,6 +91,8 @@ namespace
 				return TEXT("TableChanged");
 			case EAssetSaveChangeClassification::NativeOrUndecodedChanged:
 				return TEXT("NativeOrUndecodedChanged");
+			case EAssetSaveChangeClassification::PropertyStoredDifferently:
+				return TEXT("PropertyStoredDifferently");
 		}
 
 		return TEXT("Unknown");
