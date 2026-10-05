@@ -562,6 +562,8 @@ Open the Asset Serialization Inspector window (Window -> Asset Serialization -> 
 
 The package tree exposes decoded regions and allows navigating between related Name Map, Import Map, and Export Map entries.
 
+The two Name Maps are compared by name, not place by place: a new name shifts every name after it by one place, so a name that is in both maps is *unchanged* or *moved* (with where it came from), only a name that is in one map alone is *added* or *removed*. Adding a variable to a Blueprint therefore adds its names and moves the rest, instead of reporting every later name, including the other variables', as a different name.
+
 ### Comparing two assets
 
 Open the Asset Serialization Diff window and select:
