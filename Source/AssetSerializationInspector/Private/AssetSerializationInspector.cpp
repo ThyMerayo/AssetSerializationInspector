@@ -131,6 +131,43 @@ void FAssetSerializationInspectorModule::PluginButtonClicked()
 	FGlobalTabmanager::Get()->TryInvokeTab(DiffTabName);
 }
 
+void FAssetSerializationInspectorModule::FillWindowSubMenu(UToolMenu* SubMenu)
+{
+	{
+		FToolMenuSection& Section = SubMenu->AddSection("AssetSerializationInspectorWindows", LOCTEXT("InspectSection", "Inspect"));
+		Section.AddMenuEntryWithCommandList(FAssetSerializationInspectorCommands::Get().OpenPluginWindow, PluginCommands);
+		Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
+			LOCTEXT("CompareAssetFoldersTooltip",
+				"Compare the .uasset and .umap files of two folders on disk, for example a project before and after moving it to another engine "
+				"version. Files are paired by relative path, and the report groups what changed and the engine versions involved."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Diff"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::CompareAssetFolders)));
+		Section.AddMenuEntry("ShowFolderComparison", LOCTEXT("ShowFolderComparison", "Show Last Folder Comparison"),
+			LOCTEXT("ShowFolderComparisonTooltip", "Reopen the window with the files of the latest comparison of two asset folders."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
+			FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow),
+				FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
+	}
+
+	{
+		FToolMenuSection& Section = SubMenu->AddSection("AssetSerializationInspectorMonitoring", LOCTEXT("MonitoringSection", "Monitoring"));
+		Section.AddMenuEntry("ShowMonitoredAssets", LOCTEXT("ShowMonitoredAssets", "Monitored Assets..."),
+			LOCTEXT("ShowMonitoredAssetsTooltip", "List the assets whose saves are monitored, with what was recorded for each, and monitor or stop monitoring assets and whole folders."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Eye"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowMonitoredAssetsWindow)));
+	}
+
+	{
+		FToolMenuSection& Section = SubMenu->AddSection("AssetSerializationInspectorResave", LOCTEXT("ResaveSection", "No-op Resave Test"));
+		Section.AddMenuEntry("RunProjectNoOpResaveTest", LOCTEXT("ProjectNoOpResaveTest", "Run No-op Resave Test on Project"),
+			LOCTEXT("ProjectNoOpResaveTestTooltip",
+				"Save every asset under /Game twice to temporary files, without changing them, and report which assets change when "
+				"saved and whether they do so every time. The assets on disk are not modified."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
+			FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
+		Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
+			LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
+			FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
+	}
+}
+
 void FAssetSerializationInspectorModule::RegisterMenus()
 {
 	// Owner will be used for cleanup in call to UToolMenus::UnregisterOwner
@@ -139,31 +176,11 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 	{
 		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Window");
 		{
-			FToolMenuSection& Section = Menu->FindOrAddSection("WindowLayout");
-			Section.AddMenuEntryWithCommandList(FAssetSerializationInspectorCommands::Get().OpenPluginWindow, PluginCommands);
-			Section.AddMenuEntry("RunProjectNoOpResaveTest", LOCTEXT("ProjectNoOpResaveTest", "Run No-op Resave Test on Project"),
-				LOCTEXT("ProjectNoOpResaveTestTooltip",
-					"Save every asset under /Game twice to temporary files, without changing them, and report which assets change when "
-					"saved and whether they do so every time. The assets on disk are not modified."),
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"),
-				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::RunBatchResaveOnPaths, TArray<FString>{ TEXT("/Game") }, FString(TEXT("/Game")))));
-			Section.AddMenuEntry("ShowMonitoredAssets", LOCTEXT("ShowMonitoredAssets", "Monitored Assets..."),
-				LOCTEXT("ShowMonitoredAssetsTooltip", "List the assets whose saves are monitored, with what was recorded for each, and monitor or stop monitoring assets and whole folders."),
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Eye"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowMonitoredAssetsWindow)));
-			Section.AddMenuEntry("ShowBatchResults", LOCTEXT("ShowBatchResults", "Show Last No-op Resave Results"),
-				LOCTEXT("ShowBatchResultsTooltip", "Reopen the window with the assets of the latest no-op resave test run on several assets."),
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
-				FUIAction(
-					FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowBatchResultsWindow), FCanExecuteAction::CreateLambda([this]() { return LastBatchResult.IsValid(); })));
-			Section.AddMenuEntry("ShowFolderComparison", LOCTEXT("ShowFolderComparison", "Show Last Folder Comparison"),
-				LOCTEXT("ShowFolderComparisonTooltip", "Reopen the window with the files of the latest comparison of two asset folders."), FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"),
-				FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::ShowFolderComparisonWindow),
-					FCanExecuteAction::CreateLambda([this]() { return LastFolderComparison.IsValid(); })));
-			Section.AddMenuEntry("CompareAssetFolders", LOCTEXT("CompareAssetFolders", "Compare Asset Folders..."),
-				LOCTEXT("CompareAssetFoldersTooltip",
-					"Compare the .uasset and .umap files of two folders on disk, for example a project before and after moving it to another engine "
-					"version. Files are paired by relative path, and the report groups what changed and the engine versions involved."),
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Diff"), FUIAction(FExecuteAction::CreateRaw(this, &FAssetSerializationInspectorModule::CompareAssetFolders)));
+			// Everything of the plugin lives in one submenu, so that it does not end up scattered through the Window menu.
+			FToolMenuSection& WindowSection = Menu->FindOrAddSection("WindowLayout");
+			WindowSection.AddSubMenu("AssetSerializationInspectorMenu", LOCTEXT("PluginSubMenu", "Asset Serialization"),
+				LOCTEXT("PluginSubMenuTooltip", "Inspect and compare asset files, monitor saves and test that saving an asset changes nothing."),
+				FNewToolMenuDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::FillWindowSubMenu), false, FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"));
 		}
 	}
 

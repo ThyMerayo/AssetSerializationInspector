@@ -23,6 +23,7 @@ public:
 
 private:
 	void RegisterMenus();
+	void FillWindowSubMenu(class UToolMenu* SubMenu);
 
 	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
 	TSharedRef<SDockTab> OnSpawnDiffTab(const FSpawnTabArgs& SpawnTabArgs);
