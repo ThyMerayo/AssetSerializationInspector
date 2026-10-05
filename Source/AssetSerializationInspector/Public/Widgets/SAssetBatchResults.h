@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/Views/SHeaderRow.h"
 
 #include "Save/AssetBatchResave.h"
 
@@ -49,6 +50,27 @@ public:
 	/** A short word for the entry's outcome: Stable, Normalized, Unstable, Skipped or Failed. */
 	static FText GetOutcomeText(const FAssetBatchResaveEntry& Entry);
 
+	/** The ids of the list's columns, for sorting. */
+	static const FName AssetColumnId;
+	static const FName OutcomeColumnId;
+	static const FName ChangedColumnId;
+	static const FName NoteColumnId;
+
+	/**
+	 * Sorts items by a column: assets by name, outcomes from the most worrying, results by the bytes the first resave changed, notes
+	 * by text. Equal items keep their order. EColumnSortMode::None leaves the items as they are.
+	 */
+	static void SortItems(TArray<TSharedPtr<FAssetBatchResultItem>>& Items, FName ColumnId, EColumnSortMode::Type Mode);
+
+	/** Sorts the list by a column, as a click on its header does. */
+	void SortBy(FName ColumnId, EColumnSortMode::Type Mode);
+
+	/** The details of several assets: how many, then each asset's details in turn. One asset gives its own details. */
+	static FString BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items);
+
+	/** The package names of the items, one per line, for the clipboard. */
+	static FString BuildNamesText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items);
+
 private:
 	enum class EOutcome : uint8
 	{
@@ -67,6 +89,9 @@ private:
 	void RebuildVisibleItems();
 	void HandleSelectionChanged(TSharedPtr<FAssetBatchResultItem> Item, ESelectInfo::Type SelectInfo);
 	void HandleSearchChanged(const FText& Text);
+	EColumnSortMode::Type GetSortMode(FName ColumnId) const;
+	void HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode);
+	FReply CopySelectedNames() const;
 	FText GetCountText() const;
 	FReply OpenSelected(bool bSecondResave) const;
 	bool CanOpenSelected(bool bSecondResave) const;
@@ -81,6 +106,8 @@ private:
 
 	bool bShowOutcome[static_cast<int32>(EOutcome::Count)];
 	FString SearchText;
+	FName SortColumn;
+	EColumnSortMode::Type SortMode = EColumnSortMode::None;
 
 	TSharedPtr<SListView<TSharedPtr<FAssetBatchResultItem>>> ListView;
 	TSharedPtr<SMultiLineEditableText> DetailsText;

@@ -2,6 +2,7 @@
 
 #include "Widgets/SAssetFolderComparisonResults.h"
 
+#include "HAL/PlatformApplicationMisc.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -20,12 +21,17 @@
 
 #define LOCTEXT_NAMESPACE "AssetFolderComparisonResults"
 
+const FName SAssetFolderComparisonResults::FileColumnId(TEXT("File"));
+const FName SAssetFolderComparisonResults::StatusColumnId(TEXT("Status"));
+const FName SAssetFolderComparisonResults::VersionColumnId(TEXT("Versions"));
+const FName SAssetFolderComparisonResults::SizeColumnId(TEXT("Size"));
+
 namespace
 {
-	const FName FolderResultsFileColumn(TEXT("File"));
-	const FName FolderResultsStatusColumn(TEXT("Status"));
-	const FName FolderResultsVersionColumn(TEXT("Versions"));
-	const FName FolderResultsSizeColumn(TEXT("Size"));
+	const FName& FolderResultsFileColumn = SAssetFolderComparisonResults::FileColumnId;
+	const FName& FolderResultsStatusColumn = SAssetFolderComparisonResults::StatusColumnId;
+	const FName& FolderResultsVersionColumn = SAssetFolderComparisonResults::VersionColumnId;
+	const FName& FolderResultsSizeColumn = SAssetFolderComparisonResults::SizeColumnId;
 
 	FString DescribeFolderResultsSize(const int64 Size)
 	{
@@ -223,13 +229,30 @@ void SAssetFolderComparisonResults::Construct(const FArguments& InArgs)
 
 			+ SSplitter::Slot().Value(0.6f)[SNew(SBorder).Padding(0.0f)[SAssignNew(ListView, SListView<TSharedPtr<FAssetFolderComparisonItem>>)
 					.ListItemsSource(&VisibleItems)
-					.SelectionMode(ESelectionMode::Single)
+					.SelectionMode(ESelectionMode::Multi)
 					.OnGenerateRow(this, &SAssetFolderComparisonResults::GenerateRow)
 					.OnSelectionChanged(this, &SAssetFolderComparisonResults::HandleSelectionChanged)
-					.HeaderRow(SNew(SHeaderRow) + SHeaderRow::Column(FolderResultsFileColumn).DefaultLabel(LOCTEXT("FileColumn", "File")).FillWidth(0.45f)
-						+ SHeaderRow::Column(FolderResultsStatusColumn).DefaultLabel(LOCTEXT("StatusColumn", "Status")).FillWidth(0.2f)
-						+ SHeaderRow::Column(FolderResultsVersionColumn).DefaultLabel(LOCTEXT("VersionColumn", "Saved by")).FillWidth(0.2f)
-						+ SHeaderRow::Column(FolderResultsSizeColumn).DefaultLabel(LOCTEXT("SizeColumn", "Size (bytes)")).FillWidth(0.15f))]]
+					.HeaderRow(SNew(SHeaderRow)
+						+ SHeaderRow::Column(FolderResultsFileColumn)
+							.SortMode(this, &SAssetFolderComparisonResults::GetSortMode, FolderResultsFileColumn)
+							.OnSort(this, &SAssetFolderComparisonResults::HandleSort)
+							.DefaultLabel(LOCTEXT("FileColumn", "File"))
+							.FillWidth(0.45f)
+						+ SHeaderRow::Column(FolderResultsStatusColumn)
+							.SortMode(this, &SAssetFolderComparisonResults::GetSortMode, FolderResultsStatusColumn)
+							.OnSort(this, &SAssetFolderComparisonResults::HandleSort)
+							.DefaultLabel(LOCTEXT("StatusColumn", "Status"))
+							.FillWidth(0.2f)
+						+ SHeaderRow::Column(FolderResultsVersionColumn)
+							.SortMode(this, &SAssetFolderComparisonResults::GetSortMode, FolderResultsVersionColumn)
+							.OnSort(this, &SAssetFolderComparisonResults::HandleSort)
+							.DefaultLabel(LOCTEXT("VersionColumn", "Saved by"))
+							.FillWidth(0.2f)
+						+ SHeaderRow::Column(FolderResultsSizeColumn)
+							.SortMode(this, &SAssetFolderComparisonResults::GetSortMode, FolderResultsSizeColumn)
+							.OnSort(this, &SAssetFolderComparisonResults::HandleSort)
+							.DefaultLabel(LOCTEXT("SizeColumn", "Size (bytes)"))
+							.FillWidth(0.15f))]]
 
 			+ SSplitter::Slot().Value(0.4f)[SNew(SBorder).Padding(4.0f)[SNew(SGridPanel).FillColumn(0, 1.0f).FillRow(0, 1.0f)
 				+ SGridPanel::Slot(0, 0)[SAssignNew(DetailsText, SMultiLineEditableText)
@@ -252,6 +275,11 @@ void SAssetFolderComparisonResults::Construct(const FArguments& InArgs)
 						}
 						return FReply::Handled();
 					})]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)[SNew(SButton)
+					.Text(LOCTEXT("CopyNames", "Copy Names"))
+					.ToolTipText(LOCTEXT("CopyNamesTooltip", "Copy the paths of the selected files, one per line."))
+					.IsEnabled_Lambda([this]() { return ListView.IsValid() && ListView->GetNumItemsSelected() > 0; })
+					.OnClicked(this, &SAssetFolderComparisonResults::CopySelectedNames)]
 			+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SSpacer)] + SHorizontalBox::Slot().AutoWidth()[SNew(SButton).Text(LOCTEXT("SaveReport", "Save Report...")).OnClicked_Lambda([this]() {
 				  OnSaveReport.ExecuteIfBound();
 				  return FReply::Handled();
@@ -286,6 +314,100 @@ TSharedRef<ITableRow> SAssetFolderComparisonResults::GenerateRow(TSharedPtr<FAss
 	return SNew(SAssetFolderComparisonRow, OwnerTable).Item(Item);
 }
 
+void SAssetFolderComparisonResults::SortItems(TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items, const FName ColumnId, const EColumnSortMode::Type Mode)
+{
+	if (Mode == EColumnSortMode::None)
+	{
+		return;
+	}
+
+	const bool bAscending = Mode == EColumnSortMode::Ascending;
+
+	// Negative when A comes first in ascending order.
+	const auto Compare = [&ColumnId](const FAssetFolderComparisonEntry& A, const FAssetFolderComparisonEntry& B) -> int32 {
+		if (ColumnId == FileColumnId)
+		{
+			return A.RelativePath.Compare(B.RelativePath, ESearchCase::IgnoreCase);
+		}
+
+		if (ColumnId == StatusColumnId)
+		{
+			return GetStatusRank(A) - GetStatusRank(B);
+		}
+
+		if (ColumnId == VersionColumnId)
+		{
+			const auto Describe = [](const FAssetFolderComparisonEntry& Entry) { return Entry.NewEngineVersion.IsEmpty() ? Entry.OldEngineVersion : Entry.NewEngineVersion; };
+			return Describe(A).Compare(Describe(B), ESearchCase::IgnoreCase);
+		}
+
+		const auto SizeOf = [](const FAssetFolderComparisonEntry& Entry) { return Entry.NewFileSize != INDEX_NONE ? Entry.NewFileSize : Entry.OldFileSize; };
+		const int64 SizeA = SizeOf(A);
+		const int64 SizeB = SizeOf(B);
+		return SizeA < SizeB ? -1 : (SizeA > SizeB ? 1 : 0);
+	};
+
+	Items.StableSort([&](const TSharedPtr<FAssetFolderComparisonItem>& A, const TSharedPtr<FAssetFolderComparisonItem>& B) {
+		return bAscending ? Compare(A->Entry, B->Entry) < 0 : Compare(A->Entry, B->Entry) > 0;
+	});
+}
+
+void SAssetFolderComparisonResults::SortBy(const FName ColumnId, const EColumnSortMode::Type Mode)
+{
+	SortColumn = ColumnId;
+	SortMode = Mode;
+	RebuildVisibleItems();
+}
+
+EColumnSortMode::Type SAssetFolderComparisonResults::GetSortMode(const FName ColumnId) const
+{
+	return SortColumn == ColumnId ? SortMode : EColumnSortMode::None;
+}
+
+void SAssetFolderComparisonResults::HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode)
+{
+	SortBy(ColumnId, Mode);
+}
+
+FString SAssetFolderComparisonResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
+{
+	if (Items.Num() == 1)
+	{
+		return BuildDetailsText(Items[0]->Entry);
+	}
+
+	TArray<FString> Parts;
+	Parts.Add(FString::Printf(TEXT("%d files selected"), Items.Num()));
+
+	for (const TSharedPtr<FAssetFolderComparisonItem>& Item : Items)
+	{
+		Parts.Add(BuildDetailsText(Item->Entry));
+	}
+
+	return FString::Join(Parts, TEXT("\n\n--------------------------------\n\n"));
+}
+
+FString SAssetFolderComparisonResults::BuildNamesText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
+{
+	TArray<FString> Names;
+	for (const TSharedPtr<FAssetFolderComparisonItem>& Item : Items)
+	{
+		Names.Add(Item->Entry.RelativePath);
+	}
+
+	return FString::Join(Names, TEXT("\n"));
+}
+
+FReply SAssetFolderComparisonResults::CopySelectedNames() const
+{
+	if (ListView.IsValid())
+	{
+		FPlatformApplicationMisc::ClipboardCopy(*BuildNamesText(ListView->GetSelectedItems()));
+	}
+
+	return FReply::Handled();
+}
+
 void SAssetFolderComparisonResults::RebuildVisibleItems()
 {
 	VisibleItems.Reset();
@@ -305,6 +427,8 @@ void SAssetFolderComparisonResults::RebuildVisibleItems()
 		VisibleItems.Add(Item);
 	}
 
+	SortItems(VisibleItems, SortColumn, SortMode);
+
 	if (ListView.IsValid())
 	{
 		ListView->RequestListRefresh();
@@ -313,11 +437,14 @@ void SAssetFolderComparisonResults::RebuildVisibleItems()
 
 void SAssetFolderComparisonResults::HandleSelectionChanged(TSharedPtr<FAssetFolderComparisonItem> Item, ESelectInfo::Type SelectInfo)
 {
-	SelectedItem = Item;
+	const TArray<TSharedPtr<FAssetFolderComparisonItem>> Selected = ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FAssetFolderComparisonItem>>();
+
+	// Opening a comparison needs exactly one file; the details cover them all.
+	SelectedItem = Selected.Num() == 1 ? Selected[0] : nullptr;
 
 	if (DetailsText.IsValid())
 	{
-		DetailsText->SetText(Item.IsValid() ? FText::FromString(BuildDetailsText(Item->Entry)) : LOCTEXT("SelectAFileAgain", "Select a file to see what differs between the folders."));
+		DetailsText->SetText(Selected.IsEmpty() ? LOCTEXT("SelectAFileAgain", "Select a file to see what differs between the folders.") : FText::FromString(BuildSelectionDetailsText(Selected)));
 	}
 }
 

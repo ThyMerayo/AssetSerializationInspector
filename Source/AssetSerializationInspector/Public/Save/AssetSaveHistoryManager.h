@@ -21,6 +21,9 @@ struct FObservedSaveHistoryEntry
 
 	TArray<FAssetSaveExplanationEntry> SemanticChanges;
 	TArray<FAssetSaveExplanationEntry> LayoutChanges;
+
+	/** The package header changes of the save (tables that grew, moved or changed), so that repeated header changes are found too. */
+	TArray<FAssetSaveExplanationEntry> HeaderChanges;
 	TArray<FAssetSaveExplanationEntry> UnexplainedChanges;
 
 	TMap<FString, FObservedPropertyState> PropertyStates;
