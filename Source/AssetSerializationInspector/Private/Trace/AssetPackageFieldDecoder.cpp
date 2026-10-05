@@ -10,7 +10,9 @@
 #include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializedPropertyTag.h"
+#include "Serialization/AssetUnversionedProperties.h"
 #include "Trace/AssetSerializationTrace.h"
+#include "UObject/Class.h"
 
 #define LOCTEXT_NAMESPACE "FAssetPackageFieldDecoder"
 
@@ -43,6 +45,13 @@ namespace
 	};
 	ENUM_CLASS_FLAGS(EAssetClassSerializationControlExtension);
 
+	/**
+	 * The properties of an export saved without tags, read with the class of the running editor: one node per property (zero values
+	 * included), the header and whatever follows or cannot be read as undecoded ranges. Returns false when the stream could not be
+	 * read at all, so that the caller reports the whole export as undecoded.
+	 */
+	bool AddUnversionedProperties(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const UStruct* Class, FAssetSerializationTrace& OutTrace);
+
 	void AddUnknownRange(FAssetSerializationTrace& Trace, const int64 RelativeOffset, const int64 Size, const FString& Reason)
 	{
 		if (Size <= 0 || !Trace.Root.IsValid())
@@ -58,6 +67,70 @@ namespace
 		Node->Size = Size;
 		Node->Parent = Trace.Root;
 		Trace.Root->Children.Add(MoveTemp(Node));
+	}
+
+	bool AddUnversionedProperties(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const UStruct* Class, FAssetSerializationTrace& OutTrace)
+	{
+		const int64 ScriptStart = Export.HasScriptSerializationRange() ? Export.SerialOffset + Export.ScriptSerializationStartOffset : Export.SerialOffset;
+		const int64 ScriptEnd = Export.HasScriptSerializationRange() ? Export.SerialOffset + Export.ScriptSerializationEndOffset : Export.SerialOffset + Export.SerialSize;
+
+		TArray<FAssetUnversionedValue> Values;
+		int64 EndOffset = ScriptStart;
+		FString Error;
+		const bool bRead = AssetUnversionedProperties::Read(Document, Class, ScriptStart, ScriptEnd, Values, EndOffset, Error);
+
+		// An unreadable header means the class is not the one the package was saved with: nothing to show.
+		if (!bRead && Values.IsEmpty() && EndOffset == ScriptStart)
+		{
+			return false;
+		}
+
+		if (Export.ScriptSerializationStartOffset > 0 && Export.HasScriptSerializationRange())
+		{
+			AddUnknownRange(OutTrace, 0, Export.ScriptSerializationStartOffset, TEXT("Native/custom serialization before properties"));
+		}
+
+		// The values that were read; a value that failed is left to the undecoded range after them.
+		const int32 ValueCount = Values.Num();
+		const int64 HeaderEnd = Values.IsEmpty() ? EndOffset : Values[0].Offset;
+		AddUnknownRange(OutTrace, ScriptStart - Export.SerialOffset, HeaderEnd - ScriptStart, TEXT("Unversioned property header (fragments and zero mask)"));
+
+		for (int32 Index = 0; Index < ValueCount; ++Index)
+		{
+			const FAssetUnversionedValue& Slot = Values[Index];
+
+			TSharedPtr<FAssetSerializationTraceNode> Node = MakeShared<FAssetSerializationTraceNode>();
+			Node->Kind = EAssetSerializationTraceKind::Property;
+			Node->Name = Slot.Property->GetName();
+			Node->TypeName = Slot.Type.ToString();
+			Node->PropertyType = Slot.Type;
+			Node->ArrayIndex = Slot.ArrayIndex;
+			Node->Offset = Slot.Offset - Export.SerialOffset;
+			Node->Size = Slot.Size;
+			Node->bIsZeroValue = Slot.bZero;
+			Node->Parent = OutTrace.Root;
+
+			if (Slot.Type.Name == TEXT("BoolProperty") && Slot.bZero)
+			{
+				Node->bHasInlineBoolValue = true;
+				Node->bInlineBoolValue = false;
+			}
+
+			OutTrace.Root->Children.Add(MoveTemp(Node));
+		}
+
+		const int64 ReadEnd = EndOffset;
+		if (ReadEnd < ScriptEnd)
+		{
+			AddUnknownRange(OutTrace, ReadEnd - Export.SerialOffset, ScriptEnd - ReadEnd, bRead ? TEXT("Native/custom serialized data") : TEXT("Undecoded payload"));
+		}
+
+		if (Export.HasScriptSerializationRange() && Export.ScriptSerializationEndOffset < Export.SerialSize)
+		{
+			AddUnknownRange(OutTrace, Export.ScriptSerializationEndOffset, Export.SerialSize - Export.ScriptSerializationEndOffset, TEXT("Native/custom serialization after properties"));
+		}
+
+		return true;
 	}
 
 	bool LooksLikeTaggedPropertyStream(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export)
@@ -144,9 +217,14 @@ namespace
 		// Cooked packages usually save their properties without tags: a bit mask of which properties are set, then the values in the
 		// order of the class's property list. Reading that needs the class, so the export is reported as one undecoded range rather
 		// than read as tags (which would produce garbage).
-		if ((Document.PackageSummary.GetPackageFlags() & PKG_UnversionedProperties) != 0)
+		if (AssetUnversionedProperties::IsUsedBy(Document))
 		{
-			AddUnknownRange(OutTrace, 0, Export.SerialSize, TEXT("Properties saved without tags (unversioned property serialization)"));
+			const UClass* NativeObjectClass = AssetSchemaReflection::FindNativeClass(Document, Export.Index);
+			if (NativeObjectClass == nullptr || !AddUnversionedProperties(Document, Export, NativeObjectClass, OutTrace))
+			{
+				AddUnknownRange(OutTrace, 0, Export.SerialSize, TEXT("Properties saved without tags (unversioned property serialization)"));
+			}
+
 			return true;
 		}
 
@@ -272,6 +350,7 @@ namespace
 			Node->Name = Tag.ResolvedName;
 			Node->TypeName = Tag.Type.ToString();
 			Node->PropertyType = Tag.Type;
+			Node->ArrayIndex = Tag.ArrayIndex;
 			Node->Offset = Tag.ValueOffset - Export.SerialOffset;
 			Node->Size = Tag.Size;
 			Node->Parent = OutTrace.Root;

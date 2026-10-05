@@ -34,6 +34,9 @@ struct FAssetSerializationTraceNode
 
 	bool bHasInlineBoolValue = false;
 
+	/** The value is zero in a package saved without tags: no bytes are stored (Size is 0) and the type says what zero is. */
+	bool bIsZeroValue = false;
+
 	/** True when the property tag says the value is written by the type's own serializer rather than as tagged properties. */
 	bool bBinaryOrNative = false;
 	bool bInlineBoolValue = false;
