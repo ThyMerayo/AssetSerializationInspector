@@ -169,6 +169,47 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 		return;
 	}
 
+	// A class or function whose native data was read on both sides: what changed in it is known, so it is a semantic change.
+	if (Entry.bNativeDataDecoded)
+	{
+		FAssetSaveExplanationEntry Decoded;
+		Decoded.Classification = EAssetSaveChangeClassification::ExportPayloadChanged;
+		Decoded.Confidence = EAssetExplanationConfidence::High;
+		Decoded.Key = Entry.Key;
+		Decoded.Title = NSLOCTEXT("AssetSaveAnalyzer", "NativeDecoded", "Class or function data");
+		Decoded.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "NativeDecodedDescription", "{0} changes in the data a class or function writes after its properties; {1} bytes changed."),
+			FText::AsNumber(Entry.Children.Num()), FText::AsNumber(Entry.ChangedByteCount));
+		Decoded.ChangedByteCount = Entry.ChangedByteCount;
+		Decoded.OldOffset = Entry.OldOffset;
+		Decoded.NewOffset = Entry.NewOffset;
+		Decoded.OldSize = Entry.OldSize;
+		Decoded.NewSize = Entry.NewSize;
+		Decoded.SemanticPath = AssetPackageDiff::AppendSemanticPath(Entry.OldFieldPath, Entry.Key);
+
+		for (const FAssetPackageDiffEntry& Child : Entry.Children)
+		{
+			FAssetSaveExplanationEntry Part;
+			Part.Classification = EAssetSaveChangeClassification::ExportPayloadChanged;
+			Part.Confidence = EAssetExplanationConfidence::High;
+			Part.Key = Child.Key;
+			Part.Title = Child.DisplayName;
+			Part.Description = Child.State == EAssetPackageDiffState::Added ? NSLOCTEXT("AssetSaveAnalyzer", "NativePartAdded", "Added.")
+				: Child.State == EAssetPackageDiffState::Removed			? NSLOCTEXT("AssetSaveAnalyzer", "NativePartRemoved", "Removed.")
+																			: NSLOCTEXT("AssetSaveAnalyzer", "NativePartChanged", "Changed.");
+			Part.bHasOldValue = Child.bHasOldDecodedValue;
+			Part.bHasNewValue = Child.bHasNewDecodedValue;
+			Part.OldValue = Child.OldValue;
+			Part.NewValue = Child.NewValue;
+			Part.SemanticPath = Child.SemanticPath;
+			Decoded.Children.Add(MoveTemp(Part));
+		}
+
+		OutAnalysis.ExplainedChangedBytes += Entry.ChangedByteCount;
+		OutAnalysis.PropertyChangeCount += Entry.Children.Num();
+		OutAnalysis.SemanticChanges.Add(MoveTemp(Decoded));
+		return;
+	}
+
 	FAssetSaveExplanationEntry Explanation;
 	Explanation.Classification = EAssetSaveChangeClassification::NativeOrUndecodedChanged;
 	Explanation.Confidence = EAssetExplanationConfidence::Unknown;

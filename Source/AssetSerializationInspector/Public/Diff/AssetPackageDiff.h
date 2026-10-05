@@ -110,6 +110,12 @@ struct FAssetPackageDiffEntry
 
 	int64 ChangedByteCount = 0;
 
+	/**
+	 * For a native range of a class or function (UnknownPayloadRange): the data was read on both sides to its last byte, and the
+	 * children are what differs in it, so the changed bytes are accounted for.
+	 */
+	bool bNativeDataDecoded = false;
+
 	TArray<FAssetByteDiffSpan> ChangedSpans;
 
 	/**
