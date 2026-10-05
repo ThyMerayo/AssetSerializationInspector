@@ -197,8 +197,8 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 		Decoded.Classification = EAssetSaveChangeClassification::ExportPayloadChanged;
 		Decoded.Confidence = EAssetExplanationConfidence::High;
 		Decoded.Key = Entry.Key;
-		Decoded.Title = NSLOCTEXT("AssetSaveAnalyzer", "NativeDecoded", "Class or function data");
-		Decoded.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "NativeDecodedDescription", "{0} changes in the data a class or function writes after its properties; {1} bytes changed."),
+		Decoded.Title = Entry.NativeDataTitle.IsEmpty() ? NSLOCTEXT("AssetSaveAnalyzer", "NativeDecoded", "Native data") : Entry.NativeDataTitle;
+		Decoded.Description = FText::Format(NSLOCTEXT("AssetSaveAnalyzer", "NativeDecodedDescription", "{0} changes in the data written after the properties; {1} bytes changed."),
 			FText::AsNumber(Entry.Children.Num()), FText::AsNumber(Entry.ChangedByteCount));
 		Decoded.ChangedByteCount = Entry.ChangedByteCount;
 		Decoded.OldOffset = Entry.OldOffset;
@@ -228,6 +228,27 @@ static void AnalyzeUnknownRange(const FAssetPackageDiffEntry& Entry, FAssetSaveA
 		OutAnalysis.ExplainedChangedBytes += Entry.ChangedByteCount;
 		OutAnalysis.PropertyChangeCount += Entry.Children.Num();
 		OutAnalysis.SemanticChanges.Add(MoveTemp(Decoded));
+		return;
+	}
+
+	// A range that was read on both sides and holds the same values: only how they are stored differs.
+	if (Entry.bRepresentationOnly)
+	{
+		FAssetSaveExplanationEntry Stored;
+		Stored.Classification = EAssetSaveChangeClassification::PropertyStoredDifferently;
+		Stored.Confidence = EAssetExplanationConfidence::Certain;
+		Stored.Key = Entry.Key;
+		Stored.Title = Entry.NativeDataTitle.IsEmpty() ? FText::FromString(Entry.Key) : Entry.NativeDataTitle;
+		Stored.Description = Entry.Explanation;
+		Stored.ChangedByteCount = Entry.ChangedByteCount;
+		Stored.OldOffset = Entry.OldOffset;
+		Stored.NewOffset = Entry.NewOffset;
+		Stored.OldSize = Entry.OldSize;
+		Stored.NewSize = Entry.NewSize;
+		Stored.SemanticPath = AssetPackageDiff::AppendSemanticPath(Entry.OldFieldPath, Entry.Key);
+
+		OutAnalysis.ExplainedChangedBytes += Entry.ChangedByteCount;
+		OutAnalysis.LayoutChanges.Add(MoveTemp(Stored));
 		return;
 	}
 

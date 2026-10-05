@@ -32,7 +32,7 @@ enum class EAssetSaveChangeClassification : uint8
 
 	NativeOrUndecodedChanged,
 
-	/** The value is the same; only the way it is stored differs (the entries of a map or set were written in another order). */
+	/** The value is the same; only the way it is stored differs (the entries of a map or set were written in another order, or the references of a graph node were renumbered). */
 	PropertyStoredDifferently
 };
 
