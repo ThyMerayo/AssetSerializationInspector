@@ -85,6 +85,14 @@ struct FAssetDecoderCoverageResult
 	int64 BytecodeStatementsRead = 0;
 	TArray<FAssetDecoderCoverageIssue> BytecodeIssues;
 
+	/**
+	 * The textures and mesh descriptions found (their record of the source data after the properties), how many were read to the
+	 * last byte, and why the others were not.
+	 */
+	int32 BulkDataExportsScanned = 0;
+	int32 BulkDataExportsRead = 0;
+	TArray<FAssetDecoderCoverageIssue> BulkDataIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;
