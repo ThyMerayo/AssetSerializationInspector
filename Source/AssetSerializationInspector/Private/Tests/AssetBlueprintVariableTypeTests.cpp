@@ -354,7 +354,18 @@ bool FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange::RunTest(const
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Beta"), MakeType(TEXT("int")));
 	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"));
 
-	FBlueprintEditorUtils::RenameMemberVariable(Blueprint, TEXT("Beta"), TEXT("Gamma"));
+	// RenameMemberVariable also walks every Blueprint loaded in the editor (FindDependentBlueprints), which makes the others resolve
+	// their member references and log warnings about Blueprints this test has nothing to do with, the first time it runs. What is
+	// saved is the same either way: the variable's name changes and its GUID stays.
+	for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+	{
+		if (Variable.VarName == TEXT("Beta"))
+		{
+			Variable.VarName = TEXT("Gamma");
+			Variable.FriendlyName = FName::NameToDisplayString(TEXT("Gamma"), false);
+		}
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"));
 
 	FText Error;
