@@ -12,6 +12,7 @@
 #include "UObject/Package.h"
 
 #include "AssetSerializationInspectorSettings.h"
+#include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveHistoryManager.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 
