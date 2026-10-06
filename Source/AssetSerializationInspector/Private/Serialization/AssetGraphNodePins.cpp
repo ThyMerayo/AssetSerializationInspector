@@ -91,12 +91,14 @@ namespace
 			const FString ValueObject = ReadOptionalObject(Reader);
 			const bool bValueConst = Reader.ReadBool();
 			const bool bValueWeak = Reader.ReadBool();
+			bool bValueWrapper = false;
 			if (Reader.CustomVer(FReleaseObjectVersion::GUID) >= FReleaseObjectVersion::PinTypeIncludesUObjectWrapperFlag)
 			{
-				Reader.ReadBool();
+				bValueWrapper = Reader.ReadBool();
 			}
 
-			Value = DescribeTypePart(ValueCategory, ValueSubCategory, ValueObject) + (bValueConst ? TEXT(" const") : TEXT("")) + (bValueWeak ? TEXT(" weak") : TEXT(""));
+			Value = DescribeTypePart(ValueCategory, ValueSubCategory, ValueObject) + (bValueConst ? TEXT(" const") : TEXT("")) + (bValueWeak ? TEXT(" weak") : TEXT(""))
+				+ (bValueWrapper ? TEXT(" object wrapper") : TEXT(""));
 		}
 
 		const bool bReference = Reader.ReadBool();
@@ -105,17 +107,19 @@ namespace
 		// The member a delegate or function pin refers to: its parent, name and id.
 		const FString MemberParent = ReadOptionalObject(Reader);
 		const FString MemberName = Reader.ReadName();
-		Reader.ReadGuid();
+		const FGuid MemberGuid = Reader.ReadGuid();
 
 		const bool bConst = Reader.ReadBool();
+		bool bWrapper = false;
 		if (Reader.CustomVer(FReleaseObjectVersion::GUID) >= FReleaseObjectVersion::PinTypeIncludesUObjectWrapperFlag)
 		{
-			Reader.ReadBool();
+			bWrapper = Reader.ReadBool();
 		}
 
+		bool bSinglePrecision = false;
 		if (Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::SerializeFloatPinDefaultValuesAsSinglePrecision)
 		{
-			Reader.ReadBool();
+			bSinglePrecision = Reader.ReadBool();
 		}
 
 		FString Text = DescribeTypePart(Category, SubCategory, Object);
@@ -146,9 +150,21 @@ namespace
 		{
 			Text += TEXT(", weak");
 		}
+		if (bWrapper)
+		{
+			Text += TEXT(", object wrapper");
+		}
+		if (bSinglePrecision)
+		{
+			Text += TEXT(", single precision");
+		}
 		if (!MemberName.IsEmpty() && MemberName != TEXT("None"))
 		{
 			Text += FString::Printf(TEXT(", member %s%s"), MemberParent.IsEmpty() ? TEXT("") : *(MemberParent + TEXT(".")), *MemberName);
+		}
+		if (MemberGuid.IsValid())
+		{
+			Text += FString::Printf(TEXT(", member id %s"), *MemberGuid.ToString(EGuidFormats::Digits));
 		}
 
 		return Text;
