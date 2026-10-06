@@ -431,6 +431,16 @@ ASI.DecodeCoverage <Folder> [ReportFile]
 
 It writes a text report (default `Saved/AssetSerializationInspector/Coverage/DecoderCoverage.txt`) and a JSON file beside it. Engine content is mostly saved with unversioned properties (no tags), so run it on project content to find real gaps.
 
+### Decoder blind spots
+
+The coverage scan says what the decoder cannot read. `AssetDecoderBlindSpots` finds the opposite problem: values it reads but does not keep. For the top-level tagged properties that decode completely, it changes each byte of the value in turn (one bit, in its own copy of the document), decodes the property again and counts the bytes whose change left the decoded value exactly as it was. Such a byte could differ between two saves without the diff showing what changed. Bytes of a struct that no field accounts for (the tags that name and size each field) are not counted, because they describe the layout, not the content.
+
+```text
+ASI.DecodeBlindSpots <Folder> [ReportFile]
+```
+
+The report lists the types with blind bytes, the most first, with where they were seen (default `Saved/AssetSerializationInspector/Coverage/DecoderBlindSpots.txt`). Run on the 5,261 packages of the engine's content, the only structure that decoded to a constant text (a pin type, found this way) was already fixed; what remains is mostly the precision of floating point values, which are written with a few decimals.
+
 ### Slate UI
 
 `SAssetSerializationDiff` renders the structural diff, semantic values, Save Analysis, Repeated Save Analysis, old/new byte ranges, and side-by-side hex data. High-level analysis remains navigable back to the authoritative low-level diff.
