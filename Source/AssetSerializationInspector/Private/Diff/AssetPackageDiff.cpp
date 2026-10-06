@@ -16,6 +16,7 @@
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetStaticMeshData.h"
 #include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -1032,6 +1033,39 @@ namespace
 	}
 
 	/**
+	 * The collision, sockets and material slots of a static mesh, read on both sides. The geometry is not in the export: it is the
+	 * mesh description the source model refers to.
+	 */
+	bool AppendStaticMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetStaticMeshData OldData;
+		FAssetStaticMeshData NewData;
+		if (!AssetStaticMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetStaticMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "StaticMeshData", "Static mesh data");
+		AddNativeDataChildren(AssetStaticMeshData::Compare(OldData, NewData), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation = NSLOCTEXT(
+				"AssetPackageDiff", "StaticMeshRenumbered", "The collision, sockets and material slots are the same; the bytes differ because the objects they refer to are numbered differently.");
+		}
+
+		return true;
+	}
+
+	/**
 	 * The record of the source data of a texture, or of a mesh description, read on both sides. The data itself is not in the export,
 	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
 	 * identifier differ, nothing of the asset changed.
@@ -1070,7 +1104,8 @@ namespace
 	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
 		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
 	{
-		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry))
+		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
+			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
 		{
 			AppendBulkDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry);
 		}

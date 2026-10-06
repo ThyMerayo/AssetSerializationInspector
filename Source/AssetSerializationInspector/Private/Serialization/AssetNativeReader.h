@@ -24,6 +24,7 @@ public:
 	int64 Remaining() { return End - Reader.Tell(); }
 	int32 CustomVer(const FGuid& Key) const { return Reader.CustomVer(Key); }
 	bool UEVerAtLeast(const EUnrealEngineObjectUE5Version Version) const { return Reader.UEVer() >= Version; }
+	bool UEVerBelow(const EUnrealEngineObjectUE4Version UE4Version) const { return Reader.UEVer() < UE4Version; }
 	void Seek(const int64 Offset) { Reader.Seek(Offset); }
 
 	void Fail(const FString& Message)

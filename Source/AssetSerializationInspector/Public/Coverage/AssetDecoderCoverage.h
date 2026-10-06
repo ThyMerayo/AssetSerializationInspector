@@ -93,6 +93,11 @@ struct FAssetDecoderCoverageResult
 	int32 BulkDataExportsRead = 0;
 	TArray<FAssetDecoderCoverageIssue> BulkDataIssues;
 
+	/** The static meshes found, how many had their data after the properties read to the last byte, and why the others did not. */
+	int32 StaticMeshesScanned = 0;
+	int32 StaticMeshesRead = 0;
+	TArray<FAssetDecoderCoverageIssue> StaticMeshIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

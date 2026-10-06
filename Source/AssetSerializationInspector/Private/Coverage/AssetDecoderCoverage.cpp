@@ -15,6 +15,7 @@
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Serialization/AssetStaticMeshData.h"
 #include "Serialization/AssetStructNativeData.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -106,6 +107,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 	TMap<FString, FAssetDecoderCoverageIssue> GraphNodeIssues;
 	TMap<FString, FAssetDecoderCoverageIssue> BytecodeIssues;
 	TMap<FString, FAssetDecoderCoverageIssue> BulkDataIssues;
+	TMap<FString, FAssetDecoderCoverageIssue> StaticMeshIssues;
 
 	const TArray<FString> Files = AssetFolderComparison::FindPackageFiles(Folder);
 
@@ -236,6 +238,27 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 			}
 
+			// A static mesh writes its collision, sockets and material slots after its tagged properties.
+			FAssetStaticMeshData StaticMeshData;
+			if (LastNative != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, StaticMeshData))
+			{
+				++Result.StaticMeshesScanned;
+				if (StaticMeshData.bComplete)
+				{
+					++Result.StaticMeshesRead;
+				}
+				else
+				{
+					const FString Message = NormalizeMessage(StaticMeshData.Error);
+					FAssetDecoderCoverageIssue& Issue = StaticMeshIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+					Issue.TypeName = ExportClass;
+					Issue.Message = Message;
+					++Issue.Occurrences;
+					Issue.Bytes += LastNative->Size;
+					AddExample(Issue.Examples, RelativePath);
+				}
+			}
+
 			// A texture or a mesh description writes the record of its source data after its tagged properties.
 			FAssetBulkDataExport BulkData;
 			if (LastNative != nullptr && AssetBulkDataExport::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, BulkData))
@@ -311,6 +334,9 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 		}
 	}
 
+	StaticMeshIssues.GenerateValueArray(Result.StaticMeshIssues);
+	Result.StaticMeshIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+
 	BulkDataIssues.GenerateValueArray(Result.BulkDataIssues);
 	Result.BulkDataIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 
@@ -378,6 +404,17 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	{
 		const FAssetDecoderCoverageIssue& Issue = Result.Issues[Index];
 		Lines.Add(FString::Printf(TEXT("  %d assets, %d times, %lld bytes: %s"), Issue.AssetCount, Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
+		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+	}
+
+	Lines.Add(FString());
+	Lines.Add(FString::Printf(TEXT("Static meshes: %d found, %d read to their last byte; %d kinds that did not"), Result.StaticMeshesScanned, Result.StaticMeshesRead, Result.StaticMeshIssues.Num()));
+
+	for (int32 Index = 0; Index < Result.StaticMeshIssues.Num() && Index < MaximumRows; ++Index)
+	{
+		const FAssetDecoderCoverageIssue& Issue = Result.StaticMeshIssues[Index];
+		Lines.Add(FString::Printf(TEXT("  %d meshes, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
 		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
@@ -489,6 +526,23 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 		Writer->WriteObjectEnd();
 	}
 	Writer->WriteArrayEnd();
+
+	Writer->WriteObjectStart(TEXT("staticMeshes"));
+	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.StaticMeshesScanned));
+	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.StaticMeshesRead));
+	Writer->WriteArrayStart(TEXT("issues"));
+	for (const FAssetDecoderCoverageIssue& Issue : Result.StaticMeshIssues)
+	{
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("class"), Issue.TypeName);
+		Writer->WriteValue(TEXT("message"), Issue.Message);
+		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
+		WriteExamples(Issue.Examples);
+		Writer->WriteObjectEnd();
+	}
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("bulkDataExports"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.BulkDataExportsScanned));
