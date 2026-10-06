@@ -79,7 +79,7 @@ namespace
 		Entry.SemanticPath = FString::Printf(TEXT("Header/Summary/%s"), Key);
 		Entry.OldValue = OldValue;
 		Entry.NewValue = NewValue;
-		Entry.State = OldValue == NewValue ? EAssetPackageDiffState::Unchanged : EAssetPackageDiffState::Modified;
+		Entry.State = OldValue.Equals(NewValue, ESearchCase::CaseSensitive) ? EAssetPackageDiffState::Unchanged : EAssetPackageDiffState::Modified;
 		Out.Add(MoveTemp(Entry));
 	}
 

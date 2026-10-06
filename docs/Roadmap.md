@@ -66,7 +66,7 @@ Open items, in order:
 - [x] Scan for other natively stored structs that decode to a constant placeholder (`ASI.DecodeBlindSpots`; none left in the 5,261 engine packages after the pin type, but it found the items below)
 - [x] Show floating point values (floats, doubles, vectors, rotators, quaternions, boxes) with enough digits to tell two different values apart: a change smaller than the printed precision shows as a modified property with the same text on both sides
 - [x] The flags of a pin type that are not shown yet (the member reference's guid, the wrapper and single precision flags, a map's value type flags)
-- [ ] Look into the oddities of the scan: an array of `ResponseChannel` structs in one asset, a few bytes of a Name in three assets and a `ScalarProperty` in one
+- [x] Look into the oddities of the scan: the `ResponseChannel` array was the tag of an empty array counted as content, the Name bytes were a change of case that the diff could not see (fixed), and the `ScalarProperty` was float precision (fixed earlier)
 - [x] Tests for the type of variables that hold an object (struct or class) and for maps
 - [ ] Graph nodes whose class writes more than the pins (read them, or say what is left); formatted texts in pin display names and default values; a run over a large real graph
 - [ ] Disassemble the bytecode of functions instead of comparing its size and bytes

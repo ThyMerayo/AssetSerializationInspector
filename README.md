@@ -445,6 +445,10 @@ The report lists the types with blind bytes, the most first, with where they wer
 
 Floats, doubles and the vector, rotator, quaternion and box structs are written as the engine writes them (`1.000000`, `X=1.000 Y=2.000 Z=3.000`) whenever that text gives the value back exactly. When it does not (a float one bit away from 1, a location that moved by 0.0001), the number is written with the fewest digits that do (`1.0000001`, `X=100.0001 Y=2.000 Z=0.000`), and only the numbers that need it. Before this, a change smaller than the printed precision showed as a modified property with the same text on both sides.
 
+### Names and case
+
+Unreal compares names and strings without regard to case, and so does `FString` in C++, so a value that changed from `b` to `B` (or `Hello` to `hello`) used to be the same value to the inspector: inside a struct, an array, a set or a map it did not show in the diff. Decoded values, the keys of sets and maps, the Name Map, the header fields, the native data of classes and the repeated-save history are now compared with case, so a change of case is reported as a change.
+
 ### Slate UI
 
 `SAssetSerializationDiff` renders the structural diff, semantic values, Save Analysis, Repeated Save Analysis, old/new byte ranges, and side-by-side hex data. High-level analysis remains navigable back to the authoritative low-level diff.

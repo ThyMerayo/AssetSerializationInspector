@@ -390,6 +390,14 @@ bool FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange::RunTest(const
 		TestEqual(TEXT("The rename is not an addition"), Added, 0);
 		TestEqual(TEXT("And not a removal"), Removed, 0);
 		TestEqual(TEXT("It is one modification"), Modified, 1);
+
+		// The row of the modification shows what changed, without opening it: the old name and the new one.
+		const FAssetPackageDiffEntry* Renamed = Guids->Children.FindByPredicate([](const FAssetPackageDiffEntry& Child) { return Child.State == EAssetPackageDiffState::Modified; });
+		if (TestNotNull(TEXT("The modified entry is found"), Renamed))
+		{
+			TestEqual(TEXT("It shows the old name"), Renamed->OldValue, FString(TEXT("Beta")));
+			TestEqual(TEXT("And the new one"), Renamed->NewValue, FString(TEXT("Gamma")));
+		}
 	}
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(RenameFolder), false, true);
