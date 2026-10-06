@@ -14,6 +14,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Serialization/AssetStructNativeData.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -102,6 +103,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 	TMap<FString, FAssetDecoderCoverageIssue> Issues;
 	TMap<FString, FAssetNativeRegionStat> NativeRegions;
 	TMap<FString, FAssetDecoderCoverageIssue> GraphNodeIssues;
+	TMap<FString, FAssetDecoderCoverageIssue> BytecodeIssues;
 
 	const TArray<FString> Files = AssetFolderComparison::FindPackageFiles(Folder);
 
@@ -232,6 +234,29 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 			}
 
+			// A function writes its bytecode after its tagged properties: say whether it disassembled completely.
+			FAssetStructNativeData FunctionData;
+			if (LastNative != nullptr && AssetStructNativeData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, FunctionData)
+				&& FunctionData.BytecodeStorageSize > 0)
+			{
+				++Result.BytecodeFunctionsScanned;
+				if (FunctionData.Bytecode.bComplete)
+				{
+					++Result.BytecodeFunctionsRead;
+					Result.BytecodeStatementsRead += FunctionData.Bytecode.Statements.Num();
+				}
+				else
+				{
+					const FString Message = NormalizeMessage(FunctionData.Bytecode.Error);
+					FAssetDecoderCoverageIssue& Issue = BytecodeIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+					Issue.TypeName = ExportClass;
+					Issue.Message = Message;
+					++Issue.Occurrences;
+					Issue.Bytes += FunctionData.BytecodeStorageSize;
+					AddExample(Issue.Examples, RelativePath);
+				}
+			}
+
 			// A graph node writes its pins after its tagged properties: say whether they read to the last byte.
 			FAssetGraphNodePins NodePins;
 			if (LastNative != nullptr && AssetGraphNodePins::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, NodePins))
@@ -262,6 +287,9 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 			}
 		}
 	}
+
+	BytecodeIssues.GenerateValueArray(Result.BytecodeIssues);
+	Result.BytecodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 
 	GraphNodeIssues.GenerateValueArray(Result.GraphNodeIssues);
 	Result.GraphNodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
@@ -324,6 +352,18 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	{
 		const FAssetDecoderCoverageIssue& Issue = Result.Issues[Index];
 		Lines.Add(FString::Printf(TEXT("  %d assets, %d times, %lld bytes: %s"), Issue.AssetCount, Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
+		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+	}
+
+	Lines.Add(FString());
+	Lines.Add(FString::Printf(TEXT("Bytecode: %d functions found, %d disassembled completely (%lld statements); %d kinds that did not"), Result.BytecodeFunctionsScanned, Result.BytecodeFunctionsRead,
+		Result.BytecodeStatementsRead, Result.BytecodeIssues.Num()));
+
+	for (int32 Index = 0; Index < Result.BytecodeIssues.Num() && Index < MaximumRows; ++Index)
+	{
+		const FAssetDecoderCoverageIssue& Issue = Result.BytecodeIssues[Index];
+		Lines.Add(FString::Printf(TEXT("  %d functions, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
 		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
@@ -411,6 +451,24 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 		Writer->WriteObjectEnd();
 	}
 	Writer->WriteArrayEnd();
+
+	Writer->WriteObjectStart(TEXT("bytecode"));
+	Writer->WriteValue(TEXT("functions"), static_cast<int64>(Result.BytecodeFunctionsScanned));
+	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.BytecodeFunctionsRead));
+	Writer->WriteValue(TEXT("statementsRead"), Result.BytecodeStatementsRead);
+	Writer->WriteArrayStart(TEXT("issues"));
+	for (const FAssetDecoderCoverageIssue& Issue : Result.BytecodeIssues)
+	{
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("class"), Issue.TypeName);
+		Writer->WriteValue(TEXT("message"), Issue.Message);
+		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
+		WriteExamples(Issue.Examples);
+		Writer->WriteObjectEnd();
+	}
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("graphNodes"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.GraphNodesScanned));

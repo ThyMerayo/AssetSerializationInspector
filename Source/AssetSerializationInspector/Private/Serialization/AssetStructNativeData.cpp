@@ -506,8 +506,19 @@ TArray<FAssetNativeDataChange> AssetStructNativeData::Compare(
 		}
 	}
 
-	// The bytecode: its size, or how many of its bytes differ.
-	if (Old.BytecodeStorageSize != New.BytecodeStorageSize || Old.BytecodeSize != New.BytecodeSize)
+	// The bytecode: the statements that differ when both sides were read; otherwise its size, or how many of its bytes differ. When
+	// both were read and no statement differs, whatever else differs in the bytes is how the package numbers what the code refers to.
+	if (Old.Bytecode.bComplete && New.Bytecode.bComplete)
+	{
+		for (const AssetBytecode::FStatementChange& Hunk : AssetBytecode::Compare(Old.Bytecode, New.Bytecode))
+		{
+			const EChange State = Hunk.Removed.IsEmpty() ? EChange::Added : (Hunk.Added.IsEmpty() ? EChange::Removed : EChange::Modified);
+			AddChange(Changes, FString::Printf(TEXT("Bytecode/%d:%d"), Hunk.OldStart, Hunk.NewStart),
+				FString::Printf(TEXT("Bytecode, statement %d"), (Hunk.Added.IsEmpty() ? Hunk.OldStart : Hunk.NewStart) + 1), State, FString::Join(Hunk.Removed, TEXT("\n")),
+				FString::Join(Hunk.Added, TEXT("\n")));
+		}
+	}
+	else if (Old.BytecodeStorageSize != New.BytecodeStorageSize || Old.BytecodeSize != New.BytecodeSize)
 	{
 		AddChange(
 			Changes, TEXT("Bytecode"), TEXT("Bytecode"), EChange::Modified, FString::Printf(TEXT("%d bytes"), Old.BytecodeStorageSize), FString::Printf(TEXT("%d bytes"), New.BytecodeStorageSize));
@@ -597,6 +608,10 @@ bool AssetStructNativeData::Decode(const FAssetPackageDocument& Document, const 
 	if (Reader.Ok() && (Out.BytecodeStorageSize < 0 || Out.BytecodeStorageSize > Reader.Remaining()))
 	{
 		Reader.Fail(TEXT("The bytecode is longer than the data"));
+	}
+	if (Reader.Ok() && Out.BytecodeStorageSize > 0)
+	{
+		AssetBytecode::Disassemble(Document, Out.BytecodeOffset, Out.BytecodeStorageSize, Out.BytecodeSize, Out.Bytecode);
 	}
 	Reader.Skip(Out.BytecodeStorageSize);
 
