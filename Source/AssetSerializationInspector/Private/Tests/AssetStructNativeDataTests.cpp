@@ -23,6 +23,7 @@
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
+#include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -103,7 +104,7 @@ namespace StructNativeDataTestUtils
 	{
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
-		const FString File = FPackageName::LongPackageNameToFilename(BlueprintPackage, FPackageName::GetAssetPackageExtension());
+		const FString File = FPackageName::LongPackageNameToFilename(Blueprint->GetPackage()->GetName(), FPackageName::GetAssetPackageExtension());
 		FSavePackageArgs SaveArgs;
 		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 		SaveArgs.SaveFlags = SAVE_NoError;
@@ -170,7 +171,7 @@ bool FAssetStructNativeData_ExplainsAnAddedAndARemovedVariable::RunTest(const FS
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(BlueprintFolder), false, true);
 
-	UPackage* Package = CreatePackage(BlueprintPackage);
+	UPackage* Package = CreatePackage(*AssetTestPackages::Unique(BlueprintPackage));
 	UBlueprint* Blueprint =
 		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_ClassData"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
 	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))

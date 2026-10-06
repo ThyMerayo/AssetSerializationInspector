@@ -34,7 +34,7 @@ user-facing overview and `docs/Roadmap.md` for what has landed and what is still
 - The plugin is built inside a host project (any project that loads it, with the plugin linked or copied into its `Plugins`
   folder) and an engine built from source. `Scripts/RunAutomationTests.ps1 -EngineRoot <engine> -HostProject <.uproject>
   [-LinkPlugin]` builds, runs every test with `UnrealEditor-Cmd`, runs the widget tests with the full editor, and fails on a
-  failed test, an unfinished queue or no tests. Run it before opening a PR. There is no CI: the tests need an engine built
+  failed test, an unfinished queue or no tests. It goes through the tests twice in one editor session (`-Loops`): a test must not leave anything in memory that makes its second run fail, so give every package a test creates a name of its own (`AssetTestPackages::Unique`). Run it before opening a PR. There is no CI: the tests need an engine built
   from source and a self-hosted runner on a public repository would run fork code.
 - Close any running editor first: it locks the plugin's DLL (LNK1104). A leftover `UnrealEditor-Cmd.exe` does too.
 - **Widget (Slate) tests are skipped under `UnrealEditor-Cmd`** (Slate is not initialized): they must also run with

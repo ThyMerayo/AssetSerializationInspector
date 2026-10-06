@@ -287,7 +287,7 @@ The plugin's automation tests run with `Scripts\RunAutomationTests.ps1`, which b
 .\Scripts\RunAutomationTests.ps1 -EngineRoot D:\dev\UnrealEngine -HostProject D:\dev\ASIHost\ASIHost.uproject -LinkPlugin
 ```
 
-`-LinkPlugin` links this repository into the host project's `Plugins` folder for the run (a junction, removed afterwards); without it the plugin must already be there. The logs are copied to `Saved\AutomationLogs`. Close the editor first: an open editor locks the plugin's DLL.
+`-LinkPlugin` links this repository into the host project's `Plugins` folder for the run (a junction, removed afterwards); without it the plugin must already be there. Each editor run goes through its tests twice in one editor session (`-Loops`, default 2): a test that leaves an object behind in memory, such as a Blueprint created in a package of a fixed name, passes the first time and is an assertion the second, which is how a second run of the tests in an open editor crashes it. The logs are copied to `Saved\AutomationLogs`. Close the editor first: an open editor locks the plugin's DLL.
 
 There is no CI for the tests: they need an Unreal Engine built from source, which GitHub's hosted runners cannot provide, and a self-hosted runner on a public repository would run the code of any fork's pull request on its machine. Run the script before opening a pull request.
 
