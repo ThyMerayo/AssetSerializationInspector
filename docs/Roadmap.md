@@ -64,7 +64,7 @@ Open items, in order:
 
 - [x] A hint for a Name property whose value only changed because its index in the Name Map shifted (a Name is stored as an index, so a new name before it changes the bytes)
 - [x] Scan for other natively stored structs that decode to a constant placeholder (`ASI.DecodeBlindSpots`; none left in the 5,261 engine packages after the pin type, but it found the items below)
-- [ ] Show floating point values (floats, doubles, vectors, rotators, quaternions, boxes) with enough digits to tell two different values apart: a change smaller than the printed precision shows as a modified property with the same text on both sides
+- [x] Show floating point values (floats, doubles, vectors, rotators, quaternions, boxes) with enough digits to tell two different values apart: a change smaller than the printed precision shows as a modified property with the same text on both sides
 - [ ] The flags of a pin type that are not shown yet (the member reference's guid, the wrapper and single precision flags, a map's value type flags)
 - [ ] Look into the oddities of the scan: an array of `ResponseChannel` structs in one asset, a few bytes of a Name in three assets and a `ScalarProperty` in one
 - [ ] Tests for the type of variables that hold an object (struct or class) and for maps
