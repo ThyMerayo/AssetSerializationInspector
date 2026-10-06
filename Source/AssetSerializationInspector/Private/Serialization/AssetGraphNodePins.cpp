@@ -4,6 +4,7 @@
 
 #include "EdGraph/EdGraphNode.h"
 #include "UObject/BlueprintsObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "UObject/ReleaseObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -251,6 +252,18 @@ namespace
 		}
 	}
 
+	bool IsClassNamed(const UClass* Class, const TCHAR* Name)
+	{
+		for (; Class != nullptr; Class = Class->GetSuperClass())
+		{
+			if (Class->GetFName() == Name)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Whether a class is a node that declares pins of its own: an event, a function entry or result, a custom event. */
 	bool DeclaresPins(const UClass* Class)
 	{
@@ -453,6 +466,14 @@ bool AssetGraphNodePins::Decode(const FAssetPackageDocument& Document, const FAs
 		ReadUserPins(Reader, Out);
 	}
 
+	// A cast node writes whether it is pure (EPureState) once the package is new enough to have it.
+	if (Reader.Ok() && IsClassNamed(NativeClass, TEXT("K2Node_DynamicCast"))
+		&& Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::DynamicCastNodesUsePureStateEnum)
+	{
+		const uint8 PureState = Reader.Read<uint8>();
+		Out.Extras.Emplace(TEXT("Purity"), PureState == 0 ? TEXT("pure") : (PureState == 1 ? TEXT("impure") : TEXT("default")));
+	}
+
 	if (!Reader.Ok())
 	{
 		Out.Error = Reader.GetError();
@@ -603,6 +624,23 @@ TArray<FAssetNativeDataChange> AssetGraphNodePins::Compare(const FAssetGraphNode
 			Change.State = FAssetNativeDataChange::EState::Removed;
 			Change.OldValue = DescribeDeclared(Pin);
 		}
+	}
+
+	// What the class of the node writes besides its pins, matched by name.
+	for (const TPair<FString, FString>& Extra : New.Extras)
+	{
+		const TPair<FString, FString>* Before = Old.Extras.FindByPredicate([&Extra](const TPair<FString, FString>& Candidate) { return Candidate.Key == Extra.Key; });
+		if (Before != nullptr && Before->Value.Equals(Extra.Value, ESearchCase::CaseSensitive))
+		{
+			continue;
+		}
+
+		FAssetNativeDataChange& Change = Changes.AddDefaulted_GetRef();
+		Change.Key = FString::Printf(TEXT("NodeData/%s"), *Extra.Key);
+		Change.Title = Extra.Key;
+		Change.State = Before == nullptr ? FAssetNativeDataChange::EState::Added : FAssetNativeDataChange::EState::Modified;
+		Change.OldValue = Before != nullptr ? Before->Value : FString();
+		Change.NewValue = Extra.Value;
 	}
 
 	// The same pins in another order (a node that lists its pins differently).

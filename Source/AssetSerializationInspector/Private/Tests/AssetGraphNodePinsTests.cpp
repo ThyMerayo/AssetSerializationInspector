@@ -14,6 +14,7 @@
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 
+#include "Coverage/AssetDecoderCoverage.h"
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
@@ -335,6 +336,115 @@ bool FAssetGraphNodePins_ExplainsAConnectionAndADefaultValue::RunTest(const FStr
 	}
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(GraphFolder), false, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGraphNodePins_ReadsAFormattedTextOnAPin, "AssetSerializationInspector.Serialization.AssetGraphNodePins.ReadsAFormattedTextOnAPin",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetGraphNodePins_ReadsAFormattedTextOnAPin::RunTest(const FString& Parameters)
+{
+	using namespace GraphPinsTestUtils;
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(GraphFolder), false, true);
+
+	// A text with arguments is a "formatted" history, which a pin's default text can hold (the format of a Print String, for one).
+	FTestGraph Test;
+	Test.In->DefaultTextValue = FText::FormatNamed(INVTEXT("Hello {Name}"), TEXT("Name"), FText::FromString(TEXT("World")));
+	Test.In->PinFriendlyName = FText::FormatOrdered(INVTEXT("Value {0}"), FText::AsNumber(7));
+	const FString File = Test.Save();
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(File, Error);
+	if (!TestTrue(TEXT("The graph is written and loads"), !File.IsEmpty() && Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+	const FAssetPackageExportEntry* TargetExport = FindExport(*Document, TEXT("TargetNode"));
+	FAssetGraphNodePins Target;
+	if (TestNotNull(TEXT("The target node is exported"), TargetExport) && TestTrue(TEXT("Its pins are read"), DecodePins(*Document, *Traces, *TargetExport, Target)))
+	{
+		TestTrue(*FString::Printf(TEXT("To the last byte, with both texts read (%s)"), *Target.Error), Target.bComplete);
+		if (TestEqual(TEXT("It has its pin"), Target.Pins.Num(), 1))
+		{
+			TestTrue(TEXT("The default text keeps its format"), Target.Pins[0].DefaultText.Contains(TEXT("Hello")));
+			TestTrue(TEXT("So does the display name"), Target.Pins[0].FriendlyName.Contains(TEXT("Value")));
+		}
+	}
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(GraphFolder), false, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGraphNodePins_ReadsTheNodesOfTheEngineContent, "AssetSerializationInspector.Serialization.AssetGraphNodePins.ReadsTheNodesOfTheEngineContent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetGraphNodePins_ReadsTheNodesOfTheEngineContent::RunTest(const FString& Parameters)
+{
+	using namespace GraphPinsTestUtils;
+
+	// The sequencer's burn-in Blueprint has cast nodes, which write whether they are pure after their pins.
+	const FString File = FPaths::Combine(FPaths::EngineContentDir(), TEXT("Sequencer"), TEXT("DefaultBurnIn.uasset"));
+	if (!IFileManager::Get().FileExists(*File))
+	{
+		AddInfo(TEXT("The engine's burn-in Blueprint is not in this engine, so there is nothing to read."));
+		return true;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(File, Error);
+	if (!TestTrue(TEXT("The Blueprint loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+
+	int32 Nodes = 0;
+	int32 Casts = 0;
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		FAssetGraphNodePins Data;
+		if (!DecodePins(*Document, *Traces, Export, Data))
+		{
+			continue;
+		}
+
+		++Nodes;
+		TestTrue(FString::Printf(TEXT("%s is read to its last byte (%s)"), *Document->ResolveExportPath(Export.Index), *Data.Error), Data.bComplete);
+
+		for (const TPair<FString, FString>& Extra : Data.Extras)
+		{
+			Casts += Extra.Key == TEXT("Purity") ? 1 : 0;
+		}
+	}
+
+	TestTrue(TEXT("There are graph nodes to read"), Nodes > 0);
+	TestTrue(TEXT("And cast nodes, with the purity they write"), Casts > 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGraphNodePins_IsCountedByTheCoverageScan, "AssetSerializationInspector.Coverage.AssetDecoderCoverage.CountsTheGraphNodes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetGraphNodePins_IsCountedByTheCoverageScan::RunTest(const FString& Parameters)
+{
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	const FString Folder = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("TestFixtures"));
+	const FAssetDecoderCoverageResult Result = AssetDecoderCoverage::Run(Folder, [](int32, int32, const FString&) { return true; });
+
+	TestTrue(TEXT("The fixture Blueprints have graph nodes"), Result.GraphNodesScanned > 0);
+	TestEqual(TEXT("Every one is read to its last byte"), Result.GraphNodesRead, Result.GraphNodesScanned);
+	TestTrue(TEXT("So there is nothing to report"), Result.GraphNodeIssues.IsEmpty());
+	TestTrue(TEXT("Their pins are counted"), Result.GraphPinsRead > 0);
+	TestTrue(TEXT("The text report has the section"), AssetDecoderCoverage::ToText(Result).Contains(TEXT("Graph nodes:")));
 	return true;
 }
 

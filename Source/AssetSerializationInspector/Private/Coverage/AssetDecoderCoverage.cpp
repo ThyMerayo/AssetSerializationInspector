@@ -12,6 +12,7 @@
 #include "Compare/AssetFolderComparison.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -100,6 +101,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 
 	TMap<FString, FAssetDecoderCoverageIssue> Issues;
 	TMap<FString, FAssetNativeRegionStat> NativeRegions;
+	TMap<FString, FAssetDecoderCoverageIssue> GraphNodeIssues;
 
 	const TArray<FString> Files = AssetFolderComparison::FindPackageFiles(Folder);
 
@@ -139,6 +141,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 		const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
 		TSet<FString> IssuesInAsset;
 		TSet<FString> NativeInAsset;
+		TSet<FString> GraphNodesInAsset;
 
 		for (const FAssetPackageExportEntry& Export : Document->ExportMap)
 		{
@@ -151,6 +154,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 
 			++Result.ExportsScanned;
 			const FString ExportClass = ShortClassName(*Document, Export);
+			const FAssetSerializationTraceNode* LastNative = nullptr;
 
 			for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
 			{
@@ -161,6 +165,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 
 				if (Node->Kind == EAssetSerializationTraceKind::Native)
 				{
+					LastNative = Node.Get();
 					Result.NativeBytes += Node->Size;
 
 					const FString Reason = NormalizeMessage(Node->TypeName);
@@ -226,8 +231,40 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 					}
 				}
 			}
+
+			// A graph node writes its pins after its tagged properties: say whether they read to the last byte.
+			FAssetGraphNodePins NodePins;
+			if (LastNative != nullptr && AssetGraphNodePins::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, NodePins))
+			{
+				++Result.GraphNodesScanned;
+				if (NodePins.bComplete)
+				{
+					++Result.GraphNodesRead;
+					Result.GraphPinsRead += NodePins.Pins.Num();
+				}
+				else
+				{
+					const FString Message = NormalizeMessage(NodePins.Error);
+					FAssetDecoderCoverageIssue& Issue = GraphNodeIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+					Issue.TypeName = ExportClass;
+					Issue.Message = Message;
+					++Issue.Occurrences;
+					Issue.Bytes += LastNative->Size;
+					AddExample(Issue.Examples, RelativePath);
+
+					const FString NodeKey = CoverageKey(ExportClass, Message);
+					if (!GraphNodesInAsset.Contains(NodeKey))
+					{
+						GraphNodesInAsset.Add(NodeKey);
+						++Issue.AssetCount;
+					}
+				}
+			}
 		}
 	}
+
+	GraphNodeIssues.GenerateValueArray(Result.GraphNodeIssues);
+	Result.GraphNodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 
 	Issues.GenerateValueArray(Result.Issues);
 	Result.Issues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) {
@@ -287,6 +324,18 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	{
 		const FAssetDecoderCoverageIssue& Issue = Result.Issues[Index];
 		Lines.Add(FString::Printf(TEXT("  %d assets, %d times, %lld bytes: %s"), Issue.AssetCount, Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
+		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+	}
+
+	Lines.Add(FString());
+	Lines.Add(FString::Printf(TEXT("Graph nodes: %d found, %d read to their last byte (%lld pins); %d kinds that did not"), Result.GraphNodesScanned, Result.GraphNodesRead, Result.GraphPinsRead,
+		Result.GraphNodeIssues.Num()));
+
+	for (int32 Index = 0; Index < Result.GraphNodeIssues.Num() && Index < MaximumRows; ++Index)
+	{
+		const FAssetDecoderCoverageIssue& Issue = Result.GraphNodeIssues[Index];
+		Lines.Add(FString::Printf(TEXT("  %d nodes in %d assets: %s"), Issue.Occurrences, Issue.AssetCount, *Issue.TypeName));
 		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
@@ -362,6 +411,24 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 		Writer->WriteObjectEnd();
 	}
 	Writer->WriteArrayEnd();
+
+	Writer->WriteObjectStart(TEXT("graphNodes"));
+	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.GraphNodesScanned));
+	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.GraphNodesRead));
+	Writer->WriteValue(TEXT("pinsRead"), Result.GraphPinsRead);
+	Writer->WriteArrayStart(TEXT("issues"));
+	for (const FAssetDecoderCoverageIssue& Issue : Result.GraphNodeIssues)
+	{
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("class"), Issue.TypeName);
+		Writer->WriteValue(TEXT("message"), Issue.Message);
+		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+		Writer->WriteValue(TEXT("assets"), static_cast<int64>(Issue.AssetCount));
+		WriteExamples(Issue.Examples);
+		Writer->WriteObjectEnd();
+	}
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
 
 	Writer->WriteArrayStart(TEXT("nativeRegions"));
 	for (const FAssetNativeRegionStat& Stat : Result.NativeRegions)
