@@ -34,11 +34,11 @@ namespace VariableTypeTestUtils
 	}
 
 	/** Saves the Blueprint and keeps a copy of the file under another name, which the next save would overwrite. */
-	static FString SaveCopy(UBlueprint* Blueprint, const TCHAR* Extension)
+	static FString SaveCopy(UBlueprint* Blueprint, const TCHAR* Extension, const TCHAR* PackageName = BlueprintPackage)
 	{
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
-		const FString File = FPackageName::LongPackageNameToFilename(BlueprintPackage, FPackageName::GetAssetPackageExtension());
+		const FString File = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
 		FSavePackageArgs SaveArgs;
 		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 		SaveArgs.SaveFlags = SAVE_NoError;
@@ -181,6 +181,151 @@ bool FAssetBlueprintVariableType_ShowsTheTypeThatChanged::RunTest(const FString&
 	}
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(BlueprintFolder), false, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags, "AssetSerializationInspector.Serialization.AssetBlueprintVariableType.DescribesObjectsMapsAndFlags",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags::RunTest(const FString& Parameters)
+{
+	using namespace VariableTypeTestUtils;
+
+	static const TCHAR* const FlagsPackage = TEXT("/Game/__AssetSerializationInspectorTests/VariableFlags/BP_VariableFlags");
+	static const TCHAR* const FlagsFolder = TEXT("/Game/__AssetSerializationInspectorTests/VariableFlags");
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(FlagsFolder), false, true);
+
+	// Changing the type of a variable of a compiled Blueprint makes the engine warn that the old value had another type.
+	AddExpectedMessage(TEXT("Type mismatch in"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+
+	UPackage* Package = CreatePackage(FlagsPackage);
+	UBlueprint* Blueprint =
+		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_VariableFlags"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))
+	{
+		return false;
+	}
+
+	const auto ObjectType = [](UClass* Class) {
+		FEdGraphPinType Type = MakeType(TEXT("object"));
+		Type.PinSubCategoryObject = Class;
+		return Type;
+	};
+	const auto ClassType = [](UClass* Class, const bool bWrapper) {
+		FEdGraphPinType Type = MakeType(TEXT("class"));
+		Type.PinSubCategoryObject = Class;
+		Type.bIsUObjectWrapper = bWrapper;
+		return Type;
+	};
+	const auto RealType = [](const bool bSinglePrecision) {
+		FEdGraphPinType Type = MakeType(TEXT("real"));
+		Type.PinSubCategory = bSinglePrecision ? TEXT("float") : TEXT("double");
+		Type.bSerializeAsSinglePrecisionFloat = bSinglePrecision;
+		return Type;
+	};
+	const auto MapType = [](const TCHAR* ValueCategory) {
+		FEdGraphPinType Type = MakeType(TEXT("name"), EPinContainerType::Map);
+		Type.PinValueType.TerminalCategory = ValueCategory;
+		return Type;
+	};
+
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Object"), ObjectType(AActor::StaticClass()));
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Wrapped"), ClassType(AActor::StaticClass(), false));
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Number"), RealType(false));
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Table"), MapType(TEXT("int")));
+	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"), FlagsPackage);
+
+	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Object"), ObjectType(APawn::StaticClass()));
+	// The engine compares pin types without the wrapper flag, so ChangeMemberVariableType would see no change: set it on the variable.
+	for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+	{
+		if (Variable.VarName == TEXT("Wrapped"))
+		{
+			Variable.VarType.bIsUObjectWrapper = true;
+		}
+	}
+	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Number"), RealType(true));
+	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Table"), MapType(TEXT("string")));
+	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"), FlagsPackage);
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(Before, Error);
+	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(After, Error);
+	if (!TestTrue(TEXT("Both versions are written and load"), OldDocument.IsValid() && NewDocument.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> OldTraces = FAssetPackageFieldDecoder::Decode(*OldDocument);
+	const TSharedPtr<FAssetPackageTraceCollection> NewTraces = FAssetPackageFieldDecoder::Decode(*NewDocument);
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*OldDocument, *NewDocument, OldTraces.Get(), NewTraces.Get());
+
+	// The variables are in the order they were added: element [0] is Object, [1] Wrapped, [2] Number and [3] Table.
+	const FAssetPackageDiffEntry* Variables = FindVariables(Diff);
+	if (!TestNotNull(TEXT("The variables are in the diff"), Variables))
+	{
+		return false;
+	}
+
+	const auto TypeOf = [Variables](const TCHAR* Element) -> const FAssetPackageDiffEntry* {
+		for (const FAssetPackageDiffEntry& Candidate : Variables->Children)
+		{
+			if (Candidate.DisplayName.ToString() == Element)
+			{
+				for (const FAssetPackageDiffEntry& Field : Candidate.Children)
+				{
+					if (Field.DisplayName.ToString() == TEXT("VarType"))
+					{
+						return &Field;
+					}
+				}
+			}
+		}
+		return nullptr;
+	};
+
+	if (const FAssetPackageDiffEntry* Type = TypeOf(TEXT("[0]")))
+	{
+		TestEqual(TEXT("An object type names its class"), Type->OldValue, FString(TEXT("object (/Script/Engine.Actor)")));
+		TestEqual(TEXT("And the class it changed to"), Type->NewValue, FString(TEXT("object (/Script/Engine.Pawn)")));
+	}
+	else
+	{
+		AddError(TEXT("The object variable is not in the diff"));
+	}
+
+	if (const FAssetPackageDiffEntry* Type = TypeOf(TEXT("[1]")))
+	{
+		TestFalse(TEXT("A class type that is not a wrapper says nothing of it"), Type->OldValue.Contains(TEXT("wrapper")));
+		TestTrue(TEXT("A class type that became a wrapper says so"), Type->NewValue.Contains(TEXT("object wrapper")));
+	}
+	else
+	{
+		AddError(TEXT("The class variable is not in the diff"));
+	}
+
+	if (const FAssetPackageDiffEntry* Type = TypeOf(TEXT("[2]")))
+	{
+		TestFalse(TEXT("A real that is not single precision says nothing of it"), Type->OldValue.Contains(TEXT("single precision")));
+		TestTrue(TEXT("A real stored as single precision says so"), Type->NewValue.Contains(TEXT("single precision")));
+	}
+	else
+	{
+		AddError(TEXT("The real variable is not in the diff"));
+	}
+
+	if (const FAssetPackageDiffEntry* Type = TypeOf(TEXT("[3]")))
+	{
+		TestEqual(TEXT("A map names the keys and the values"), Type->OldValue, FString(TEXT("map of name to int")));
+		TestEqual(TEXT("And what the values changed to"), Type->NewValue, FString(TEXT("map of name to string")));
+	}
+	else
+	{
+		AddError(TEXT("The map variable is not in the diff"));
+	}
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(FlagsFolder), false, true);
 	return true;
 }
 
