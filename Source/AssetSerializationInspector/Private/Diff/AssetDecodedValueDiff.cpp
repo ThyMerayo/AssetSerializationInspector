@@ -526,8 +526,10 @@ static void PairRenamedMapKeys(TArray<FAssetDecodedValueDiff>& Children)
 		KeyDiff.NewOffset = NewEntry.Children[0].NewOffset;
 		KeyDiff.NewSize = NewEntry.Children[0].NewSize;
 
+		// The row of the entry says what changed: the key, from the old name to the new one.
 		NewEntry.State = EAssetDecodedValueDiffState::Modified;
-		NewEntry.OldValue = Removed.OldValue;
+		NewEntry.OldValue = KeyDiff.OldValue;
+		NewEntry.NewValue = KeyDiff.NewValue;
 		NewEntry.bHasOldValue = true;
 		NewEntry.OldOffset = Removed.OldOffset;
 		NewEntry.OldSize = Removed.OldSize;

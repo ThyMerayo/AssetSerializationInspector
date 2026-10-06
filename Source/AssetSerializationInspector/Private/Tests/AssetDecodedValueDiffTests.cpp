@@ -298,6 +298,8 @@ bool FAssetDecodedValueDiff_PairsARenamedKeyByItsGuid::RunTest(const FString& Pa
 		if (TestEqual(TEXT("One entry is modified"), CountState(Diff, EAssetDecodedValueDiffState::Modified), 1))
 		{
 			const FAssetDecodedValueDiff* Renamed = Diff.Children.FindByPredicate([](const FAssetDecodedValueDiff& Child) { return Child.State == EAssetDecodedValueDiffState::Modified; });
+			TestEqual(TEXT("Its row shows the old key"), Renamed->OldValue, FString(TEXT("Speed")));
+			TestEqual(TEXT("And the new one"), Renamed->NewValue, FString(TEXT("Velocity")));
 			if (TestEqual(TEXT("It says what changed: the key"), Renamed->Children.Num(), 1))
 			{
 				TestEqual(TEXT("From the old name"), Renamed->Children[0].OldValue, FString(TEXT("Speed")));
