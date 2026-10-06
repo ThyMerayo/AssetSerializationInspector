@@ -457,6 +457,93 @@ static FDecodedMapEntryMap BuildMapEntryMap(const FAssetDecodedPropertyValue& Ma
 	return Result;
 }
 
+/** The id a map entry holds as its value, when the value is a GUID: what the entry stands for when its key is renamed. Empty otherwise. */
+static FString GetEntryGuid(const FAssetDecodedValueDiff& Entry, const bool bOld)
+{
+	if (Entry.Children.Num() < 2 || !Entry.Children[1].TypeName.StartsWith(TEXT("StructProperty(Guid")))
+	{
+		return FString();
+	}
+
+	const FString& Text = bOld ? Entry.Children[1].OldValue : Entry.Children[1].NewValue;
+	return Text.Replace(TEXT("0"), TEXT("")).Replace(TEXT("-"), TEXT("")).IsEmpty() ? FString() : Text;
+}
+
+/**
+ * A map whose values are GUIDs names things by their key and identifies them by the GUID (the property GUIDs of a Blueprint, keyed by
+ * the name of the variable). An entry that went away and an entry that came with the same GUID are the same thing under another key:
+ * report it as the key being modified instead of a removal and an addition. Only a GUID that is on one removed and one added entry is
+ * paired, so nothing is matched by guesswork.
+ */
+static void PairRenamedMapKeys(TArray<FAssetDecodedValueDiff>& Children)
+{
+	TMap<FString, TArray<int32>> RemovedByGuid;
+	TMap<FString, TArray<int32>> AddedByGuid;
+
+	for (int32 Index = 0; Index < Children.Num(); ++Index)
+	{
+		const FAssetDecodedValueDiff& Child = Children[Index];
+		if (Child.State == EAssetDecodedValueDiffState::Removed)
+		{
+			const FString Guid = GetEntryGuid(Child, true);
+			if (!Guid.IsEmpty())
+			{
+				RemovedByGuid.FindOrAdd(Guid).Add(Index);
+			}
+		}
+		else if (Child.State == EAssetDecodedValueDiffState::Added)
+		{
+			const FString Guid = GetEntryGuid(Child, false);
+			if (!Guid.IsEmpty())
+			{
+				AddedByGuid.FindOrAdd(Guid).Add(Index);
+			}
+		}
+	}
+
+	TArray<int32> Dropped;
+	for (const TPair<FString, TArray<int32>>& Pair : RemovedByGuid)
+	{
+		const TArray<int32>* Added = AddedByGuid.Find(Pair.Key);
+		if (Added == nullptr || Added->Num() != 1 || Pair.Value.Num() != 1)
+		{
+			continue;
+		}
+
+		const FAssetDecodedValueDiff& Removed = Children[Pair.Value[0]];
+		FAssetDecodedValueDiff& NewEntry = Children[(*Added)[0]];
+
+		FAssetDecodedValueDiff KeyDiff;
+		KeyDiff.State = EAssetDecodedValueDiffState::Modified;
+		KeyDiff.Name = !NewEntry.Children[0].Name.IsEmpty() ? NewEntry.Children[0].Name : Removed.Children[0].Name;
+		KeyDiff.TypeName = NewEntry.Children[0].TypeName;
+		KeyDiff.OldValue = Removed.Children[0].OldValue;
+		KeyDiff.NewValue = NewEntry.Children[0].NewValue;
+		KeyDiff.bHasOldValue = true;
+		KeyDiff.bHasNewValue = true;
+		KeyDiff.OldOffset = Removed.Children[0].OldOffset;
+		KeyDiff.OldSize = Removed.Children[0].OldSize;
+		KeyDiff.NewOffset = NewEntry.Children[0].NewOffset;
+		KeyDiff.NewSize = NewEntry.Children[0].NewSize;
+
+		NewEntry.State = EAssetDecodedValueDiffState::Modified;
+		NewEntry.OldValue = Removed.OldValue;
+		NewEntry.bHasOldValue = true;
+		NewEntry.OldOffset = Removed.OldOffset;
+		NewEntry.OldSize = Removed.OldSize;
+		NewEntry.Children.Reset();
+		NewEntry.Children.Add(MoveTemp(KeyDiff));
+
+		Dropped.Add(Pair.Value[0]);
+	}
+
+	Dropped.Sort(TGreater<int32>());
+	for (const int32 Index : Dropped)
+	{
+		Children.RemoveAt(Index);
+	}
+}
+
 static void CompareMapChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
 {
 	const FDecodedMapEntryMap OldEntries = BuildFullMap(OldValue);
@@ -503,6 +590,8 @@ static void CompareMapChildren(const FAssetDecodedPropertyValue& OldValue, const
 		Diff.Name = FString::Printf(TEXT("[%s]"), *Key);
 		OutDiff.Children.Add(MoveTemp(Diff));
 	}
+
+	PairRenamedMapKeys(OutDiff.Children);
 }
 
 static void CompareChildren(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue, FAssetDecodedValueDiff& OutDiff)
@@ -679,7 +768,12 @@ FAssetDecodedValueDiff FAssetDecodedValueDiffer::Compare(const FAssetDecodedProp
 	const bool bLeafChanged = !AreLeafValuesEqual(*OldValue, *NewValue);
 	bool bChildChanged = false;
 
-	CollapseArrayReplacements(Result.Children);
+	// An element of an array that was replaced by another is one modification. Entries of a map or a set are identified by their key
+	// or value, in no order, so an entry that went and one that came are not the same entry because they happen to be next to each other.
+	if (OldValue->Kind == EAssetDecodedValueKind::Array && NewValue->Kind == EAssetDecodedValueKind::Array)
+	{
+		CollapseArrayReplacements(Result.Children);
+	}
 
 	for (const FAssetDecodedValueDiff& Child : Result.Children)
 	{

@@ -588,6 +588,8 @@ The two Name Maps are compared by name, not place by place: a new name shifts ev
 
 A Name property is stored as its place in the Name Map, so adding a variable (and with it a name) can change the bytes of a Name property that holds the same name as before. The property is still reported as modified, because its bytes did change, but the diff now says why: *The value is the same. A name is stored as its place in the Name Map, and it moved because names were added or removed before it: "NewVar" from Name[11] to Name[12]*. The hint covers names inside structs, arrays and other containers, and shows the first three names that moved.
 
+A map whose values are GUIDs (a Blueprint's `PropertyGuids`: the name of each variable and the GUID that identifies it) is compared by GUID as well as by key. Renaming a variable keeps its GUID and changes its key, so the entry that went and the entry that came, with the same non-zero GUID on one of each, are shown as one modification of the key (`Beta` to `Gamma`), not as a removal and an addition. A GUID that is not on exactly one removed and one added entry is not matched, and the entries of a map or a set that merely sit next to each other are no longer merged into a replacement (that is only done for arrays).
+
 ### Comparing two assets
 
 Open the Asset Serialization Diff window and select:
