@@ -115,4 +115,39 @@ bool FAssetNameMapDiff_ComparesNamesNotPlaces::RunTest(const FString& Parameters
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FAssetNameMapDiff_TellsNamesApartByCase, "AssetSerializationInspector.Diff.AssetPackageDiff.TellsNamesApartByCase", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetNameMapDiff_TellsNamesApartByCase::RunTest(const FString& Parameters)
+{
+	using namespace NameMapDiffTestUtils;
+
+	// A name that changed only in case is another name: the old one went away and the new one was added.
+	const FAssetPackageDocument Old = MakeDocument({ TEXT("None"), TEXT("b") }, 1);
+	const FAssetPackageDocument New = MakeDocument({ TEXT("None"), TEXT("B") }, 2);
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(Old, New);
+
+	if (const FAssetPackageDiffEntry* NameMap = FindNameMap(Diff))
+	{
+		TestEqual(TEXT("The new spelling is added"), Count(*NameMap, EAssetPackageDiffState::Added), 1);
+		TestEqual(TEXT("The old spelling is removed"), Count(*NameMap, EAssetPackageDiffState::Removed), 1);
+	}
+	else
+	{
+		AddError(TEXT("The name map is not in the diff"));
+	}
+
+	// Both spellings in one map are two names, and each finds its own on the other side.
+	const FAssetPackageDocument Both = MakeDocument({ TEXT("None"), TEXT("B"), TEXT("b") }, 1);
+	const FAssetPackageDocument BothAgain = MakeDocument({ TEXT("None"), TEXT("b"), TEXT("B") }, 2);
+	const FAssetPackageDiffResult Swapped = AssetPackageDiff::Compare(Both, BothAgain);
+	if (const FAssetPackageDiffEntry* NameMap = FindNameMap(Swapped))
+	{
+		TestEqual(TEXT("Nothing was added when the two spellings only swapped places"), Count(*NameMap, EAssetPackageDiffState::Added), 0);
+		TestEqual(TEXT("And nothing was removed"), Count(*NameMap, EAssetPackageDiffState::Removed), 0);
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

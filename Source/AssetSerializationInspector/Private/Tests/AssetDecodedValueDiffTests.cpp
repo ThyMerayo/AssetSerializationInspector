@@ -193,4 +193,46 @@ bool FAssetDecodedValueDiff_ComparesTheDecodedPartOfAnArray::RunTest(const FStri
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecodedValueDiff_ReportsAChangeOfCase, "AssetSerializationInspector.Diff.AssetDecodedValueDiff.ReportsAChangeOfCase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDecodedValueDiff_ReportsAChangeOfCase::RunTest(const FString& Parameters)
+{
+	using namespace AssetDecodedValueDiffTestUtils;
+
+	// FString compares without regard to case, so "Hello" and "hello" used to be the same value.
+	const FAssetDecodedPropertyValue OldText = MakeScalar(TEXT("Label"), TEXT("StrProperty"), TEXT("Hello"));
+	const FAssetDecodedPropertyValue NewText = MakeScalar(TEXT("Label"), TEXT("StrProperty"), TEXT("hello"));
+	const FAssetDecodedValueDiff Scalar = FAssetDecodedValueDiffer::Compare(&OldText, &NewText);
+	TestEqual(TEXT("A string that changed only in case is modified"), static_cast<uint8>(Scalar.State), static_cast<uint8>(EAssetDecodedValueDiffState::Modified));
+
+	const FAssetDecodedPropertyValue Same = MakeScalar(TEXT("Label"), TEXT("StrProperty"), TEXT("Hello"));
+	TestEqual(TEXT("The same string is unchanged"), static_cast<uint8>(FAssetDecodedValueDiffer::Compare(&OldText, &Same).State), static_cast<uint8>(EAssetDecodedValueDiffState::Unchanged));
+
+	// The same inside an array of strings.
+	const auto MakeArray = [](const TCHAR* First) {
+		FAssetDecodedPropertyValue Array;
+		Array.Status = EAssetPropertyDecodeStatus::Success;
+		Array.Kind = EAssetDecodedValueKind::Array;
+		Array.Name = TEXT("Names");
+		Array.TypeName = TEXT("ArrayProperty(StrProperty)");
+		Array.Value = TEXT("2 elements");
+		Array.Children.Add(MakeScalar(TEXT("[0]"), TEXT("StrProperty"), First));
+		Array.Children.Add(MakeScalar(TEXT("[1]"), TEXT("StrProperty"), TEXT("b")));
+		return Array;
+	};
+
+	const FAssetDecodedPropertyValue OldArray = MakeArray(TEXT("A"));
+	const FAssetDecodedPropertyValue NewArray = MakeArray(TEXT("a"));
+	const FAssetDecodedValueDiff Array = FAssetDecodedValueDiffer::Compare(&OldArray, &NewArray);
+
+	int32 Changed = 0;
+	for (const FAssetDecodedValueDiff& Child : Array.Children)
+	{
+		Changed += Child.State != EAssetDecodedValueDiffState::Unchanged ? 1 : 0;
+	}
+	TestTrue(TEXT("An element that changed only in case is reported"), Changed > 0);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

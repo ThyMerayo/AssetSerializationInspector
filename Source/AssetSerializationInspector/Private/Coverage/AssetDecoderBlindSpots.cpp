@@ -117,7 +117,9 @@ FAssetDecoderBlindSpotResult AssetDecoderBlindSpots::Run(
 					// Bytes inside a value that has parts but outside every part (the tags that name and size each field of a struct)
 					// say how the value is laid out, not what it holds: they are not counted.
 					const FAssetDecodedPropertyValue& Holder = InnermostAt(Original, Byte);
-					if (!Holder.Children.IsEmpty())
+					// An empty array, set or map is the same: what is outside its count is the tag.
+					const bool bEmptyContainer = Holder.Kind == EAssetDecodedValueKind::Array || Holder.Kind == EAssetDecodedValueKind::Set || Holder.Kind == EAssetDecodedValueKind::Map;
+					if (!Holder.Children.IsEmpty() || bEmptyContainer)
 					{
 						continue;
 					}
@@ -135,7 +137,7 @@ FAssetDecoderBlindSpotResult AssetDecoderBlindSpots::Run(
 					++Spot.BytesTested;
 					++Result.BytesTested;
 
-					if (ChangedSignature == OriginalSignature)
+					if (ChangedSignature.Equals(OriginalSignature, ESearchCase::CaseSensitive))
 					{
 						++Spot.BlindBytes;
 						++Result.BlindBytes;

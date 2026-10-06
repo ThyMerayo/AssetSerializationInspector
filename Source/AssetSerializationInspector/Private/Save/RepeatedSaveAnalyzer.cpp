@@ -48,7 +48,7 @@ static bool IsContinuouslyChanging(const FRepeatedSavePattern& Pattern)
 			continue;
 		}
 
-		if (bHasPreviousValue && Sample.NewValue == PreviousValue)
+		if (bHasPreviousValue && Sample.NewValue.Equals(PreviousValue, ESearchCase::CaseSensitive))
 		{
 			return false;
 		}
