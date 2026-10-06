@@ -6,6 +6,7 @@
 #include "Misc/SecureHash.h"
 
 #include "Diff/AssetByteDiff.h"
+#include "Diff/AssetCaseSensitiveKeys.h"
 #include "Diff/AssetDecodedValueDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
@@ -72,13 +73,13 @@ namespace
 		Root.Kind = EAssetPackageDiffKind::Name;
 		Root.DisplayName = NSLOCTEXT("AssetPackageDiff", "NameMap", "Name Map");
 
-		TMap<FString, int32> OldIndexByName;
+		TMap<FString, int32, FDefaultSetAllocator, TCaseSensitiveStringMapKeyFuncs<int32>> OldIndexByName;
 		for (int32 Index = 0; Index < OldDocument.NameMap.Num(); ++Index)
 		{
 			OldIndexByName.FindOrAdd(OldDocument.NameMap[Index].Name, Index);
 		}
 
-		TSet<FString> NewNames;
+		TSet<FString, FCaseSensitiveStringSetKeyFuncs> NewNames;
 		for (int32 Index = 0; Index < NewDocument.NameMap.Num(); ++Index)
 		{
 			const FAssetPackageNameEntry& B = NewDocument.NameMap[Index];

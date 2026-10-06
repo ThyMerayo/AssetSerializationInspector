@@ -2,6 +2,7 @@
 
 #include "Diff/AssetDecodedValueDiff.h"
 
+#include "Diff/AssetCaseSensitiveKeys.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 
 static bool AreLeafValuesEqual(const FAssetDecodedPropertyValue& OldValue, const FAssetDecodedPropertyValue& NewValue)
@@ -20,7 +21,8 @@ static bool AreLeafValuesEqual(const FAssetDecodedPropertyValue& OldValue, const
 		return true;
 	}
 
-	return OldValue.Value == NewValue.Value;
+	// FString compares without regard to case, and a value that changed only in case is a change.
+	return OldValue.Value.Equals(NewValue.Value, ESearchCase::CaseSensitive);
 }
 
 struct FDecodedChildKey
@@ -93,12 +95,12 @@ static bool AreDecodedValuesEquivalent(const FAssetDecodedPropertyValue& A, cons
 
 	if (!A.SemanticKey.IsEmpty() && !B.SemanticKey.IsEmpty())
 	{
-		return A.TypeName == B.TypeName && A.SemanticKey == B.SemanticKey;
+		return A.TypeName == B.TypeName && A.SemanticKey.Equals(B.SemanticKey, ESearchCase::CaseSensitive);
 	}
 
 	if (A.Kind == EAssetDecodedValueKind::Scalar)
 	{
-		return A.Value == B.Value;
+		return A.Value.Equals(B.Value, ESearchCase::CaseSensitive);
 	}
 
 	if (A.Children.Num() != B.Children.Num())
@@ -126,7 +128,7 @@ static bool AreSameArrayElement(const FAssetDecodedPropertyValue& A, const FAsse
 
 	if (!A.SemanticKey.IsEmpty() && !B.SemanticKey.IsEmpty())
 	{
-		return A.SemanticKey == B.SemanticKey;
+		return A.SemanticKey.Equals(B.SemanticKey, ESearchCase::CaseSensitive);
 	}
 
 	/*
@@ -322,7 +324,7 @@ static void CompareArrayChildren(const FAssetDecodedPropertyValue& OldValue, con
 	}
 }
 
-using FDecodedSetMap = TMap<FString, const FAssetDecodedPropertyValue*>;
+using FDecodedSetMap = TMap<FString, const FAssetDecodedPropertyValue*, FDefaultSetAllocator, TCaseSensitiveStringMapKeyFuncs<const FAssetDecodedPropertyValue*>>;
 
 static FDecodedSetMap BuildSetMap(const FAssetDecodedPropertyValue& Value)
 {
@@ -342,7 +344,7 @@ struct FDecodedSetOperationKey
 
 	FString SemanticKey;
 
-	bool operator==(const FDecodedSetOperationKey& Other) const { return Operation == Other.Operation && SemanticKey == Other.SemanticKey; }
+	bool operator==(const FDecodedSetOperationKey& Other) const { return Operation == Other.Operation && SemanticKey.Equals(Other.SemanticKey, ESearchCase::CaseSensitive); }
 };
 uint32 GetTypeHash(const FDecodedSetOperationKey& Key)
 {
@@ -401,14 +403,14 @@ struct FDecodedMapOperationKey
 
 	FString SemanticKey;
 
-	bool operator==(const FDecodedMapOperationKey& Other) const { return Operation == Other.Operation && SemanticKey == Other.SemanticKey; }
+	bool operator==(const FDecodedMapOperationKey& Other) const { return Operation == Other.Operation && SemanticKey.Equals(Other.SemanticKey, ESearchCase::CaseSensitive); }
 };
 uint32 GetTypeHash(const FDecodedMapOperationKey& Key)
 {
 	return HashCombine(GetTypeHash(static_cast<uint8>(Key.Operation)), GetTypeHash(Key.SemanticKey));
 }
 
-using FDecodedMapEntryMap = TMap<FString, const FAssetDecodedPropertyValue*>;
+using FDecodedMapEntryMap = TMap<FString, const FAssetDecodedPropertyValue*, FDefaultSetAllocator, TCaseSensitiveStringMapKeyFuncs<const FAssetDecodedPropertyValue*>>;
 
 static FDecodedMapEntryMap BuildFullMap(const FAssetDecodedPropertyValue& Map)
 {
@@ -460,7 +462,7 @@ static void CompareMapChildren(const FAssetDecodedPropertyValue& OldValue, const
 	const FDecodedMapEntryMap OldEntries = BuildFullMap(OldValue);
 	const FDecodedMapEntryMap NewEntries = BuildFullMap(NewValue);
 
-	TSet<FString> Keys;
+	TSet<FString, FCaseSensitiveStringSetKeyFuncs> Keys;
 
 	for (const auto& Pair : OldEntries)
 	{
@@ -546,7 +548,7 @@ static void DetectArrayMoves(TArray<FAssetDecodedValueDiff>& Children)
 				continue;
 			}
 
-			if (Removed.SemanticKey.IsEmpty() || Added.SemanticKey.IsEmpty() || Removed.SemanticKey != Added.SemanticKey)
+			if (Removed.SemanticKey.IsEmpty() || Added.SemanticKey.IsEmpty() || !Removed.SemanticKey.Equals(Added.SemanticKey, ESearchCase::CaseSensitive))
 			{
 				continue;
 			}

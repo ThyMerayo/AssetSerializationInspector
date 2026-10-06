@@ -360,7 +360,7 @@ namespace
 	/** A value that is one text on each side: changed when they differ. */
 	void CompareText(TArray<FAssetNativeDataChange>& Out, const FString& Key, const FString& Title, const FString& OldValue, const FString& NewValue)
 	{
-		if (OldValue != NewValue)
+		if (!OldValue.Equals(NewValue, ESearchCase::CaseSensitive))
 		{
 			AddChange(Out, Key, Title, EChange::Modified, OldValue, NewValue);
 		}
