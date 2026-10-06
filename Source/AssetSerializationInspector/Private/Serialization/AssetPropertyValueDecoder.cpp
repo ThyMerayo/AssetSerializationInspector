@@ -14,6 +14,7 @@
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetGraphNodePins.h"
+#include "Serialization/AssetNumberText.h"
 #include "Serialization/AssetPropertyTagDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSerializationPrimitives.h"
@@ -77,7 +78,7 @@ template <typename TValue> static bool DecodePrimitiveFromReader(FAssetPackagePa
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
 	OutValue.Kind = EAssetDecodedValueKind::Scalar;
-	OutValue.Value = LexToString(Value);
+	OutValue.Value = AssetNumberText::Text(Value);
 	OutValue.AbsoluteOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
 
@@ -218,7 +219,7 @@ template <typename TVector> static bool DecodeBoxFromReader(const FAssetProperty
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
-	OutValue.Value = FString::Printf(TEXT("Min=(%s) Max=(%s) IsValid=%d"), *Min.ToString(), *Max.ToString(), bIsValid != 0 ? 1 : 0);
+	OutValue.Value = FString::Printf(TEXT("Min=(%s) Max=(%s) IsValid=%d"), *AssetNumberText::Text(Min), *AssetNumberText::Text(Max), bIsValid != 0 ? 1 : 0);
 	OutValue.AbsoluteOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
 	return true;
@@ -267,7 +268,7 @@ static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
-	OutValue.Value = FString::Printf(TEXT("Rotation: %s\nTranslation: %s\nScale3D: %s"), *Rotation.ToString(), *Translation.ToString(), *Scale3D.ToString());
+	OutValue.Value = FString::Printf(TEXT("Rotation: %s\nTranslation: %s\nScale3D: %s"), *AssetNumberText::Text(Rotation), *AssetNumberText::Text(Translation), *AssetNumberText::Text(Scale3D));
 	OutValue.AbsoluteOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
 	return true;
@@ -375,7 +376,7 @@ static bool DecodePerPlatformFromReader(const FAssetPropertyDecodeContext& Conte
 {
 	const int64 Start = Reader.Tell();
 
-	const auto Format = [](const TValue Value) { return LexToString(Value); };
+	const auto Format = [](const TValue Value) { return AssetNumberText::Text(Value); };
 	const auto Fail = [&OutValue](const TCHAR* Message) {
 		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
 		OutValue.Error = Message;
@@ -452,15 +453,15 @@ static bool DecodeRichCurveKeyFromReader(const FAssetPropertyDecodeContext& Cont
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		OutValue.Children.Add(MakeTextChild(ModeNames[Index], TEXT("ByteProperty"), LexToString(static_cast<uint32>(Modes[Index])), Start + Index, 1));
+		OutValue.Children.Add(MakeTextChild(ModeNames[Index], TEXT("ByteProperty"), AssetNumberText::Text(static_cast<uint32>(Modes[Index])), Start + Index, 1));
 	}
 	for (int32 Index = 0; Index < 6; ++Index)
 	{
-		OutValue.Children.Add(MakeTextChild(NumberNames[Index], TEXT("FloatProperty"), LexToString(Numbers[Index]), Start + 3 + Index * sizeof(float), sizeof(float)));
+		OutValue.Children.Add(MakeTextChild(NumberNames[Index], TEXT("FloatProperty"), AssetNumberText::Text(Numbers[Index]), Start + 3 + Index * sizeof(float), sizeof(float)));
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
-	OutValue.Value = FString::Printf(TEXT("(Time=%s, Value=%s)"), *LexToString(Numbers[0]), *LexToString(Numbers[1]));
+	OutValue.Value = FString::Printf(TEXT("(Time=%s, Value=%s)"), *AssetNumberText::Text(Numbers[0]), *AssetNumberText::Text(Numbers[1]));
 	OutValue.AbsoluteOffset = Start;
 	OutValue.Size = Reader.Tell() - Start;
 	return true;
@@ -520,13 +521,13 @@ static bool DecodeExpressionInputFromReader(
 
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
 	OutValue.Children.Add(MakeTextChild(TEXT("Expression"), TEXT("ObjectProperty"), Expression.Value, Expression.AbsoluteOffset, Expression.Size));
-	OutValue.Children.Add(MakeTextChild(TEXT("OutputIndex"), TEXT("IntProperty"), LexToString(OutputIndex), Start, sizeof(int32)));
+	OutValue.Children.Add(MakeTextChild(TEXT("OutputIndex"), TEXT("IntProperty"), AssetNumberText::Text(OutputIndex), Start, sizeof(int32)));
 	OutValue.Children.Add(MakeTextChild(TEXT("InputName"), TEXT("NameProperty"), InputName.Value, InputName.AbsoluteOffset, InputName.Size));
 
 	static const TCHAR* const MaskNames[] = { TEXT("Mask"), TEXT("MaskR"), TEXT("MaskG"), TEXT("MaskB"), TEXT("MaskA") };
 	for (int32 Index = 0; Index < 5; ++Index)
 	{
-		OutValue.Children.Add(MakeTextChild(MaskNames[Index], TEXT("IntProperty"), LexToString(Masks[Index]), INDEX_NONE, sizeof(int32)));
+		OutValue.Children.Add(MakeTextChild(MaskNames[Index], TEXT("IntProperty"), AssetNumberText::Text(Masks[Index]), INDEX_NONE, sizeof(int32)));
 	}
 
 	if (Constant != EMaterialInputConstant::None)
@@ -546,7 +547,7 @@ static bool DecodeExpressionInputFromReader(
 			{
 				float Number = 0.0f;
 				bRead = bRead && ReadBounded(Reader, ValueEnd, Number);
-				Parts.Add(LexToString(Number));
+				Parts.Add(AssetNumberText::Text(Number));
 			}
 			return FString::Join(Parts, TEXT(", "));
 		};
@@ -583,7 +584,7 @@ static bool DecodeExpressionInputFromReader(
 			{
 				uint32 Value = 0;
 				bRead = ReadBounded(Reader, ValueEnd, Value);
-				ConstantText = LexToString(Value);
+				ConstantText = AssetNumberText::Text(Value);
 				break;
 			}
 		}
@@ -723,8 +724,8 @@ static bool DecodeMovieSceneChannelFromReader(const FAssetPropertyDecodeContext&
 		}
 	}
 
-	OutValue.Children.Add(MakeTextChild(TEXT("PreInfinityExtrap"), TEXT("ByteProperty"), LexToString(static_cast<uint32>(PreExtrapolation)), INDEX_NONE, 1));
-	OutValue.Children.Add(MakeTextChild(TEXT("PostInfinityExtrap"), TEXT("ByteProperty"), LexToString(static_cast<uint32>(PostExtrapolation)), INDEX_NONE, 1));
+	OutValue.Children.Add(MakeTextChild(TEXT("PreInfinityExtrap"), TEXT("ByteProperty"), AssetNumberText::Text(static_cast<uint32>(PreExtrapolation)), INDEX_NONE, 1));
+	OutValue.Children.Add(MakeTextChild(TEXT("PostInfinityExtrap"), TEXT("ByteProperty"), AssetNumberText::Text(static_cast<uint32>(PostExtrapolation)), INDEX_NONE, 1));
 	OutValue.Children.Add(MoveTemp(Keys));
 	OutValue.Children.Add(
 		MakeTextChild(TEXT("DefaultValue"), TEXT("ScalarProperty"), bHasDefault != 0 ? FString::SanitizeFloat(static_cast<double>(Default)) : FString(TEXT("none")), INDEX_NONE, sizeof(TValue)));
@@ -790,7 +791,7 @@ static bool DecodeNiagaraVariableFromReader(
 			return Fail(TEXT("Could not read the offset of a Niagara variable."));
 		}
 
-		OutValue.Children.Add(MakeTextChild(TEXT("Offset"), TEXT("IntProperty"), LexToString(Offset), Reader.Tell() - sizeof(int32), sizeof(int32)));
+		OutValue.Children.Add(MakeTextChild(TEXT("Offset"), TEXT("IntProperty"), AssetNumberText::Text(Offset), Reader.Tell() - sizeof(int32), sizeof(int32)));
 	}
 
 	OutValue.Status = EAssetPropertyDecodeStatus::Success;
@@ -804,17 +805,17 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 {
 	if (StructName == TEXT("Vector"))
 	{
-		return DecodePodStructFromReader<FVector>(Context, Reader, ValueEnd, OutValue, [](const FVector& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector>(Context, Reader, ValueEnd, OutValue, [](const FVector& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Vector2D"))
 	{
-		return DecodePodStructFromReader<FVector2D>(Context, Reader, ValueEnd, OutValue, [](const FVector2D& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector2D>(Context, Reader, ValueEnd, OutValue, [](const FVector2D& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Vector2f") || StructName == TEXT("DeprecateSlateVector2D"))
 	{
-		return DecodePodStructFromReader<FVector2f>(Context, Reader, ValueEnd, OutValue, [](const FVector2f& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector2f>(Context, Reader, ValueEnd, OutValue, [](const FVector2f& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("GameplayTag"))
@@ -835,7 +836,7 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 
 	if (StructName == TEXT("FrameNumber"))
 	{
-		return DecodePodStructFromReader<int32>(Context, Reader, ValueEnd, OutValue, [](const int32 Value) { return LexToString(Value); });
+		return DecodePodStructFromReader<int32>(Context, Reader, ValueEnd, OutValue, [](const int32 Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("DateTime"))
@@ -845,22 +846,22 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 
 	if (StructName == TEXT("Vector3f"))
 	{
-		return DecodePodStructFromReader<FVector3f>(Context, Reader, ValueEnd, OutValue, [](const FVector3f& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector3f>(Context, Reader, ValueEnd, OutValue, [](const FVector3f& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Vector4f"))
 	{
-		return DecodePodStructFromReader<FVector4f>(Context, Reader, ValueEnd, OutValue, [](const FVector4f& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector4f>(Context, Reader, ValueEnd, OutValue, [](const FVector4f& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Quat4f"))
 	{
-		return DecodePodStructFromReader<FQuat4f>(Context, Reader, ValueEnd, OutValue, [](const FQuat4f& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FQuat4f>(Context, Reader, ValueEnd, OutValue, [](const FQuat4f& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Rotator3f"))
 	{
-		return DecodePodStructFromReader<FRotator3f>(Context, Reader, ValueEnd, OutValue, [](const FRotator3f& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FRotator3f>(Context, Reader, ValueEnd, OutValue, [](const FRotator3f& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("ExpressionInput") || StructName == TEXT("MaterialAttributesInput"))
@@ -982,17 +983,17 @@ static bool TryDecodeKnownStruct(const FAssetPropertyDecodeContext& Context, FAs
 
 	if (StructName == TEXT("Vector4"))
 	{
-		return DecodePodStructFromReader<FVector4>(Context, Reader, ValueEnd, OutValue, [](const FVector4& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FVector4>(Context, Reader, ValueEnd, OutValue, [](const FVector4& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Rotator"))
 	{
-		return DecodePodStructFromReader<FRotator>(Context, Reader, ValueEnd, OutValue, [](const FRotator& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FRotator>(Context, Reader, ValueEnd, OutValue, [](const FRotator& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Quat"))
 	{
-		return DecodePodStructFromReader<FQuat>(Context, Reader, ValueEnd, OutValue, [](const FQuat& Value) { return Value.ToString(); });
+		return DecodePodStructFromReader<FQuat>(Context, Reader, ValueEnd, OutValue, [](const FQuat& Value) { return AssetNumberText::Text(Value); });
 	}
 
 	if (StructName == TEXT("Guid"))
@@ -1530,7 +1531,7 @@ namespace TextHistoryDecoding
 				{
 					break;
 				}
-				OutArgument = MakeTextChild(Name, TEXT("Int64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				OutArgument = MakeTextChild(Name, TEXT("Int64Property"), AssetNumberText::Text(Value), Start, State.Reader.Tell() - Start);
 				return true;
 			}
 			case 1: // UInt
@@ -1540,7 +1541,7 @@ namespace TextHistoryDecoding
 				{
 					break;
 				}
-				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), AssetNumberText::Text(Value), Start, State.Reader.Tell() - Start);
 				return true;
 			}
 			case 2: // Float
@@ -1550,7 +1551,7 @@ namespace TextHistoryDecoding
 				{
 					break;
 				}
-				OutArgument = MakeTextChild(Name, TEXT("FloatProperty"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				OutArgument = MakeTextChild(Name, TEXT("FloatProperty"), AssetNumberText::Text(Value), Start, State.Reader.Tell() - Start);
 				return true;
 			}
 			case 3: // Double
@@ -1560,7 +1561,7 @@ namespace TextHistoryDecoding
 				{
 					break;
 				}
-				OutArgument = MakeTextChild(Name, TEXT("DoubleProperty"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				OutArgument = MakeTextChild(Name, TEXT("DoubleProperty"), AssetNumberText::Text(Value), Start, State.Reader.Tell() - Start);
 				return true;
 			}
 			case 4: // Text
@@ -1574,7 +1575,7 @@ namespace TextHistoryDecoding
 				{
 					break;
 				}
-				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), LexToString(Value), Start, State.Reader.Tell() - Start);
+				OutArgument = MakeTextChild(Name, TEXT("UInt64Property"), AssetNumberText::Text(Value), Start, State.Reader.Tell() - Start);
 				return true;
 			}
 			default:
@@ -1629,21 +1630,21 @@ namespace TextHistoryDecoding
 				int64 Number = 0;
 				int32 Small = 0;
 				bRead = b64 ? ReadBounded(State.Reader, State.ValueEnd, Number) : ReadBounded(State.Reader, State.ValueEnd, Small);
-				Value = MakeTextChild(Name, TEXT("Int64Property"), LexToString(b64 ? Number : static_cast<int64>(Small)), Start, State.Reader.Tell() - Start);
+				Value = MakeTextChild(Name, TEXT("Int64Property"), AssetNumberText::Text(b64 ? Number : static_cast<int64>(Small)), Start, State.Reader.Tell() - Start);
 				break;
 			}
 			case 2:
 			{
 				float Number = 0.0f;
 				bRead = ReadBounded(State.Reader, State.ValueEnd, Number);
-				Value = MakeTextChild(Name, TEXT("FloatProperty"), LexToString(Number), Start, State.Reader.Tell() - Start);
+				Value = MakeTextChild(Name, TEXT("FloatProperty"), AssetNumberText::Text(Number), Start, State.Reader.Tell() - Start);
 				break;
 			}
 			case 3:
 			{
 				double Number = 0.0;
 				bRead = ReadBounded(State.Reader, State.ValueEnd, Number);
-				Value = MakeTextChild(Name, TEXT("DoubleProperty"), LexToString(Number), Start, State.Reader.Tell() - Start);
+				Value = MakeTextChild(Name, TEXT("DoubleProperty"), AssetNumberText::Text(Number), Start, State.Reader.Tell() - Start);
 				break;
 			}
 			case 4:
@@ -1655,7 +1656,7 @@ namespace TextHistoryDecoding
 			{
 				uint8 Gender = 0;
 				bRead = ReadBounded(State.Reader, State.ValueEnd, Gender);
-				Value = MakeTextChild(Name, TEXT("ByteProperty"), LexToString(static_cast<uint32>(Gender)), Start, State.Reader.Tell() - Start);
+				Value = MakeTextChild(Name, TEXT("ByteProperty"), AssetNumberText::Text(static_cast<uint32>(Gender)), Start, State.Reader.Tell() - Start);
 				break;
 			}
 			default:
@@ -1729,14 +1730,14 @@ namespace TextHistoryDecoding
 			if (!ReadScalar<uint32>(
 					State, TEXT("UseGrouping"), TEXT("BoolProperty"), [](const uint32 Value) { return FString(Value != 0 ? TEXT("true") : TEXT("false")); }, Flag)
 				|| !ReadScalar<int8>(
-					State, TEXT("RoundingMode"), TEXT("Int8Property"), [](const int8 Value) { return LexToString(static_cast<int32>(Value)); }, Rounding)
+					State, TEXT("RoundingMode"), TEXT("Int8Property"), [](const int8 Value) { return AssetNumberText::Text(static_cast<int32>(Value)); }, Rounding)
 				|| !ReadScalar<int32>(
-					State, TEXT("MinimumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
+					State, TEXT("MinimumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return AssetNumberText::Text(Value); }, Digits)
 				|| !ReadScalar<int32>(
-					State, TEXT("MaximumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
+					State, TEXT("MaximumIntegralDigits"), TEXT("IntProperty"), [](const int32 Value) { return AssetNumberText::Text(Value); }, Digits)
 				|| !ReadScalar<int32>(
-					State, TEXT("MinimumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits)
-				|| !ReadScalar<int32>(State, TEXT("MaximumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return LexToString(Value); }, Digits))
+					State, TEXT("MinimumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return AssetNumberText::Text(Value); }, Digits)
+				|| !ReadScalar<int32>(State, TEXT("MaximumFractionalDigits"), TEXT("IntProperty"), [](const int32 Value) { return AssetNumberText::Text(Value); }, Digits))
 			{
 				return false;
 			}
@@ -1975,7 +1976,7 @@ static bool DecodeTextFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	}
 
 	OutValue.Kind = EAssetDecodedValueKind::Struct;
-	OutValue.Children.Add(MakeTextChild(TEXT("Flags"), TEXT("UInt32Property"), LexToString(Flags), Start, sizeof(uint32)));
+	OutValue.Children.Add(MakeTextChild(TEXT("Flags"), TEXT("UInt32Property"), AssetNumberText::Text(Flags), Start, sizeof(uint32)));
 
 	const auto ReadTextString = [&](const TCHAR* Name) {
 		const int64 StringStart = Reader.Tell();

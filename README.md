@@ -439,7 +439,11 @@ The coverage scan says what the decoder cannot read. `AssetDecoderBlindSpots` fi
 ASI.DecodeBlindSpots <Folder> [ReportFile]
 ```
 
-The report lists the types with blind bytes, the most first, with where they were seen (default `Saved/AssetSerializationInspector/Coverage/DecoderBlindSpots.txt`). Run on the 5,261 packages of the engine's content, the only structure that decoded to a constant text (a pin type, found this way) was already fixed; what remains is mostly the precision of floating point values, which are written with a few decimals.
+The report lists the types with blind bytes, the most first, with where they were seen (default `Saved/AssetSerializationInspector/Coverage/DecoderBlindSpots.txt`). Run on the 5,261 packages of the engine's content, the only structure that decoded to a constant text (a pin type, found this way) was already fixed. The scan also showed that floating point values were written with a few decimals, so two different values could read the same: that is fixed too (below), and a second run over the engine's material functions went from 10,407 blind bytes to 1.
+
+### Numbers
+
+Floats, doubles and the vector, rotator, quaternion and box structs are written as the engine writes them (`1.000000`, `X=1.000 Y=2.000 Z=3.000`) whenever that text gives the value back exactly. When it does not (a float one bit away from 1, a location that moved by 0.0001), the number is written with the fewest digits that do (`1.0000001`, `X=100.0001 Y=2.000 Z=0.000`), and only the numbers that need it. Before this, a change smaller than the printed precision showed as a modified property with the same text on both sides.
 
 ### Slate UI
 
