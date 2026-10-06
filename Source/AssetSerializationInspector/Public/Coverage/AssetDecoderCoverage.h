@@ -76,6 +76,15 @@ struct FAssetDecoderCoverageResult
 	int64 GraphPinsRead = 0;
 	TArray<FAssetDecoderCoverageIssue> GraphNodeIssues;
 
+	/**
+	 * The functions with bytecode found, how many had it disassembled completely (its in-memory size adds up to the size the function
+	 * says), and why the others did not.
+	 */
+	int32 BytecodeFunctionsScanned = 0;
+	int32 BytecodeFunctionsRead = 0;
+	int64 BytecodeStatementsRead = 0;
+	TArray<FAssetDecoderCoverageIssue> BytecodeIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

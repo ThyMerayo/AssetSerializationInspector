@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/EditorObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/ObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
@@ -22,6 +23,7 @@ public:
 	int64 Tell() { return Reader.Tell(); }
 	int64 Remaining() { return End - Reader.Tell(); }
 	int32 CustomVer(const FGuid& Key) const { return Reader.CustomVer(Key); }
+	bool UEVerAtLeast(const EUnrealEngineObjectUE5Version Version) const { return Reader.UEVer() >= Version; }
 	void Seek(const int64 Offset) { Reader.Seek(Offset); }
 
 	void Fail(const FString& Message)

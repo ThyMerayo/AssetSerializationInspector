@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 
+#include "Serialization/AssetBytecode.h"
+
 struct FAssetPackageDocument;
 struct FAssetPackageExportEntry;
 
@@ -66,6 +68,9 @@ struct FAssetStructNativeData
 	int32 BytecodeSize = 0;
 	int32 BytecodeStorageSize = 0;
 	int64 BytecodeOffset = 0;
+
+	/** The bytecode read statement by statement; Bytecode.bComplete is false when it could not be (Bytecode.Error says why). */
+	FAssetBytecode Bytecode;
 
 	// ---- a class ----
 	TArray<TPair<FString, FString>> FunctionMap;
