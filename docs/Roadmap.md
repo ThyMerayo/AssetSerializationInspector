@@ -68,6 +68,6 @@ Open items, in order:
 - [x] The flags of a pin type that are not shown yet (the member reference's guid, the wrapper and single precision flags, a map's value type flags)
 - [x] Look into the oddities of the scan: the `ResponseChannel` array was the tag of an empty array counted as content, the Name bytes were a change of case that the diff could not see (fixed), and the `ScalarProperty` was float precision (fixed earlier)
 - [x] Tests for the type of variables that hold an object (struct or class) and for maps
-- [ ] Graph nodes whose class writes more than the pins (read them, or say what is left); formatted texts in pin display names and default values; a run over a large real graph
+- [x] Graph nodes whose class writes more than the pins, formatted texts in pin display names and default values, and a run over a large real graph (the engine content: 8,873 nodes, now all read to their last byte; the cast node writes its purity, texts use the property decoder)
 - [ ] Disassemble the bytecode of functions instead of comparing its size and bytes
 - [ ] Decode the contents of meshes and textures (they are described by class only)

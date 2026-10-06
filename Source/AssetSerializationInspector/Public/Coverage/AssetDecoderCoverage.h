@@ -67,6 +67,15 @@ struct FAssetDecoderCoverageResult
 	/** Export bytes outside the tagged properties: native or custom serialization the decoder does not read. */
 	int64 NativeBytes = 0;
 
+	/**
+	 * The graph nodes (Blueprint graph nodes: events, calls, variables, ...) found, and how many of them had their pins read to the
+	 * last byte. A node that did not is listed in GraphNodeIssues by its class and what stopped the reading.
+	 */
+	int32 GraphNodesScanned = 0;
+	int32 GraphNodesRead = 0;
+	int64 GraphPinsRead = 0;
+	TArray<FAssetDecoderCoverageIssue> GraphNodeIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

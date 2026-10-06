@@ -8,6 +8,8 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
+#include "Serialization/AssetPropertyValueDecoder.h"
+#include "Serialization/AssetSerializedPropertyTag.h"
 
 /** Reads the values of the stream in order and remembers the first thing that went wrong, so that a caller reads on without checking each value. */
 class FNativeReader
@@ -82,42 +84,30 @@ public:
 	}
 
 	/**
-	 * An FText (FText::SerializeText): flags, the kind of history, then what that history stores. The two kinds a graph stores for its
-	 * pins (a culture invariant string, and a source string with its namespace and key) are read; any other kind fails the reading.
-	 * Returns the text.
+	 * An FText (FText::SerializeText), read by the decoder that reads the text properties of a package, so every kind of history it
+	 * knows is read here too (plain, formatted, string table, numbers and dates). Returns the text; a kind it does not read fails the
+	 * reading.
 	 */
 	FString ReadText()
 	{
-		Read<uint32>(); // flags
-		const int8 HistoryType = Read<int8>();
+		FAssetSerializedPropertyType Type;
+		Type.Name = TEXT("TextProperty");
+
+		const int64 Start = Reader.Tell();
+		FAssetDecodedPropertyValue Value;
 		if (!Ok())
 		{
 			return FString();
 		}
 
-		if (HistoryType == -1)
+		if (!FAssetPropertyValueDecoder::DecodeTypeAt(Document, Type, Start, Remaining(), Value) || !Value.IsSuccess())
 		{
-			if (CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::CultureInvariantTextSerializationKeyStability && ReadBool())
-			{
-				return ReadString();
-			}
+			Fail(Value.Error.IsEmpty() ? FString(TEXT("A text is not read")) : Value.Error);
 			return FString();
 		}
 
-		if (HistoryType == 0)
-		{
-			ReadString(); // namespace
-			ReadString(); // key
-			const FString Source = ReadString();
-			if (CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDevNotesToFText && (Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0)
-			{
-				ReadString(); // developer notes
-			}
-			return Source;
-		}
-
-		Fail(FString::Printf(TEXT("A text of history type %d is not read"), static_cast<int32>(HistoryType)));
-		return FString();
+		Reader.Seek(Start + Value.Size);
+		return Value.Value;
 	}
 
 	/** A bool of a binary archive is 32 bits. */

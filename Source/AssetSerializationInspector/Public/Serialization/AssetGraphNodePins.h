@@ -70,6 +70,9 @@ struct FAssetGraphNodePins
 	/** The pins a node that declares them (an event, a function entry or result) lists as the ones the user defined: name, type, direction and default value. */
 	TArray<FAssetGraphPin> UserPins;
 
+	/** What a class of node writes after the pins besides the pins themselves, by name: "Purity" of a cast node. */
+	TArray<TPair<FString, FString>> Extras;
+
 	/** A short account: how many pins and how many links. */
 	FString Summarize() const;
 };
