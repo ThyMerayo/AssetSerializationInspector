@@ -330,4 +330,79 @@ bool FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags::RunTest(const FSt
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange, "AssetSerializationInspector.Serialization.AssetBlueprintVariableType.ShowsARenamedVariableAsOneChange",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange::RunTest(const FString& Parameters)
+{
+	using namespace VariableTypeTestUtils;
+
+	static const TCHAR* const RenamePackage = TEXT("/Game/__AssetSerializationInspectorTests/VariableRename/BP_VariableRename");
+	static const TCHAR* const RenameFolder = TEXT("/Game/__AssetSerializationInspectorTests/VariableRename");
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(RenameFolder), false, true);
+
+	UPackage* Package = CreatePackage(RenamePackage);
+	UBlueprint* Blueprint =
+		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_VariableRename"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))
+	{
+		return false;
+	}
+
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Alpha"), MakeType(TEXT("int")));
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Beta"), MakeType(TEXT("int")));
+	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"), RenamePackage);
+
+	FBlueprintEditorUtils::RenameMemberVariable(Blueprint, TEXT("Beta"), TEXT("Gamma"));
+	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"), RenamePackage);
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(Before, Error);
+	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(After, Error);
+	if (!TestTrue(TEXT("Both versions are written and load"), OldDocument.IsValid() && NewDocument.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> OldTraces = FAssetPackageFieldDecoder::Decode(*OldDocument);
+	const TSharedPtr<FAssetPackageTraceCollection> NewTraces = FAssetPackageFieldDecoder::Decode(*NewDocument);
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*OldDocument, *NewDocument, OldTraces.Get(), NewTraces.Get());
+
+	// The GUID of the variable stays; its key in the Blueprint's PropertyGuids is the name, which changed.
+	const FAssetPackageDiffEntry* Guids = nullptr;
+	for (const FAssetPackageDiffEntry& Entry : Diff.Entries)
+	{
+		Guids = Guids != nullptr ? Guids : FindNamed(Entry, TEXT("PropertyGuids"));
+	}
+
+	if (TestNotNull(TEXT("The property GUIDs are in the diff"), Guids))
+	{
+		int32 Added = 0;
+		int32 Removed = 0;
+		int32 Modified = 0;
+		for (const FAssetPackageDiffEntry& Child : Guids->Children)
+		{
+			Added += Child.State == EAssetPackageDiffState::Added ? 1 : 0;
+			Removed += Child.State == EAssetPackageDiffState::Removed ? 1 : 0;
+			Modified += Child.State == EAssetPackageDiffState::Modified ? 1 : 0;
+		}
+
+		TestEqual(TEXT("The rename is not an addition"), Added, 0);
+		TestEqual(TEXT("And not a removal"), Removed, 0);
+		TestEqual(TEXT("It is one modification"), Modified, 1);
+
+		// The row of the modification shows what changed, without opening it: the old name and the new one.
+		const FAssetPackageDiffEntry* Renamed = Guids->Children.FindByPredicate([](const FAssetPackageDiffEntry& Child) { return Child.State == EAssetPackageDiffState::Modified; });
+		if (TestNotNull(TEXT("The modified entry is found"), Renamed))
+		{
+			TestEqual(TEXT("It shows the old name"), Renamed->OldValue, FString(TEXT("Beta")));
+			TestEqual(TEXT("And the new one"), Renamed->NewValue, FString(TEXT("Gamma")));
+		}
+	}
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(RenameFolder), false, true);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

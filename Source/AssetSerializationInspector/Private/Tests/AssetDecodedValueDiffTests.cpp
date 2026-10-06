@@ -235,4 +235,105 @@ bool FAssetDecodedValueDiff_ReportsAChangeOfCase::RunTest(const FString& Paramet
 	return true;
 }
 
+namespace AssetDecodedValueDiffTestUtils
+{
+	static FAssetDecodedPropertyValue MakeGuidMapEntry(const FString& Key, const FString& Guid)
+	{
+		FAssetDecodedPropertyValue Entry;
+		Entry.Status = EAssetPropertyDecodeStatus::Success;
+		Entry.Kind = EAssetDecodedValueKind::MapEntry;
+		Entry.SemanticKey = Key;
+		Entry.Children.Add(MakeScalar(TEXT("Key"), TEXT("NameProperty"), Key));
+		Entry.Children.Add(MakeScalar(TEXT("Value"), TEXT("StructProperty(Guid(/Script/CoreUObject))"), Guid));
+		return Entry;
+	}
+
+	static FAssetDecodedPropertyValue MakeGuidMap(const TArray<TPair<FString, FString>>& Entries)
+	{
+		FAssetDecodedPropertyValue Map;
+		Map.Status = EAssetPropertyDecodeStatus::Success;
+		Map.Kind = EAssetDecodedValueKind::Map;
+		Map.Name = TEXT("PropertyGuids");
+		Map.TypeName = TEXT("MapProperty(NameProperty,StructProperty(Guid(/Script/CoreUObject)))");
+		Map.Value = FString::Printf(TEXT("%d entries"), Entries.Num());
+		for (const TPair<FString, FString>& Entry : Entries)
+		{
+			Map.Children.Add(MakeGuidMapEntry(Entry.Key, Entry.Value));
+		}
+		return Map;
+	}
+
+	static int32 CountState(const FAssetDecodedValueDiff& Diff, const EAssetDecodedValueDiffState State)
+	{
+		int32 Count = 0;
+		for (const FAssetDecodedValueDiff& Child : Diff.Children)
+		{
+			Count += Child.State == State ? 1 : 0;
+		}
+		return Count;
+	}
+} // namespace AssetDecodedValueDiffTestUtils
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDecodedValueDiff_PairsARenamedKeyByItsGuid, "AssetSerializationInspector.Diff.AssetDecodedValueDiff.PairsARenamedKeyByItsGuid",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDecodedValueDiff_PairsARenamedKeyByItsGuid::RunTest(const FString& Parameters)
+{
+	using namespace AssetDecodedValueDiffTestUtils;
+
+	const FString First = TEXT("11111111-1111-1111-1111-111111111111");
+	const FString Second = TEXT("22222222-2222-2222-2222-222222222222");
+	const FString Third = TEXT("33333333-3333-3333-3333-333333333333");
+	const FString Zero = TEXT("00000000-0000-0000-0000-000000000000");
+
+	// One key renamed, the other untouched: a modification of the key, not a removal and an addition.
+	{
+		const FAssetDecodedPropertyValue Old = MakeGuidMap({ { TEXT("Speed"), First }, { TEXT("Health"), Second } });
+		const FAssetDecodedPropertyValue New = MakeGuidMap({ { TEXT("Velocity"), First }, { TEXT("Health"), Second } });
+		const FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(&Old, &New);
+
+		TestEqual(TEXT("The map is modified"), static_cast<uint8>(Diff.State), static_cast<uint8>(EAssetDecodedValueDiffState::Modified));
+		TestEqual(TEXT("Nothing is reported as added"), CountState(Diff, EAssetDecodedValueDiffState::Added), 0);
+		TestEqual(TEXT("Nothing is reported as removed"), CountState(Diff, EAssetDecodedValueDiffState::Removed), 0);
+		if (TestEqual(TEXT("One entry is modified"), CountState(Diff, EAssetDecodedValueDiffState::Modified), 1))
+		{
+			const FAssetDecodedValueDiff* Renamed = Diff.Children.FindByPredicate([](const FAssetDecodedValueDiff& Child) { return Child.State == EAssetDecodedValueDiffState::Modified; });
+			TestEqual(TEXT("Its row shows the old key"), Renamed->OldValue, FString(TEXT("Speed")));
+			TestEqual(TEXT("And the new one"), Renamed->NewValue, FString(TEXT("Velocity")));
+			if (TestEqual(TEXT("It says what changed: the key"), Renamed->Children.Num(), 1))
+			{
+				TestEqual(TEXT("From the old name"), Renamed->Children[0].OldValue, FString(TEXT("Speed")));
+				TestEqual(TEXT("To the new one"), Renamed->Children[0].NewValue, FString(TEXT("Velocity")));
+			}
+		}
+	}
+
+	// Another GUID is another property: the removal and the addition stay.
+	{
+		const FAssetDecodedPropertyValue Old = MakeGuidMap({ { TEXT("Speed"), First } });
+		const FAssetDecodedPropertyValue New = MakeGuidMap({ { TEXT("Velocity"), Third } });
+		const FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(&Old, &New);
+		TestEqual(TEXT("A different GUID is an addition"), CountState(Diff, EAssetDecodedValueDiffState::Added), 1);
+		TestEqual(TEXT("And a removal"), CountState(Diff, EAssetDecodedValueDiffState::Removed), 1);
+	}
+
+	// An empty GUID names nothing, so it pairs nothing.
+	{
+		const FAssetDecodedPropertyValue Old = MakeGuidMap({ { TEXT("Speed"), Zero } });
+		const FAssetDecodedPropertyValue New = MakeGuidMap({ { TEXT("Velocity"), Zero } });
+		const FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(&Old, &New);
+		TestEqual(TEXT("An empty GUID is not matched"), CountState(Diff, EAssetDecodedValueDiffState::Added), 1);
+	}
+
+	// A GUID that two new entries hold is not matched either: which of them is the old one is a guess.
+	{
+		const FAssetDecodedPropertyValue Old = MakeGuidMap({ { TEXT("Speed"), First } });
+		const FAssetDecodedPropertyValue New = MakeGuidMap({ { TEXT("Velocity"), First }, { TEXT("Pace"), First } });
+		const FAssetDecodedValueDiff Diff = FAssetDecodedValueDiffer::Compare(&Old, &New);
+		TestEqual(TEXT("An ambiguous GUID is not matched"), CountState(Diff, EAssetDecodedValueDiffState::Removed), 1);
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
