@@ -29,6 +29,11 @@
 .PARAMETER TimeoutMinutes
     How long each editor run may take before it is stopped and counted as a failure.
 
+.PARAMETER Loops
+    How many times each editor run goes through its tests, in one editor session (-TestLoops). The default is 2: the second pass
+    finds the tests that leave something behind in memory (a Blueprint or an object created in a package of a fixed name is an
+    assertion the second time), which a single pass, and a fresh editor for each script run, never would.
+
 .PARAMETER SkipBuild
     Do not build; use the binaries that are there.
 
@@ -42,6 +47,7 @@ param(
     [switch] $LinkPlugin,
     [string] $Filter = 'AssetSerializationInspector',
     [int] $TimeoutMinutes = 30,
+    [int] $Loops = 2,
     [switch] $SkipBuild,
     [string] $OutputDir = ''
 )
@@ -96,6 +102,7 @@ function Invoke-Editor([string] $Exe, [string] $TestFilter, [string] $LogName) {
         "`"$HostProject`"",
         "-ExecCmds=`"Automation RunTests $TestFilter`"",
         '-TestExit="Automation Test Queue Empty"',
+        "-TestLoops=$Loops",
         '-unattended', '-nullrhi', '-nosplash',
         "-log=$LogName"
     )

@@ -19,6 +19,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetGraphNodePins.h"
+#include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -84,7 +85,7 @@ namespace GraphPinsTestUtils
 
 		FTestGraph()
 		{
-			Package = CreatePackage(GraphPackage);
+			Package = CreatePackage(*AssetTestPackages::Unique(GraphPackage));
 			Graph = NewObject<UEdGraph>(Package, TEXT("PinsGraph"), RF_Public | RF_Standalone);
 
 			Source = NewObject<UEdGraphNode>(Graph, TEXT("SourceNode"), RF_Transactional);
@@ -101,7 +102,7 @@ namespace GraphPinsTestUtils
 
 		FString Save() const
 		{
-			const FString File = FPackageName::LongPackageNameToFilename(GraphPackage, FPackageName::GetAssetPackageExtension());
+			const FString File = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
 			FSavePackageArgs SaveArgs;
 			SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 			SaveArgs.SaveFlags = SAVE_NoError;

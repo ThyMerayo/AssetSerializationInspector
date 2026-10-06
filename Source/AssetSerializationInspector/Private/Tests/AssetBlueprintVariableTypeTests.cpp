@@ -18,6 +18,7 @@
 #include "Diff/AssetPackageDiff.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 
 namespace VariableTypeTestUtils
@@ -34,11 +35,11 @@ namespace VariableTypeTestUtils
 	}
 
 	/** Saves the Blueprint and keeps a copy of the file under another name, which the next save would overwrite. */
-	static FString SaveCopy(UBlueprint* Blueprint, const TCHAR* Extension, const TCHAR* PackageName = BlueprintPackage)
+	static FString SaveCopy(UBlueprint* Blueprint, const TCHAR* Extension)
 	{
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
-		const FString File = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+		const FString File = FPackageName::LongPackageNameToFilename(Blueprint->GetPackage()->GetName(), FPackageName::GetAssetPackageExtension());
 		FSavePackageArgs SaveArgs;
 		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 		SaveArgs.SaveFlags = SAVE_NoError;
@@ -115,7 +116,7 @@ bool FAssetBlueprintVariableType_ShowsTheTypeThatChanged::RunTest(const FString&
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(BlueprintFolder), false, true);
 
-	UPackage* Package = CreatePackage(BlueprintPackage);
+	UPackage* Package = CreatePackage(*AssetTestPackages::Unique(BlueprintPackage));
 	UBlueprint* Blueprint =
 		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_VariableType"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
 	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))
@@ -199,7 +200,7 @@ bool FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags::RunTest(const FSt
 	// Changing the type of a variable of a compiled Blueprint makes the engine warn that the old value had another type.
 	AddExpectedMessage(TEXT("Type mismatch in"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
 
-	UPackage* Package = CreatePackage(FlagsPackage);
+	UPackage* Package = CreatePackage(*AssetTestPackages::Unique(FlagsPackage));
 	UBlueprint* Blueprint =
 		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_VariableFlags"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
 	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))
@@ -234,7 +235,7 @@ bool FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags::RunTest(const FSt
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Wrapped"), ClassType(AActor::StaticClass(), false));
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Number"), RealType(false));
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Table"), MapType(TEXT("int")));
-	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"), FlagsPackage);
+	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"));
 
 	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Object"), ObjectType(APawn::StaticClass()));
 	// The engine compares pin types without the wrapper flag, so ChangeMemberVariableType would see no change: set it on the variable.
@@ -247,7 +248,7 @@ bool FAssetBlueprintVariableType_DescribesObjectsMapsAndFlags::RunTest(const FSt
 	}
 	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Number"), RealType(true));
 	FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, TEXT("Table"), MapType(TEXT("string")));
-	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"), FlagsPackage);
+	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"));
 
 	FText Error;
 	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(Before, Error);
