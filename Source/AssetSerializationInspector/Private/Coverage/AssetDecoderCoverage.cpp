@@ -12,6 +12,7 @@
 #include "Compare/AssetFolderComparison.h"
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
+#include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetStructNativeData.h"
@@ -104,6 +105,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 	TMap<FString, FAssetNativeRegionStat> NativeRegions;
 	TMap<FString, FAssetDecoderCoverageIssue> GraphNodeIssues;
 	TMap<FString, FAssetDecoderCoverageIssue> BytecodeIssues;
+	TMap<FString, FAssetDecoderCoverageIssue> BulkDataIssues;
 
 	const TArray<FString> Files = AssetFolderComparison::FindPackageFiles(Folder);
 
@@ -234,6 +236,27 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 			}
 
+			// A texture or a mesh description writes the record of its source data after its tagged properties.
+			FAssetBulkDataExport BulkData;
+			if (LastNative != nullptr && AssetBulkDataExport::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, BulkData))
+			{
+				++Result.BulkDataExportsScanned;
+				if (BulkData.bComplete)
+				{
+					++Result.BulkDataExportsRead;
+				}
+				else
+				{
+					const FString Message = NormalizeMessage(BulkData.Error);
+					FAssetDecoderCoverageIssue& Issue = BulkDataIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+					Issue.TypeName = ExportClass;
+					Issue.Message = Message;
+					++Issue.Occurrences;
+					Issue.Bytes += LastNative->Size;
+					AddExample(Issue.Examples, RelativePath);
+				}
+			}
+
 			// A function writes its bytecode after its tagged properties: say whether it disassembled completely.
 			FAssetStructNativeData FunctionData;
 			if (LastNative != nullptr && AssetStructNativeData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, FunctionData)
@@ -287,6 +310,9 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 			}
 		}
 	}
+
+	BulkDataIssues.GenerateValueArray(Result.BulkDataIssues);
+	Result.BulkDataIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 
 	BytecodeIssues.GenerateValueArray(Result.BytecodeIssues);
 	Result.BytecodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
@@ -352,6 +378,18 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	{
 		const FAssetDecoderCoverageIssue& Issue = Result.Issues[Index];
 		Lines.Add(FString::Printf(TEXT("  %d assets, %d times, %lld bytes: %s"), Issue.AssetCount, Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
+		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+	}
+
+	Lines.Add(FString());
+	Lines.Add(FString::Printf(
+		TEXT("Textures and mesh descriptions: %d found, %d read to their last byte; %d kinds that did not"), Result.BulkDataExportsScanned, Result.BulkDataExportsRead, Result.BulkDataIssues.Num()));
+
+	for (int32 Index = 0; Index < Result.BulkDataIssues.Num() && Index < MaximumRows; ++Index)
+	{
+		const FAssetDecoderCoverageIssue& Issue = Result.BulkDataIssues[Index];
+		Lines.Add(FString::Printf(TEXT("  %d exports, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
 		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
@@ -451,6 +489,23 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 		Writer->WriteObjectEnd();
 	}
 	Writer->WriteArrayEnd();
+
+	Writer->WriteObjectStart(TEXT("bulkDataExports"));
+	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.BulkDataExportsScanned));
+	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.BulkDataExportsRead));
+	Writer->WriteArrayStart(TEXT("issues"));
+	for (const FAssetDecoderCoverageIssue& Issue : Result.BulkDataIssues)
+	{
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("class"), Issue.TypeName);
+		Writer->WriteValue(TEXT("message"), Issue.Message);
+		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
+		WriteExamples(Issue.Examples);
+		Writer->WriteObjectEnd();
+	}
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("bytecode"));
 	Writer->WriteValue(TEXT("functions"), static_cast<int64>(Result.BytecodeFunctionsScanned));

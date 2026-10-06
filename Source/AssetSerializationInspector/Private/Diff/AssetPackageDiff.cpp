@@ -11,6 +11,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackagePayloadReader.h"
 #include "Serialization/AssetArchetypeResolver.h"
+#include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
@@ -1001,15 +1002,20 @@ namespace
 	 * The pins of a graph node, read on both sides. When the pins are the same but the bytes differ, the references to other objects
 	 * were renumbered (a node was added or removed before them in the export map), which is not a change of the graph.
 	 */
-	void AppendPinChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
+	bool AppendPinChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
 		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetGraphNodePins OldData;
 		FAssetGraphNodePins NewData;
 		if (!AssetGraphNodePins::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetGraphNodePins::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData) || !OldData.bComplete || !NewData.bComplete)
+			|| !AssetGraphNodePins::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
 		{
-			return;
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
 		}
 
 		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "GraphNodePins", "Graph node pins");
@@ -1021,15 +1027,52 @@ namespace
 			RangeEntry.Explanation =
 				NSLOCTEXT("AssetPackageDiff", "PinsRenumbered", "The pins, their values and their links are the same; the bytes differ because the objects they refer to are numbered differently.");
 		}
+
+		return true;
+	}
+
+	/**
+	 * The record of the source data of a texture, or of a mesh description, read on both sides. The data itself is not in the export,
+	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
+	 * identifier differ, nothing of the asset changed.
+	 */
+	bool AppendBulkDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport,
+		FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetBulkDataExport OldData;
+		FAssetBulkDataExport NewData;
+		if (!AssetBulkDataExport::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetBulkDataExport::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle =
+			NewData.Kind == TEXT("Texture") ? NSLOCTEXT("AssetPackageDiff", "TextureData", "Texture data") : NSLOCTEXT("AssetPackageDiff", "MeshDescriptionData", "Mesh description data");
+		AddNativeDataChildren(AssetBulkDataExport::Compare(OldData, NewData), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation = NSLOCTEXT(
+				"AssetPackageDiff", "BulkDataMoved", "The content of the data is the same; the bytes differ because of where the data is kept in the file and the identifier the save gave it.");
+		}
+
+		return true;
 	}
 
 	/** Reads the native data of a class, function or graph node on both sides and adds what differs in it as children of the range's entry. */
 	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
 		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
 	{
-		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry))
 		{
-			AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry);
+			AppendBulkDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry);
 		}
 	}
 
