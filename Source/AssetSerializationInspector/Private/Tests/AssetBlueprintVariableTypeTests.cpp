@@ -342,7 +342,7 @@ bool FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange::RunTest(const
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(RenameFolder), false, true);
 
-	UPackage* Package = CreatePackage(RenamePackage);
+	UPackage* Package = CreatePackage(*AssetTestPackages::Unique(RenamePackage));
 	UBlueprint* Blueprint =
 		FKismetEditorUtilities::CreateBlueprint(AActor::StaticClass(), Package, TEXT("BP_VariableRename"), BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
 	if (!TestNotNull(TEXT("A Blueprint is created"), Blueprint))
@@ -352,10 +352,10 @@ bool FAssetBlueprintVariableType_ShowsARenamedVariableAsOneChange::RunTest(const
 
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Alpha"), MakeType(TEXT("int")));
 	FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Beta"), MakeType(TEXT("int")));
-	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"), RenamePackage);
+	const FString Before = SaveCopy(Blueprint, TEXT("before.uasset"));
 
 	FBlueprintEditorUtils::RenameMemberVariable(Blueprint, TEXT("Beta"), TEXT("Gamma"));
-	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"), RenamePackage);
+	const FString After = SaveCopy(Blueprint, TEXT("after.uasset"));
 
 	FText Error;
 	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(Before, Error);
