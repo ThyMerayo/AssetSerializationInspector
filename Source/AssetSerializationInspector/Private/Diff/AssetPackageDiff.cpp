@@ -14,6 +14,7 @@
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetGraphNodePins.h"
+#include "Serialization/AssetMeshGeometry.h"
 #include "Serialization/AssetMorphTargetData.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
@@ -1173,6 +1174,12 @@ namespace
 		{
 			AssetSourceImage::AppendPixelChange(
 				AssetSourceImage::Load(OldDocument, OldExport, OldTrace, OldData.Bulk), AssetSourceImage::Load(NewDocument, NewExport, NewTrace, NewData.Bulk), Changes);
+		}
+
+		// A mesh description whose content changed: say what changed in the geometry, when the package holds it.
+		if (bSourceChanged && NewData.Kind == TEXT("Mesh description"))
+		{
+			AssetMeshGeometry::AppendGeometryChange(AssetMeshGeometry::Load(OldDocument, OldData.Bulk), AssetMeshGeometry::Load(NewDocument, NewData.Bulk), Changes);
 		}
 
 		AddNativeDataChildren(Changes, RangeEntry);
