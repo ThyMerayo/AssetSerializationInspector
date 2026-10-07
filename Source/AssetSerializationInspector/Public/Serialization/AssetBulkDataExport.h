@@ -123,6 +123,10 @@ struct FAssetBulkDataExport
 	/** A texture saved for a platform (its mips are stored cooked). */
 	bool bCooked = false;
 
+	/** A lightmap texture writes the flags of the lightmap (ELightMapFlags) after the data of the texture. */
+	bool bHasLightmapFlags = false;
+	uint32 LightmapFlags = 0;
+
 	/** A cooked texture: the data the cook made for each platform it holds (one, in every package the cooker writes). */
 	TArray<FAssetTexturePlatformData> PlatformData;
 

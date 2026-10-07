@@ -514,4 +514,56 @@ bool FAssetBulkDataExport_ReadsTheOlderBulkDataFormat::RunTest(const FString& Pa
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ReadsTheFlagsOfALightmapTexture, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ReadsTheFlagsOfALightmapTexture",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ReadsTheFlagsOfALightmapTexture::RunTest(const FString& Parameters)
+{
+	using namespace BulkDataTestUtils;
+
+	// The built data of a map holds lightmap textures, which write their flags after the data of a texture.
+	const FString File = FPaths::Combine(FPaths::EnginePluginsDir(), TEXT("Experimental"), TEXT("ImpostorBaker"), TEXT("Content"), TEXT("Maps"), TEXT("Generate_Impostor_Map_BuiltData.uasset"));
+	if (!IFileManager::Get().FileExists(*File))
+	{
+		AddInfo(TEXT("The engine does not have the impostor baker map, so there is nothing to read."));
+	}
+	else
+	{
+		FText Error;
+		const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(File, Error);
+		if (TestTrue(TEXT("It loads"), Document.IsValid()))
+		{
+			const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+			int32 Lightmaps = 0;
+			for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+			{
+				FAssetBulkDataExport Data;
+				if (DecodeData(*Document, *Traces, Export, Data) && Data.bHasLightmapFlags)
+				{
+					++Lightmaps;
+					TestTrue(FString::Printf(TEXT("%s is read to its last byte (%s)"), *Document->ResolveExportPath(Export.Index), *Data.Error), Data.bComplete);
+				}
+			}
+			TestTrue(TEXT("The package has lightmap textures"), Lightmaps > 0);
+		}
+	}
+
+	FAssetBulkDataExport Old;
+	Old.Kind = TEXT("Texture");
+	Old.bComplete = true;
+	Old.bHasLightmapFlags = true;
+	Old.LightmapFlags = 0x1;
+	FAssetBulkDataExport New = Old;
+	TestTrue(TEXT("The same flags are no change"), AssetBulkDataExport::Compare(Old, New).IsEmpty());
+
+	New.LightmapFlags = 0x3;
+	const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Old, New);
+	if (TestEqual(TEXT("Other flags are one change"), Changes.Num(), 1))
+	{
+		TestEqual(TEXT("Named by its key"), Changes[0].Key, FString(TEXT("BulkData/LightmapFlags")));
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

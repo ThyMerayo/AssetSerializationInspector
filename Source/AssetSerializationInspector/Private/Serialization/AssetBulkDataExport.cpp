@@ -548,6 +548,13 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 				ReadCookedPlatformData(Reader, Document, NativeClass->IsChildOf(UTexture2D::StaticClass()), Out);
 			}
 		}
+
+		// ULightMapTexture2D::Serialize writes its lightmap flags after the data of the texture.
+		if (Reader.Ok() && ClassChainHasName(NativeClass, TEXT("LightMapTexture2D")))
+		{
+			Out.bHasLightmapFlags = true;
+			Out.LightmapFlags = Reader.Read<uint32>();
+		}
 	}
 	else
 	{
@@ -633,6 +640,12 @@ TArray<FAssetNativeDataChange> AssetBulkDataExport::Compare(const FAssetBulkData
 	if (Old.bCooked != New.bCooked)
 	{
 		Add(TEXT("BulkData/Cooked"), TEXT("Cooked"), FAssetNativeDataChange::EState::Modified, Old.bCooked ? TEXT("yes") : TEXT("no"), New.bCooked ? TEXT("yes") : TEXT("no"));
+	}
+
+	if (Old.bHasLightmapFlags && New.bHasLightmapFlags && Old.LightmapFlags != New.LightmapFlags)
+	{
+		Add(TEXT("BulkData/LightmapFlags"), TEXT("Lightmap flags"), FAssetNativeDataChange::EState::Modified, FString::Printf(TEXT("0x%X"), Old.LightmapFlags),
+			FString::Printf(TEXT("0x%X"), New.LightmapFlags));
 	}
 
 	// The platform data of a cooked texture: the format, the size and the mips, each matched by its place. Where the pixels are in
