@@ -248,6 +248,21 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				if (SkeletalMeshData.bPrefixRead)
 				{
 					++Result.SkeletalMeshesRead;
+					if (SkeletalMeshData.bComplete)
+					{
+						++Result.SkeletalMeshesWholeRead;
+					}
+					else
+					{
+						// The start was read but not the imported model: say why, so the layouts that are not read can be found.
+						const FString Message = NormalizeMessage(SkeletalMeshData.ModelError);
+						FAssetDecoderCoverageIssue& Issue = SkeletalMeshIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+						Issue.TypeName = ExportClass;
+						Issue.Message = Message;
+						++Issue.Occurrences;
+						Issue.Bytes += LastNative->Size;
+						AddExample(Issue.Examples, RelativePath);
+					}
 				}
 				else
 				{
@@ -435,8 +450,8 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	}
 
 	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Skeletal meshes: %d found, the start of their data (bounds, materials, skeleton) read for %d; %d kinds that did not"), Result.SkeletalMeshesScanned,
-		Result.SkeletalMeshesRead, Result.SkeletalMeshIssues.Num()));
+	Lines.Add(FString::Printf(TEXT("Skeletal meshes: %d found, the start of their data read for %d, the whole of it (imported model included) for %d; %d kinds that did not"),
+		Result.SkeletalMeshesScanned, Result.SkeletalMeshesRead, Result.SkeletalMeshesWholeRead, Result.SkeletalMeshIssues.Num()));
 
 	for (int32 Index = 0; Index < Result.SkeletalMeshIssues.Num() && Index < MaximumRows; ++Index)
 	{
