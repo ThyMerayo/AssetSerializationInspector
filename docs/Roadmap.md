@@ -74,7 +74,10 @@ Open items, in order:
 - [x] The native data of static meshes: collision, sockets, lighting GUID and material slots (all 184 of the engine content); the geometry is the mesh description, and the render data of a cooked mesh is not read
 - [x] The start of the native data of skeletal meshes: bounds, material slots and reference skeleton (bones, parents, poses); all three of the engine content
 - [x] The imported model of skeletal meshes: LODs, sections, vertices (as a hash), index buffers and bones; all three of the engine content
-- [ ] What the skeletal mesh model skips: cloth data, skin weight profiles, morph targets, layouts older than the current one, and the render data of cooked meshes
+- [ ] Skeletal meshes saved by UE4-era versions (the Mannequins, four of the 58 in the engine's plugins): the model keeps its vertices, skin weights, colors, adjacency and cloth in separate buffers instead of the sections, each with its own layout
+- [ ] Skeletal meshes with cloth data or skin weight profiles, and the render data of cooked skeletal meshes: no sample in the engine content, and the engine's skeletal meshes did not cook with `-CookDir`, so a sample has to be made first (these fail with a reason until then)
+- [ ] Morph targets: they are objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), not part of the mesh's data; the class is not read
+- [ ] Texture classes that write more after the texture's data: `LightMapTexture2D` adds its lightmap flags (69 exports in the engine's plugins end with bytes the reading does not know)
 - [x] The platform data of cooked textures (pixel format, size, mips with their storage and a hash of their pixels), and the source data of packages from before the editor bulk data (the older bulk data format)
 - [ ] The tiled data of virtual textures, and cooked textures that store their platform data as derived data references
 - [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
