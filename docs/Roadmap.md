@@ -77,7 +77,8 @@ Open items, in order:
 - [x] Skeletal meshes saved by 4.2x and early 5.0 versions (the Mannequins, four of the 58 in the engine's plugins): the raw point indices and the reduction sources as blocks of bulk data, and the sections and their settings without the ray tracing flag; all 58 of the engine's plugins
 - [ ] Skeletal meshes from before the model and the render data were split (their vertices, skin weights, colors, adjacency and cloth in separate buffers); no sample in the engine
 - [ ] Skeletal meshes with cloth data or skin weight profiles, and the render data of cooked skeletal meshes: no sample in the engine content, and the engine's skeletal meshes did not cook with `-CookDir`, so a sample has to be made first (these fail with a reason until then)
-- [ ] Morph targets: they are objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), not part of the mesh's data; the class is not read
+- [x] Morph targets: objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), read to the last byte with a hash of the deltas of each LOD (858 of the engine's plugins)
+- [ ] Cooked morph targets that store their deltas compressed (`FDeltaBatchHeader` and the packed deltas): no sample, they fail with a reason
 - [x] Texture classes that write more after the texture's data: `LightMapTexture2D` adds its lightmap flags (the 69 exports of the engine's plugins that ended with unread bytes)
 - [x] The platform data of cooked textures (pixel format, size, mips with their storage and a hash of their pixels), and the source data of packages from before the editor bulk data (the older bulk data format)
 - [ ] The tiled data of virtual textures, and cooked textures that store their platform data as derived data references

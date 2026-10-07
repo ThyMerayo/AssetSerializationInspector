@@ -14,6 +14,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetGraphNodePins.h"
+#include "Serialization/AssetMorphTargetData.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSkeletalMeshData.h"
 #include "Serialization/AssetStaticMeshData.h"
@@ -110,6 +111,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 	TMap<FString, FAssetDecoderCoverageIssue> BulkDataIssues;
 	TMap<FString, FAssetDecoderCoverageIssue> StaticMeshIssues;
 	TMap<FString, FAssetDecoderCoverageIssue> SkeletalMeshIssues;
+	TMap<FString, FAssetDecoderCoverageIssue> MorphTargetIssues;
 
 	const TArray<FString> Files = AssetFolderComparison::FindPackageFiles(Folder);
 
@@ -276,6 +278,27 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 			}
 
+			// A morph target writes its LODs, with the vertex deltas of each, after its tagged properties.
+			FAssetMorphTargetData MorphTargetData;
+			if (LastNative != nullptr && AssetMorphTargetData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, MorphTargetData))
+			{
+				++Result.MorphTargetsScanned;
+				if (MorphTargetData.bComplete)
+				{
+					++Result.MorphTargetsRead;
+				}
+				else
+				{
+					const FString Message = NormalizeMessage(MorphTargetData.Error);
+					FAssetDecoderCoverageIssue& Issue = MorphTargetIssues.FindOrAdd(CoverageKey(ExportClass, Message));
+					Issue.TypeName = ExportClass;
+					Issue.Message = Message;
+					++Issue.Occurrences;
+					Issue.Bytes += LastNative->Size;
+					AddExample(Issue.Examples, RelativePath);
+				}
+			}
+
 			// A static mesh writes its collision, sockets and material slots after its tagged properties.
 			FAssetStaticMeshData StaticMeshData;
 			if (LastNative != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, StaticMeshData))
@@ -372,6 +395,8 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 		}
 	}
 
+	MorphTargetIssues.GenerateValueArray(Result.MorphTargetIssues);
+	Result.MorphTargetIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 	SkeletalMeshIssues.GenerateValueArray(Result.SkeletalMeshIssues);
 	Result.SkeletalMeshIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
 
@@ -457,6 +482,17 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 	{
 		const FAssetDecoderCoverageIssue& Issue = Result.SkeletalMeshIssues[Index];
 		Lines.Add(FString::Printf(TEXT("  %d meshes, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
+		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+	}
+
+	Lines.Add(FString());
+	Lines.Add(FString::Printf(TEXT("Morph targets: %d found, %d read to their last byte; %d kinds that did not"), Result.MorphTargetsScanned, Result.MorphTargetsRead, Result.MorphTargetIssues.Num()));
+
+	for (int32 Index = 0; Index < Result.MorphTargetIssues.Num() && Index < MaximumRows; ++Index)
+	{
+		const FAssetDecoderCoverageIssue& Issue = Result.MorphTargetIssues[Index];
+		Lines.Add(FString::Printf(TEXT("  %d morph targets, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
 		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
@@ -585,6 +621,23 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.SkeletalMeshesRead));
 	Writer->WriteArrayStart(TEXT("issues"));
 	for (const FAssetDecoderCoverageIssue& Issue : Result.SkeletalMeshIssues)
+	{
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("class"), Issue.TypeName);
+		Writer->WriteValue(TEXT("message"), Issue.Message);
+		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
+		WriteExamples(Issue.Examples);
+		Writer->WriteObjectEnd();
+	}
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
+
+	Writer->WriteObjectStart(TEXT("morphTargets"));
+	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.MorphTargetsScanned));
+	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.MorphTargetsRead));
+	Writer->WriteArrayStart(TEXT("issues"));
+	for (const FAssetDecoderCoverageIssue& Issue : Result.MorphTargetIssues)
 	{
 		Writer->WriteObjectStart();
 		Writer->WriteValue(TEXT("class"), Issue.TypeName);
