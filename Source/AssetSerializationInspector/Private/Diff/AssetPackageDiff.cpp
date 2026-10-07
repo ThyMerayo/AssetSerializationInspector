@@ -18,6 +18,7 @@
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSkeletalMeshData.h"
+#include "Serialization/AssetSourceImage.h"
 #include "Serialization/AssetStaticMeshData.h"
 #include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
@@ -1145,8 +1146,8 @@ namespace
 	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
 	 * identifier differ, nothing of the asset changed.
 	 */
-	bool AppendBulkDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport,
-		FAssetPackageDiffEntry& RangeEntry)
+	bool AppendBulkDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetBulkDataExport OldData;
 		FAssetBulkDataExport NewData;
@@ -1163,7 +1164,18 @@ namespace
 
 		RangeEntry.NativeDataTitle =
 			NewData.Kind == TEXT("Texture") ? NSLOCTEXT("AssetPackageDiff", "TextureData", "Texture data") : NSLOCTEXT("AssetPackageDiff", "MeshDescriptionData", "Mesh description data");
-		AddNativeDataChildren(AssetBulkDataExport::Compare(OldData, NewData), RangeEntry);
+		TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(OldData, NewData);
+
+		// A source image whose content changed: say what changed in the pixels, when the package holds them.
+		const bool bSourceChanged =
+			Changes.ContainsByPredicate([](const FAssetNativeDataChange& Change) { return Change.Key == TEXT("BulkData/Source") && Change.State == FAssetNativeDataChange::EState::Modified; });
+		if (bSourceChanged && NewData.Kind == TEXT("Texture"))
+		{
+			AssetSourceImage::AppendPixelChange(
+				AssetSourceImage::Load(OldDocument, OldExport, OldTrace, OldData.Bulk), AssetSourceImage::Load(NewDocument, NewExport, NewTrace, NewData.Bulk), Changes);
+		}
+
+		AddNativeDataChildren(Changes, RangeEntry);
 
 		if (RangeEntry.Children.IsEmpty())
 		{
@@ -1176,14 +1188,15 @@ namespace
 	}
 
 	/** Reads the native data of a class, function or graph node on both sides and adds what differs in it as children of the range's entry. */
-	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
+	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetGraphPinNames& OldNames,
+		const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, const FAssetGraphPinNames& NewNames,
+		FAssetPackageDiffEntry& RangeEntry)
 	{
 		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
 			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry)
 			&& !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
 		{
-			AppendBulkDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry);
+			AppendBulkDataChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry);
 		}
 	}
 
@@ -1289,7 +1302,7 @@ namespace
 				// readable (its variables, functions, bytecode), so say what differs in it instead of only how many bytes.
 				if (OldNode == OldNodes.Last() && NewNode == NewNodes.Last())
 				{
-					AppendNativeDataChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, Entry);
+					AppendNativeDataChanges(OldDocument, OldExport, OldTrace, OldNames, NewDocument, NewExport, NewTrace, NewNames, Entry);
 				}
 			}
 
