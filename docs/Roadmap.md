@@ -81,5 +81,6 @@ Open items, in order:
 - [ ] Cooked morph targets that store their deltas compressed (`FDeltaBatchHeader` and the packed deltas): no sample, they fail with a reason
 - [x] Texture classes that write more after the texture's data: `LightMapTexture2D` adds its lightmap flags (the 69 exports of the engine's plugins that ended with unread bytes)
 - [x] The platform data of cooked textures (pixel format, size, mips with their storage and a hash of their pixels), and the source data of packages from before the editor bulk data (the older bulk data format)
-- [ ] The tiled data of virtual textures, and cooked textures that store their platform data as derived data references
+- [x] The tiled data of virtual textures: layers, tile layout and the chunks with the hash the engine keeps for each (the 6 of a cook of the engine's textures)
+- [ ] Cooked textures that store their platform data as derived data references (a cook option): no sample, they fail with a reason
 - [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
