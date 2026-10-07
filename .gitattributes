@@ -1,1 +1,3 @@
 *.uasset binary
+*.uexp binary
+*.ubulk binary

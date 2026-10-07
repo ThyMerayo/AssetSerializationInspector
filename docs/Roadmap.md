@@ -75,5 +75,6 @@ Open items, in order:
 - [x] The start of the native data of skeletal meshes: bounds, material slots and reference skeleton (bones, parents, poses); all three of the engine content
 - [x] The imported model of skeletal meshes: LODs, sections, vertices (as a hash), index buffers and bones; all three of the engine content
 - [ ] What the skeletal mesh model skips: cloth data, skin weight profiles, morph targets, layouts older than the current one, and the render data of cooked meshes
-- [ ] The platform data of cooked textures (mips, pixel format), and the source data of packages from before bulk data had identifiers
+- [x] The platform data of cooked textures (pixel format, size, mips with their storage and a hash of their pixels), and the source data of packages from before the editor bulk data (the older bulk data format)
+- [ ] The tiled data of virtual textures, and cooked textures that store their platform data as derived data references
 - [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
