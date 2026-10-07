@@ -106,6 +106,11 @@ struct FAssetDecoderCoverageResult
 	int32 SkeletalMeshesWholeRead = 0;
 	TArray<FAssetDecoderCoverageIssue> SkeletalMeshIssues;
 
+	/** The morph targets found, how many were read to their last byte, and why the others were not. */
+	int32 MorphTargetsScanned = 0;
+	int32 MorphTargetsRead = 0;
+	TArray<FAssetDecoderCoverageIssue> MorphTargetIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

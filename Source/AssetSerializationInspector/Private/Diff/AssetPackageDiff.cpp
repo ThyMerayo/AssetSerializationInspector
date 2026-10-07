@@ -14,6 +14,7 @@
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetGraphNodePins.h"
+#include "Serialization/AssetMorphTargetData.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Serialization/AssetSkeletalMeshData.h"
@@ -1108,6 +1109,38 @@ namespace
 	}
 
 	/**
+	 * The LODs of a morph target, read on both sides. The vertex deltas are hashed, so a change shows as a LOD whose deltas changed; when
+	 * nothing in the LODs differs, only ids and the numbering of objects do.
+	 */
+	bool AppendMorphTargetChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetMorphTargetData OldData;
+		FAssetMorphTargetData NewData;
+		if (!AssetMorphTargetData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetMorphTargetData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "MorphTargetData", "Morph target data");
+		AddNativeDataChildren(AssetMorphTargetData::Compare(OldData, NewData), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation = NSLOCTEXT("AssetPackageDiff", "MorphTargetRenumbered", "The LODs and their vertex deltas are the same; the bytes differ because of ids.");
+		}
+
+		return true;
+	}
+
+	/**
 	 * The record of the source data of a texture, or of a mesh description, read on both sides. The data itself is not in the export,
 	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
 	 * identifier differ, nothing of the asset changed.
@@ -1147,7 +1180,8 @@ namespace
 		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
 	{
 		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
-			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry)
+			&& !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
 		{
 			AppendBulkDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry);
 		}
