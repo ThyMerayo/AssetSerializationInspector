@@ -70,6 +70,48 @@ struct FAssetTextureMip
 	FString Describe() const;
 };
 
+/** One chunk of the tiled data of a virtual texture: a block of tiles that streams in whole. */
+struct FAssetVirtualTextureChunk
+{
+	/** The hash of the chunk the engine keeps with it (what decides whether the tiles changed). */
+	FString ContentHash;
+
+	/** The size of the chunk in bytes. */
+	uint32 SizeInBytes = 0;
+
+	/** EBulkDataFlags of the data resource of the chunk. */
+	uint32 BulkFlags = 0;
+
+	bool IsInline() const;
+	FString DescribeStorage() const;
+	FString Describe() const;
+};
+
+/** The tiled data of a virtual texture (FVirtualTextureBuiltData): its layers, its tiles and the chunks they are stored in. */
+struct FAssetVirtualTextureData
+{
+	uint32 NumLayers = 0;
+	uint32 NumMips = 0;
+	uint32 Width = 0;
+	uint32 Height = 0;
+
+	/** How many UDIM blocks make up the texture. */
+	uint32 WidthInBlocks = 0;
+	uint32 HeightInBlocks = 0;
+
+	/** The tile size without its border, and the border added around each tile. */
+	uint32 TileSize = 0;
+	uint32 TileBorderSize = 0;
+
+	/** The pixel format of each layer ("PF_DXT1"...). */
+	TArray<FString> LayerFormats;
+
+	TArray<FAssetVirtualTextureChunk> Chunks;
+
+	/** "2 layers (PF_DXT1, PF_BC5), 4096x4096, 128 pixel tiles with a 4 pixel border, 13 mips, 3 chunks". */
+	FString Describe() const;
+};
+
 /** The platform data of a cooked texture (FTexturePlatformData): what the cooker made of the source image for one platform. */
 struct FAssetTexturePlatformData
 {
@@ -88,6 +130,10 @@ struct FAssetTexturePlatformData
 	int32 FirstMipToSerialize = 0;
 
 	TArray<FAssetTextureMip> Mips;
+
+	/** A virtual texture keeps its pixels as tiles in chunks instead of mips. */
+	bool bVirtual = false;
+	FAssetVirtualTextureData Virtual;
 
 	/** A hash of the copy of the image that the CPU keeps for some textures (small ones sampled on the CPU); empty when there is none. */
 	FString CpuCopyHash;

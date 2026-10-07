@@ -197,10 +197,159 @@ namespace
 		return TEXT("ubulk");
 	}
 
+	/** A block of cooked bulk data (a mip, a chunk of tiles) as the package refers to it: by an index into the data resource table. */
+	struct FBulkReference
+	{
+		uint32 Flags = 0;
+		int64 RawSize = 0;
+		int64 Offset = INDEX_NONE;
+
+		/** A hash of the payload, when it is inline or in the sidecar file next to the package. */
+		FString PayloadHash;
+	};
+
+	/** Reads the index, and the payload when it follows inline (skipped and hashed); a payload in a sidecar file is hashed from there. */
+	bool ReadBulkReference(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const TCHAR* What, FBulkReference& Out)
+	{
+		const int32 ResourceIndex = Reader.Read<int32>();
+		if (!Reader.Ok())
+		{
+			return false;
+		}
+		if (!Resources.IsValidIndex(ResourceIndex))
+		{
+			Reader.Fail(FString::Printf(TEXT("%s does not point into the data resource table of the package"), What));
+			return false;
+		}
+
+		const FDataResource& Resource = Resources[ResourceIndex];
+		Out.Flags = Resource.BulkFlags;
+		Out.RawSize = Resource.RawSize;
+		Out.Offset = Resource.SerialOffset;
+
+		if (const TCHAR* Sidecar = SidecarExtension(Resource.BulkFlags))
+		{
+			Out.PayloadHash = HashSidecarRange(Document, Sidecar, Resource.SerialOffset, Resource.SerialSize);
+		}
+		else
+		{
+			// Inline: the payload follows the index.
+			const int64 Start = Reader.Tell();
+			Reader.Skip(Resource.SerialSize);
+			if (Reader.Ok())
+			{
+				Out.PayloadHash = HashBytes(Document.FileData.GetData() + Start, Resource.SerialSize);
+			}
+		}
+		return Reader.Ok();
+	}
+
+	/** An array of 32 bit values that is skipped: its count must fit what is left of the data. */
+	int32 SkipUInt32Array(FNativeReader& Reader, const TCHAR* What)
+	{
+		const int32 Count = Reader.Read<int32>();
+		if (Reader.Ok() && (Count < 0 || static_cast<int64>(Count) * 4 > Reader.Remaining()))
+		{
+			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
+			return 0;
+		}
+		Reader.Skip(static_cast<int64>(Count) * 4);
+		return Count;
+	}
+
+	/**
+	 * FVirtualTextureBuiltData::Serialize for a cooked texture: the layout of the tiles (sizes, the chunk and offset of each mip, the
+	 * blocks of tiles that exist), the pixel format and fallback color of each layer, and the chunks, each with the hash and size the
+	 * engine keeps for it and a reference to its data.
+	 */
+	void ReadVirtualTextureData(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, FAssetVirtualTextureData& Out)
+	{
+		constexpr uint32 MaximumLayers = 8;
+
+		const bool bCooked = Reader.ReadBool();
+		Out.NumLayers = Reader.Read<uint32>();
+		Out.WidthInBlocks = Reader.Read<uint32>();
+		Out.HeightInBlocks = Reader.Read<uint32>();
+		Out.TileSize = Reader.Read<uint32>();
+		Out.TileBorderSize = Reader.Read<uint32>();
+		if (Reader.Ok() && Out.NumLayers > MaximumLayers)
+		{
+			Reader.Fail(TEXT("A virtual texture does not have a number of layers that makes sense"));
+			return;
+		}
+
+		SkipUInt32Array(Reader, TEXT("layer offsets"));
+		Out.NumMips = Reader.Read<uint32>();
+		Out.Width = Reader.Read<uint32>();
+		Out.Height = Reader.Read<uint32>();
+		SkipUInt32Array(Reader, TEXT("chunks of the mips"));
+		SkipUInt32Array(Reader, TEXT("base offsets of the mips"));
+
+		// The blocks of tiles that exist in each mip (FVirtualTextureTileOffsetData).
+		const int32 TileOffsets = Reader.Read<int32>();
+		if (Reader.Ok() && (TileOffsets < 0 || static_cast<int64>(TileOffsets) * 20 > Reader.Remaining()))
+		{
+			Reader.Fail(TEXT("The number of tile offset tables does not fit the data"));
+			return;
+		}
+		for (int32 Index = 0; Index < TileOffsets && Reader.Ok(); ++Index)
+		{
+			Reader.Read<uint32>();
+			Reader.Read<uint32>();
+			Reader.Read<uint32>();
+			SkipUInt32Array(Reader, TEXT("tile block addresses"));
+			SkipUInt32Array(Reader, TEXT("tile block offsets"));
+		}
+
+		SkipUInt32Array(Reader, TEXT("tiles of the chunks"));
+		SkipUInt32Array(Reader, TEXT("tiles of the mips"));
+		SkipUInt32Array(Reader, TEXT("tile offsets in the chunks"));
+
+		for (uint32 Layer = 0; Layer < Out.NumLayers && Reader.Ok(); ++Layer)
+		{
+			Out.LayerFormats.Add(Reader.ReadString());
+		}
+		Reader.Skip(static_cast<int64>(Out.NumLayers) * 16); // the fallback color of each layer (FLinearColor)
+
+		const int32 ChunkCount = Reader.Read<int32>();
+		if (Reader.Ok() && (ChunkCount < 0 || ChunkCount > Reader.Remaining() / 28))
+		{
+			Reader.Fail(TEXT("The number of chunks does not fit the data"));
+			return;
+		}
+		for (int32 Index = 0; Index < ChunkCount && Reader.Ok(); ++Index)
+		{
+			FAssetVirtualTextureChunk& Chunk = Out.Chunks.AddDefaulted_GetRef();
+			for (int32 Byte = 0; Byte < 20; ++Byte)
+			{
+				Chunk.ContentHash += FString::Printf(TEXT("%02x"), Reader.Read<uint8>());
+			}
+			Chunk.SizeInBytes = Reader.Read<uint32>();
+			Reader.Read<uint32>(); // the size of the payload of the codecs
+			for (uint32 Layer = 0; Layer < Out.NumLayers; ++Layer)
+			{
+				Reader.Read<uint8>();  // the codec of the layer
+				Reader.Read<uint32>(); // and where its payload starts in the chunk
+			}
+
+			FBulkReference Data;
+			if (!ReadBulkReference(Reader, Document, Resources, TEXT("A chunk"), Data))
+			{
+				return;
+			}
+			Chunk.BulkFlags = Data.Flags;
+
+			if (!bCooked)
+			{
+				Reader.ReadString(); // the key of the chunk in the derived data cache
+			}
+		}
+	}
+
 	/**
 	 * FTexturePlatformData as a cooked texture stores it (SerializePlatformData, bulk data format): a flag for the derived data format
 	 * and a zeroed block that stands for it, the size, the packed flags, the pixel format, the optional data, the mips, and whether the
-	 * texture is virtual. The derived data format, the CPU copy and virtual textures are not read.
+	 * texture is virtual. The derived data format is not read.
 	 */
 	void ReadPlatformData(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const bool bMipData, FAssetTexturePlatformData& Out)
 	{
@@ -270,32 +419,15 @@ namespace
 			FAssetTextureMip& Mip = Out.Mips.AddDefaulted_GetRef();
 			if (bMipData)
 			{
-				const int32 ResourceIndex = Reader.Read<int32>();
-				if (!Resources.IsValidIndex(ResourceIndex))
+				FBulkReference Data;
+				if (!ReadBulkReference(Reader, Document, Resources, TEXT("A mip"), Data))
 				{
-					Reader.Fail(TEXT("A mip does not point into the data resource table of the package"));
 					return;
 				}
-
-				const FDataResource& Resource = Resources[ResourceIndex];
-				Mip.BulkFlags = Resource.BulkFlags;
-				Mip.PayloadSize = Resource.RawSize;
-				Mip.Offset = Resource.SerialOffset;
-
-				if (const TCHAR* Sidecar = SidecarExtension(Resource.BulkFlags))
-				{
-					Mip.PayloadHash = HashSidecarRange(Document, Sidecar, Resource.SerialOffset, Resource.SerialSize);
-				}
-				else
-				{
-					// Inline: the pixels follow the index.
-					const int64 Start = Reader.Tell();
-					Reader.Skip(Resource.SerialSize);
-					if (Reader.Ok())
-					{
-						Mip.PayloadHash = HashBytes(Document.FileData.GetData() + Start, Resource.SerialSize);
-					}
-				}
+				Mip.BulkFlags = Data.Flags;
+				Mip.PayloadSize = Data.RawSize;
+				Mip.Offset = Data.Offset;
+				Mip.PayloadHash = Data.PayloadHash;
 			}
 
 			Mip.SizeX = Reader.Read<int32>();
@@ -307,9 +439,10 @@ namespace
 			}
 		}
 
-		if (Reader.ReadBool())
+		Out.bVirtual = Reader.ReadBool();
+		if (Out.bVirtual && Reader.Ok())
 		{
-			Reader.Fail(TEXT("The data of a virtual texture is not read"));
+			ReadVirtualTextureData(Reader, Document, Resources, Out.Virtual);
 		}
 	}
 
@@ -380,6 +513,33 @@ FString FAssetBulkDataInfo::DescribeStorage() const
 	return Parts.IsEmpty() ? FString(TEXT("in the package")) : FString::Join(Parts, TEXT(", "));
 }
 
+bool FAssetVirtualTextureChunk::IsInline() const
+{
+	return (BulkFlags & BULKDATA_PayloadAtEndOfFile) == 0;
+}
+
+FString FAssetVirtualTextureChunk::DescribeStorage() const
+{
+	if (IsInline())
+	{
+		return TEXT("inline");
+	}
+
+	const TCHAR* Extension = SidecarExtension(BulkFlags);
+	return FString::Printf(TEXT("%s (.%s)"), (BulkFlags & BULKDATA_OptionalPayload) != 0 ? TEXT("optional") : TEXT("streamed"), Extension != nullptr ? Extension : TEXT("?"));
+}
+
+FString FAssetVirtualTextureChunk::Describe() const
+{
+	return FString::Printf(TEXT("%u bytes, %s, %s"), SizeInBytes, *DescribeStorage(), *ContentHash.Left(16));
+}
+
+FString FAssetVirtualTextureData::Describe() const
+{
+	return FString::Printf(TEXT("%u layers (%s), %ux%u, %u pixel tiles with a %u pixel border, %u mips, %d chunks"), NumLayers, *FString::Join(LayerFormats, TEXT(", ")), Width, Height, TileSize,
+		TileBorderSize, NumMips, Chunks.Num());
+}
+
 bool FAssetTextureMip::IsInline() const
 {
 	return (BulkFlags & BULKDATA_PayloadAtEndOfFile) == 0;
@@ -409,6 +569,11 @@ FString FAssetTexturePlatformData::Describe() const
 	for (const FAssetTextureMip& Mip : Mips)
 	{
 		Inline += Mip.IsInline() ? 1 : 0;
+	}
+
+	if (bVirtual)
+	{
+		return FString::Printf(TEXT("virtual texture, %s"), *Virtual.Describe());
 	}
 
 	FString Result = FString::Printf(TEXT("%s, %dx%d"), *PixelFormat, SizeX, SizeY);
@@ -645,6 +810,46 @@ TArray<FAssetNativeDataChange> AssetBulkDataExport::Compare(const FAssetBulkData
 		if (OldPlatform.FirstMipToSerialize != NewPlatform.FirstMipToSerialize)
 		{
 			AddPlatform(TEXT("/FirstMip"), Prefix + TEXT("Mips left out of the cook"), Modified, FString::FromInt(OldPlatform.FirstMipToSerialize), FString::FromInt(NewPlatform.FirstMipToSerialize));
+		}
+		if (OldPlatform.bVirtual != NewPlatform.bVirtual)
+		{
+			AddPlatform(TEXT("/Virtual"), Prefix + TEXT("Virtual texture"), Modified, OldPlatform.bVirtual ? TEXT("yes") : TEXT("no"), NewPlatform.bVirtual ? TEXT("yes") : TEXT("no"));
+		}
+		else if (OldPlatform.bVirtual)
+		{
+			// The tiled data: its layout, then each chunk by the hash and size the engine keeps for it (where it is stored moves between cooks).
+			const FAssetVirtualTextureData& OldVirtual = OldPlatform.Virtual;
+			const FAssetVirtualTextureData& NewVirtual = NewPlatform.Virtual;
+			if (OldVirtual.LayerFormats != NewVirtual.LayerFormats)
+			{
+				AddPlatform(TEXT("/VirtualLayers"), Prefix + TEXT("Layers"), Modified, FString::Join(OldVirtual.LayerFormats, TEXT(", ")), FString::Join(NewVirtual.LayerFormats, TEXT(", ")));
+			}
+			if (OldVirtual.Width != NewVirtual.Width || OldVirtual.Height != NewVirtual.Height || OldVirtual.NumMips != NewVirtual.NumMips || OldVirtual.WidthInBlocks != NewVirtual.WidthInBlocks
+				|| OldVirtual.HeightInBlocks != NewVirtual.HeightInBlocks)
+			{
+				AddPlatform(TEXT("/VirtualSize"), Prefix + TEXT("Virtual texture size"), Modified,
+					FString::Printf(TEXT("%ux%u, %u mips, %ux%u blocks"), OldVirtual.Width, OldVirtual.Height, OldVirtual.NumMips, OldVirtual.WidthInBlocks, OldVirtual.HeightInBlocks),
+					FString::Printf(TEXT("%ux%u, %u mips, %ux%u blocks"), NewVirtual.Width, NewVirtual.Height, NewVirtual.NumMips, NewVirtual.WidthInBlocks, NewVirtual.HeightInBlocks));
+			}
+			if (OldVirtual.TileSize != NewVirtual.TileSize || OldVirtual.TileBorderSize != NewVirtual.TileBorderSize)
+			{
+				AddPlatform(TEXT("/VirtualTiles"), Prefix + TEXT("Tile size"), Modified, FString::Printf(TEXT("%u + border %u"), OldVirtual.TileSize, OldVirtual.TileBorderSize),
+					FString::Printf(TEXT("%u + border %u"), NewVirtual.TileSize, NewVirtual.TileBorderSize));
+			}
+			if (OldVirtual.Chunks.Num() != NewVirtual.Chunks.Num())
+			{
+				AddPlatform(TEXT("/VirtualChunkCount"), Prefix + TEXT("Number of chunks"), Modified, FString::FromInt(OldVirtual.Chunks.Num()), FString::FromInt(NewVirtual.Chunks.Num()));
+			}
+			for (int32 ChunkIndex = 0; ChunkIndex < FMath::Min(OldVirtual.Chunks.Num(), NewVirtual.Chunks.Num()); ++ChunkIndex)
+			{
+				const FAssetVirtualTextureChunk& OldChunk = OldVirtual.Chunks[ChunkIndex];
+				const FAssetVirtualTextureChunk& NewChunk = NewVirtual.Chunks[ChunkIndex];
+				if (!OldChunk.ContentHash.Equals(NewChunk.ContentHash, ESearchCase::CaseSensitive) || OldChunk.SizeInBytes != NewChunk.SizeInBytes
+					|| OldChunk.DescribeStorage() != NewChunk.DescribeStorage())
+				{
+					AddPlatform(FString::Printf(TEXT("/VirtualChunk/%d"), ChunkIndex), FString::Printf(TEXT("%sChunk %d"), *Prefix, ChunkIndex), Modified, OldChunk.Describe(), NewChunk.Describe());
+				}
+			}
 		}
 		if (!OldPlatform.CpuCopyHash.Equals(NewPlatform.CpuCopyHash, ESearchCase::CaseSensitive))
 		{

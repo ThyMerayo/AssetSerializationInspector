@@ -566,4 +566,67 @@ bool FAssetBulkDataExport_ReadsTheFlagsOfALightmapTexture::RunTest(const FString
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ReadsTheTilesOfAVirtualTexture, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ReadsTheTilesOfAVirtualTexture",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ReadsTheTilesOfAVirtualTexture::RunTest(const FString& Parameters)
+{
+	using namespace CookedTextureTestUtils;
+
+	FAssetBulkDataExport Data;
+	if (ReadFixture(*this, TEXT("BaseFlattenDiffuseMap_VT.uasset"), Data))
+	{
+		if (TestTrue(FString::Printf(TEXT("It is read to its last byte (%s)"), *Data.Error), Data.bComplete) && TestEqual(TEXT("It has the data of one platform"), Data.PlatformData.Num(), 1))
+		{
+			const FAssetTexturePlatformData& Platform = Data.PlatformData[0];
+			AddInfo(Data.Summarize());
+			TestTrue(TEXT("It is virtual"), Platform.bVirtual);
+			TestTrue(TEXT("With no mips of the usual kind"), Platform.Mips.IsEmpty());
+			TestTrue(TEXT("A layer"), Platform.Virtual.NumLayers > 0 && Platform.Virtual.LayerFormats.Num() == static_cast<int32>(Platform.Virtual.NumLayers));
+			TestTrue(TEXT("Tiles"), Platform.Virtual.TileSize > 0);
+			TestTrue(TEXT("A size"), Platform.Virtual.Width > 0 && Platform.Virtual.Height > 0);
+			if (TestFalse(TEXT("And chunks"), Platform.Virtual.Chunks.IsEmpty()))
+			{
+				for (const FAssetVirtualTextureChunk& Chunk : Platform.Virtual.Chunks)
+				{
+					TestEqual(TEXT("The hash of a chunk is 20 bytes"), Chunk.ContentHash.Len(), 40);
+					TestTrue(TEXT("A chunk has a size"), Chunk.SizeInBytes > 0);
+				}
+			}
+			TestTrue(TEXT("The same texture is no change"), AssetBulkDataExport::Compare(Data, Data).IsEmpty());
+		}
+	}
+
+	// A change of a chunk, the layers and the tile size.
+	const auto MakeVirtual = [](const TCHAR* Hash) {
+		FAssetBulkDataExport Texture = MakeTexture({});
+		FAssetTexturePlatformData& Platform = Texture.PlatformData[0];
+		Platform.bVirtual = true;
+		Platform.Virtual.NumLayers = 1;
+		Platform.Virtual.LayerFormats = { TEXT("PF_DXT1") };
+		Platform.Virtual.TileSize = 128;
+		Platform.Virtual.TileBorderSize = 4;
+		Platform.Virtual.Width = 256;
+		Platform.Virtual.Height = 256;
+		Platform.Virtual.NumMips = 3;
+		FAssetVirtualTextureChunk& Chunk = Platform.Virtual.Chunks.AddDefaulted_GetRef();
+		Chunk.ContentHash = Hash;
+		Chunk.SizeInBytes = 1000;
+		return Texture;
+	};
+
+	const FAssetBulkDataExport Base = MakeVirtual(TEXT("aaaa"));
+	FAssetBulkDataExport Changed = MakeVirtual(TEXT("bbbb"));
+	Changed.PlatformData[0].Virtual.LayerFormats = { TEXT("PF_BC7") };
+	Changed.PlatformData[0].Virtual.TileSize = 64;
+
+	const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Base, Changed);
+	TestNotNull(TEXT("The chunk"), Find(Changes, TEXT("Platform/0/VirtualChunk/0")));
+	TestNotNull(TEXT("The layers"), Find(Changes, TEXT("Platform/0/VirtualLayers")));
+	TestNotNull(TEXT("The tile size"), Find(Changes, TEXT("Platform/0/VirtualTiles")));
+	TestTrue(TEXT("The same virtual texture is no change"), AssetBulkDataExport::Compare(Base, MakeVirtual(TEXT("aaaa"))).IsEmpty());
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
