@@ -98,6 +98,11 @@ struct FAssetDecoderCoverageResult
 	int32 StaticMeshesRead = 0;
 	TArray<FAssetDecoderCoverageIssue> StaticMeshIssues;
 
+	/** The skeletal meshes found, how many had the start of their data (bounds, materials, skeleton) read, and why the others did not. */
+	int32 SkeletalMeshesScanned = 0;
+	int32 SkeletalMeshesRead = 0;
+	TArray<FAssetDecoderCoverageIssue> SkeletalMeshIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

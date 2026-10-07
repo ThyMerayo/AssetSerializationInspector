@@ -16,6 +16,7 @@
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetSkeletalMeshData.h"
 #include "Serialization/AssetStaticMeshData.h"
 #include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
@@ -1066,6 +1067,35 @@ namespace
 	}
 
 	/**
+	 * The start of the data of a skeletal mesh (its bounds, material slots and reference skeleton), read on both sides. What follows
+	 * (the imported model with its LODs, sections and vertices) is not read, so the range is never explained as a whole: what was read
+	 * is listed as changes, and the entry says that the rest is not.
+	 */
+	bool AppendSkeletalMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetSkeletalMeshData OldData;
+		FAssetSkeletalMeshData NewData;
+		if (!AssetSkeletalMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
+			|| !AssetSkeletalMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		{
+			return false;
+		}
+
+		if (!OldData.bPrefixRead || !NewData.bPrefixRead)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "SkeletalMeshData", "Skeletal mesh data");
+		AddNativeDataChildren(AssetSkeletalMeshData::Compare(OldData, NewData), RangeEntry);
+
+		// Only the start was read, so the changed bytes of the range are not accounted for.
+		RangeEntry.bNativeDataDecoded = false;
+		return true;
+	}
+
+	/**
 	 * The record of the source data of a texture, or of a mesh description, read on both sides. The data itself is not in the export,
 	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
 	 * identifier differ, nothing of the asset changed.
@@ -1105,7 +1135,7 @@ namespace
 		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
 	{
 		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
-			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
 		{
 			AppendBulkDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry);
 		}
@@ -1223,7 +1253,7 @@ namespace
 				Explanation = Entry.Explanation.ToString() + TEXT(" ") + Explanation;
 			}
 
-			if (Entry.bNativeDataDecoded && !Entry.Children.IsEmpty())
+			if (!Entry.Children.IsEmpty())
 			{
 				TArray<FString> Titles;
 				for (const FAssetPackageDiffEntry& Child : Entry.Children)
@@ -1231,7 +1261,16 @@ namespace
 					Titles.Add(Child.DisplayName.ToString());
 				}
 
-				Explanation += FString::Printf(TEXT(" Read: %d changes (%s)."), Entry.Children.Num(), *FString::Join(Titles, TEXT("; ")));
+				if (Entry.bNativeDataDecoded)
+				{
+					Explanation += FString::Printf(TEXT(" Read: %d changes (%s)."), Entry.Children.Num(), *FString::Join(Titles, TEXT("; ")));
+				}
+				else
+				{
+					// Only the start of the data is read: what changed there is listed, and the rest is said not to be.
+					Explanation +=
+						FString::Printf(TEXT(" Read from the start of the data: %d changes (%s). The rest of the data is not read."), Entry.Children.Num(), *FString::Join(Titles, TEXT("; ")));
+				}
 			}
 
 			Entry.Explanation = FText::FromString(Explanation);

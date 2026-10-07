@@ -72,6 +72,7 @@ Open items, in order:
 - [x] Disassemble the bytecode of functions instead of comparing its size and bytes (the 157 functions of the engine content read, and their in-memory size adds up; the diff lists statements)
 - [x] Decode the contents of meshes and textures: the record of the source image of a texture and of the mesh description of a static mesh (content hash, size, storage); 4,669 of the 4,670 of the engine content
 - [x] The native data of static meshes: collision, sockets, lighting GUID and material slots (all 184 of the engine content); the geometry is the mesh description, and the render data of a cooked mesh is not read
-- [ ] The native data of skeletal meshes (material slots, skeleton, LODs, render data), which are still described by class only
+- [x] The start of the native data of skeletal meshes: bounds, material slots and reference skeleton (bones, parents, poses); all three of the engine content
+- [ ] The imported model of skeletal meshes (LODs, sections, vertices, morph targets) and the render data of cooked ones, which end the data and are not read
 - [ ] The platform data of cooked textures (mips, pixel format), and the source data of packages from before bulk data had identifiers
 - [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
