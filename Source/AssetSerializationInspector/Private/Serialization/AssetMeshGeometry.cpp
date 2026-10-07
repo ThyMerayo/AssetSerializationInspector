@@ -88,6 +88,41 @@ FAssetMeshGeometry AssetMeshGeometry::Load(const FAssetPackageDocument& Document
 		}
 	}
 
+	// The attributes of the corners: normals, tangents and the UVs of each channel.
+	const TVertexInstanceAttributesConstRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
+	const TVertexInstanceAttributesConstRef<FVector3f> Tangents = Attributes.GetVertexInstanceTangents();
+	const TVertexInstanceAttributesConstRef<FVector2f> UVs = Attributes.GetVertexInstanceUVs();
+	Geometry.UVs.SetNum(UVs.IsValid() ? UVs.GetNumChannels() : 0);
+	for (const FVertexInstanceID Instance : MeshDescription.VertexInstances().GetElementIDs())
+	{
+		if (Normals.IsValid())
+		{
+			Geometry.Normals.Add(Normals[Instance]);
+		}
+		if (Tangents.IsValid())
+		{
+			Geometry.Tangents.Add(Tangents[Instance]);
+		}
+		for (int32 Channel = 0; Channel < Geometry.UVs.Num(); ++Channel)
+		{
+			Geometry.UVs[Channel].Add(UVs.Get(Instance, Channel));
+		}
+	}
+
+	// The material slot of each polygon group, and the slot each triangle belongs to.
+	const TPolygonGroupAttributesConstRef<FName> Slots = Attributes.GetPolygonGroupMaterialSlotNames();
+	if (Slots.IsValid())
+	{
+		for (const FPolygonGroupID Group : MeshDescription.PolygonGroups().GetElementIDs())
+		{
+			Geometry.MaterialSlots.Add(Slots[Group].ToString());
+		}
+		for (const FTriangleID Triangle : MeshDescription.Triangles().GetElementIDs())
+		{
+			Geometry.TriangleSlots.Add(Slots[MeshDescription.GetTrianglePolygonGroup(Triangle)].ToString());
+		}
+	}
+
 	Geometry.bLoaded = true;
 	return Geometry;
 }
@@ -140,6 +175,83 @@ void AssetMeshGeometry::AppendGeometryChange(const FAssetMeshGeometry& Old, cons
 		{
 			Add(TEXT("BulkData/Vertices"), FString::Printf(TEXT("Mesh vertices: %d of %d moved, the largest by %.4f"), Moved, Old.Positions.Num(), Largest), TEXT("positions before"),
 				FString::Printf(TEXT("moved vertices within %s"), *DescribeBounds(Where)));
+		}
+	}
+
+	// The normals and the tangents of the corners: how many changed, and the largest turn in degrees.
+	const auto CompareDirections = [&](const TCHAR* Key, const TCHAR* Name, const TArray<FVector3f>& OldValues, const TArray<FVector3f>& NewValues) {
+		if (OldValues.Num() != NewValues.Num() || OldValues.IsEmpty())
+		{
+			return;
+		}
+
+		int32 Changed = 0;
+		double Largest = 0.0;
+		for (int32 Index = 0; Index < OldValues.Num(); ++Index)
+		{
+			if (!OldValues[Index].Equals(NewValues[Index], 1e-4f))
+			{
+				++Changed;
+				const double Cosine = FMath::Clamp(static_cast<double>(OldValues[Index].GetSafeNormal() | NewValues[Index].GetSafeNormal()), -1.0, 1.0);
+				Largest = FMath::Max(Largest, FMath::RadiansToDegrees(FMath::Acos(Cosine)));
+			}
+		}
+
+		if (Changed > 0)
+		{
+			Add(Key, FString::Printf(TEXT("Mesh %s: %d of %d changed, the largest by %.2f degrees"), Name, Changed, OldValues.Num(), Largest), TEXT("directions before"), TEXT("directions after"));
+		}
+	};
+	CompareDirections(TEXT("BulkData/Normals"), TEXT("normals"), Old.Normals, New.Normals);
+	CompareDirections(TEXT("BulkData/Tangents"), TEXT("tangents"), Old.Tangents, New.Tangents);
+
+	// The UV channels: a channel added or removed, and for the channels both have, how many corners moved.
+	if (Old.UVs.Num() != New.UVs.Num())
+	{
+		Add(TEXT("BulkData/UVChannels"), TEXT("Mesh UV channels"), FString::FromInt(Old.UVs.Num()), FString::FromInt(New.UVs.Num()));
+	}
+	for (int32 Channel = 0; Channel < FMath::Min(Old.UVs.Num(), New.UVs.Num()); ++Channel)
+	{
+		if (Old.UVs[Channel].Num() != New.UVs[Channel].Num())
+		{
+			continue;
+		}
+
+		int32 Changed = 0;
+		double Largest = 0.0;
+		for (int32 Index = 0; Index < Old.UVs[Channel].Num(); ++Index)
+		{
+			if (!Old.UVs[Channel][Index].Equals(New.UVs[Channel][Index], 1e-5f))
+			{
+				++Changed;
+				Largest = FMath::Max(Largest, static_cast<double>(FVector2f::Distance(Old.UVs[Channel][Index], New.UVs[Channel][Index])));
+			}
+		}
+
+		if (Changed > 0)
+		{
+			Add(*FString::Printf(TEXT("BulkData/UV/%d"), Channel),
+				FString::Printf(TEXT("Mesh UV channel %d: %d of %d corners moved, the largest by %.4f"), Channel, Changed, Old.UVs[Channel].Num(), Largest), TEXT("UVs before"), TEXT("UVs after"));
+		}
+	}
+
+	// The material slots, and which triangles use which.
+	if (Old.MaterialSlots != New.MaterialSlots)
+	{
+		Add(TEXT("BulkData/MaterialSlots"), TEXT("Mesh material slots"), FString::Join(Old.MaterialSlots, TEXT(", ")), FString::Join(New.MaterialSlots, TEXT(", ")));
+	}
+	else if (Old.TriangleSlots.Num() == New.TriangleSlots.Num())
+	{
+		int32 Reassigned = 0;
+		for (int32 Index = 0; Index < Old.TriangleSlots.Num(); ++Index)
+		{
+			Reassigned += Old.TriangleSlots[Index].Equals(New.TriangleSlots[Index], ESearchCase::CaseSensitive) ? 0 : 1;
+		}
+
+		if (Reassigned > 0)
+		{
+			Add(TEXT("BulkData/MaterialAssignment"), FString::Printf(TEXT("Mesh material assignment: %d of %d triangles use another slot"), Reassigned, Old.TriangleSlots.Num()), TEXT("slots before"),
+				TEXT("slots after"));
 		}
 	}
 }

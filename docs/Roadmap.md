@@ -85,5 +85,6 @@ Open items, in order:
 - [ ] Cooked textures that store their platform data as derived data references (a cook option): no sample, they fail with a reason
 - [x] Decode the pixels of the source image of a texture and say what changed in them (count, where, largest change, average color); the delta transform is undone, PNG/JPEG, virtualized and legacy images are reported as not compared
 - [x] Decode the vertices of a mesh description (counts, bounds, the position of each vertex) and say what moved
-- [ ] Compare the other attributes of a mesh description (normals, tangents, UVs, material assignment) and the render data of a cooked mesh
+- [x] Compare the other attributes of a mesh description: normals, tangents, UV channels, material slots and which triangles use them
+- [ ] Compare the colors, edge hardness and smoothing groups of a mesh description, and read the render data of a cooked static mesh
 - [ ] Decode the pixels of cooked mips (BC and ASTC blocks) and of the source images that are virtualized or compressed as PNG/JPEG
