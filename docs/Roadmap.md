@@ -71,6 +71,7 @@ Open items, in order:
 - [x] Graph nodes whose class writes more than the pins, formatted texts in pin display names and default values, and a run over a large real graph (the engine content: 8,873 nodes, now all read to their last byte; the cast node writes its purity, texts use the property decoder)
 - [x] Disassemble the bytecode of functions instead of comparing its size and bytes (the 157 functions of the engine content read, and their in-memory size adds up; the diff lists statements)
 - [x] Decode the contents of meshes and textures: the record of the source image of a texture and of the mesh description of a static mesh (content hash, size, storage); 4,669 of the 4,670 of the engine content
-- [ ] The native data of static meshes and skeletal meshes (source models, sections, render data), which are still described by class only
+- [x] The native data of static meshes: collision, sockets, lighting GUID and material slots (all 184 of the engine content); the geometry is the mesh description, and the render data of a cooked mesh is not read
+- [ ] The native data of skeletal meshes (material slots, skeleton, LODs, render data), which are still described by class only
 - [ ] The platform data of cooked textures (mips, pixel format), and the source data of packages from before bulk data had identifiers
 - [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
