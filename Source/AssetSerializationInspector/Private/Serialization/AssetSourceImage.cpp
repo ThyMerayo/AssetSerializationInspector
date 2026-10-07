@@ -2,27 +2,19 @@
 
 #include "Serialization/AssetSourceImage.h"
 
-#include "Compression/CompressedBuffer.h"
 #include "Engine/Texture.h"
-#include "HAL/FileManager.h"
 #include "ImageCore.h"
 #include "ImageCoreDelta.h"
 #include "ImageCoreUtils.h"
 #include "Math/Float16.h"
-#include "Memory/SharedBuffer.h"
-#include "UObject/PackageTrailer.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetEditorPayload.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
 {
-	/** EFlags of FEditorBulkData that say where the payload is. */
-	constexpr uint32 SourceFlagIsVirtualized = 1u << 0;
-	constexpr uint32 SourceFlagReferencesLegacyFile = 1u << 2;
-	constexpr uint32 SourceFlagStoredInPackageTrailer = 1u << 9;
-
 	/** An image larger than this is not loaded: comparing it would take more memory than the inspector should use. */
 	constexpr int64 MaximumImageBytes = 256ll * 1024 * 1024;
 
@@ -133,80 +125,6 @@ namespace
 		int32 Index = INDEX_NONE;
 		return Value.FindLastChar(TEXT(':'), Index) ? Value.Mid(Index + 1) : Value;
 	}
-
-	/** The bytes the record of an image refers to, uncompressed, from the package trailer. */
-	bool LoadSourcePayload(const FAssetPackageDocument& Document, const FAssetBulkDataInfo& Bulk, TArray64<uint8>& Out, FString& Error)
-	{
-		if (Bulk.bLegacy || (Bulk.Flags & SourceFlagReferencesLegacyFile) != 0)
-		{
-			Error = TEXT("The image is in the older bulk data format");
-			return false;
-		}
-		if ((Bulk.Flags & SourceFlagIsVirtualized) != 0)
-		{
-			Error = TEXT("The image is virtualized, outside the package");
-			return false;
-		}
-		if ((Bulk.Flags & SourceFlagStoredInPackageTrailer) == 0)
-		{
-			Error = TEXT("The image is not in the package trailer");
-			return false;
-		}
-		if (Bulk.PayloadSize <= 0 || Bulk.PayloadSize > MaximumImageBytes)
-		{
-			Error = Bulk.PayloadSize <= 0 ? TEXT("The image is empty") : TEXT("The image is too large to compare");
-			return false;
-		}
-		if (Document.Filename.IsEmpty())
-		{
-			Error = TEXT("The package is not on disk, so its trailer cannot be read");
-			return false;
-		}
-
-		UE::FPackageTrailer Trailer;
-		if (!UE::FPackageTrailer::TryLoadFromFile(Document.Filename, Trailer))
-		{
-			Error = TEXT("The package has no trailer");
-			return false;
-		}
-
-		const FIoHash Id(FWideStringView(*Bulk.ContentHash));
-		if (Trailer.FindPayloadStatus(Id) != UE::EPayloadStatus::StoredLocally)
-		{
-			Error = TEXT("The trailer does not hold the image");
-			return false;
-		}
-
-		const int64 Offset = Trailer.FindPayloadOffsetInFile(Id);
-		const int64 Size = Trailer.FindPayloadSizeOnDisk(Id);
-		const TUniquePtr<FArchive> File(IFileManager::Get().CreateFileReader(*Document.Filename));
-		if (!File.IsValid() || Offset < 0 || Size <= 0 || Offset + Size > File->TotalSize())
-		{
-			Error = TEXT("The image could not be read from the package");
-			return false;
-		}
-
-		FUniqueBuffer Stored = FUniqueBuffer::Alloc(static_cast<uint64>(Size));
-		File->Seek(Offset);
-		File->Serialize(Stored.GetData(), Size);
-		const FCompressedBuffer Compressed = FCompressedBuffer::FromCompressed(Stored.MoveToShared());
-		if (Compressed.IsNull())
-		{
-			Error = TEXT("The image is not in a compressed buffer");
-			return false;
-		}
-
-		const FSharedBuffer Raw = Compressed.Decompress();
-		if (Raw.IsNull())
-		{
-			Error = TEXT("The image could not be decompressed");
-			return false;
-		}
-
-		Out.SetNumUninitialized(static_cast<int64>(Raw.GetSize()));
-		FMemory::Memcpy(Out.GetData(), Raw.GetData(), Raw.GetSize());
-		return true;
-	}
 } // namespace
 
 int32 FAssetSourceImage::BytesPerPixel() const
@@ -259,7 +177,7 @@ FAssetSourceImage AssetSourceImage::Load(const FAssetPackageDocument& Document, 
 	}
 
 	TArray64<uint8> Payload;
-	if (!LoadSourcePayload(Document, Bulk, Payload, Image.Error))
+	if (!AssetEditorPayload::Load(Document, Bulk, TEXT("The image"), MaximumImageBytes, Payload, Image.Error))
 	{
 		return Image;
 	}

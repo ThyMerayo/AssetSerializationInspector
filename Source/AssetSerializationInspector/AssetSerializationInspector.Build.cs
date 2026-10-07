@@ -44,10 +44,12 @@ public class AssetSerializationInspector : ModuleRules
                 "ImageCore",
                 "InputCore",
                 "Json",
+                "MeshDescription",
                 "Projects",
                 "Slate",
                 "SlateCore",
                 "SourceControl",
+                "StaticMeshDescription",
                 "ToolMenus",
                 "UnrealEd",
             }

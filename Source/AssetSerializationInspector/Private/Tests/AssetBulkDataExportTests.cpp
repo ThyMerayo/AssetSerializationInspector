@@ -4,11 +4,14 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
+#include "MeshDescription.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "StaticMeshAttributes.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 
@@ -17,6 +20,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetBulkDataExport.h"
+#include "Serialization/AssetMeshGeometry.h"
 #include "Serialization/AssetSourceImage.h"
 #include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
@@ -84,6 +88,71 @@ namespace BulkDataTestUtils
 			if (CopyExtension == nullptr)
 			{
 				return File;
+			}
+
+			const FString Copy = FPaths::ChangeExtension(File, CopyExtension);
+			IFileManager::Get().Copy(*Copy, *File);
+			return Copy;
+		}
+	};
+
+	static const TCHAR* const MeshPackage = TEXT("/Game/__AssetSerializationInspectorTests/BulkDataMesh/SM_BulkData");
+	static const TCHAR* const MeshFolder = TEXT("/Game/__AssetSerializationInspectorTests/BulkDataMesh");
+
+	/** A static mesh of one quad of 100 units, in which the corner at (100, 100) can be lifted. */
+	struct FTestMesh
+	{
+		UPackage* Package = nullptr;
+		UStaticMesh* Mesh = nullptr;
+
+		FTestMesh()
+		{
+			Package = CreatePackage(*AssetTestPackages::Unique(MeshPackage));
+			Mesh = NewObject<UStaticMesh>(Package, TEXT("SM_BulkData"), RF_Public | RF_Standalone);
+			Mesh->GetStaticMaterials().Add(FStaticMaterial());
+			Mesh->SetNumSourceModels(1);
+			SetQuad(0.0f);
+		}
+
+		void SetQuad(const float LiftedCorner)
+		{
+			FMeshDescription* Description = Mesh->GetMeshDescription(0) != nullptr ? Mesh->GetMeshDescription(0) : Mesh->CreateMeshDescription(0);
+			if (Description == nullptr)
+			{
+				return;
+			}
+			Description->Empty();
+			FStaticMeshAttributes Attributes(*Description);
+			Attributes.Register();
+
+			const FVector3f Positions[4] = { FVector3f(0, 0, 0), FVector3f(100, 0, 0), FVector3f(100, 100, LiftedCorner), FVector3f(0, 100, 0) };
+			TArray<FVertexInstanceID> Instances;
+			for (const FVector3f& Position : Positions)
+			{
+				const FVertexID Vertex = Description->CreateVertex();
+				Attributes.GetVertexPositions()[Vertex] = Position;
+				const FVertexInstanceID Instance = Description->CreateVertexInstance(Vertex);
+				Attributes.GetVertexInstanceNormals()[Instance] = FVector3f(0, 0, 1);
+				Instances.Add(Instance);
+			}
+
+			const FPolygonGroupID Group = Description->CreatePolygonGroup();
+			Attributes.GetPolygonGroupMaterialSlotNames()[Group] = FName(TEXT("None"));
+			Description->CreatePolygon(Group, Instances);
+			Mesh->CommitMeshDescription(0);
+			Mesh->Build(true);
+		}
+
+		FString Save(const TCHAR* CopyExtension) const
+		{
+			const FString File = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+			SaveArgs.SaveFlags = SAVE_NoError;
+			SaveArgs.bSlowTask = false;
+			if (!UPackage::SavePackage(Package, Mesh, *File, SaveArgs))
+			{
+				return FString();
 			}
 
 			const FString Copy = FPaths::ChangeExtension(File, CopyExtension);
@@ -189,6 +258,129 @@ namespace SourceImageTestUtils
 		return Image;
 	}
 } // namespace SourceImageTestUtils
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ReadsTheGeometryOfAMeshDescription",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription::RunTest(const FString& Parameters)
+{
+	using namespace BulkDataTestUtils;
+
+	// A static mesh of one quad, saved twice: once flat, once with a corner lifted. The package keeps the mesh description in its trailer.
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(MeshFolder), false, true);
+	{
+		FTestMesh Test;
+		const FString Flat = Test.Save(TEXT("flat.uasset"));
+		Test.SetQuad(50.0f);
+		const FString Lifted = Test.Save(TEXT("lifted.uasset"));
+
+		FText Error;
+		const TSharedPtr<FAssetPackageDocument> FlatDocument = FAssetPackageReader::LoadFromFile(Flat, Error);
+		const TSharedPtr<FAssetPackageDocument> LiftedDocument = FAssetPackageReader::LoadFromFile(Lifted, Error);
+		if (TestTrue(TEXT("Both versions are written and load"), FlatDocument.IsValid() && LiftedDocument.IsValid()))
+		{
+			const TSharedPtr<FAssetPackageTraceCollection> FlatTraces = FAssetPackageFieldDecoder::Decode(*FlatDocument);
+			const TSharedPtr<FAssetPackageTraceCollection> LiftedTraces = FAssetPackageFieldDecoder::Decode(*LiftedDocument);
+
+			bool bRead = false;
+			for (const FAssetPackageExportEntry& Export : FlatDocument->ExportMap)
+			{
+				FAssetBulkDataExport Data;
+				if (!DecodeData(*FlatDocument, *FlatTraces, Export, Data) || Data.Kind != TEXT("Mesh description") || Data.Bulk.PayloadSize == 0)
+				{
+					// The mesh also has a slot for a high resolution description, which this one leaves empty.
+					continue;
+				}
+
+				bRead = true;
+				AddInfo(FString::Printf(TEXT("Mesh description record: %s, %lld bytes, hash %s"), *Data.Bulk.DescribeStorage(), Data.Bulk.PayloadSize, *Data.Bulk.ContentHash));
+				const FAssetMeshGeometry Geometry = AssetMeshGeometry::Load(*FlatDocument, Data.Bulk);
+				if (TestTrue(FString::Printf(TEXT("The geometry is loaded (%s)"), *Geometry.Error), Geometry.bLoaded))
+				{
+					TestEqual(TEXT("Four vertices"), Geometry.VertexCount, 4);
+					TestEqual(TEXT("Two triangles"), Geometry.TriangleCount, 2);
+					TestEqual(TEXT("One polygon"), Geometry.PolygonCount, 1);
+					TestTrue(TEXT("In the bounds of the quad"), Geometry.Bounds.Min.Equals(FVector(0, 0, 0), 1e-3) && Geometry.Bounds.Max.Equals(FVector(100, 100, 0), 1e-3));
+				}
+			}
+			TestTrue(TEXT("The package has a mesh description"), bRead);
+
+			// The diff says that one vertex moved, and by how much.
+			const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*FlatDocument, *LiftedDocument, FlatTraces.Get(), LiftedTraces.Get());
+			if (const FAssetPackageDiffEntry* Vertices = FindByKey(Diff, TEXT("BulkData/Vertices")))
+			{
+				TestTrue(FString::Printf(TEXT("One of the four vertices moved by 50 (%s)"), *Vertices->DisplayName.ToString()),
+					Vertices->DisplayName.ToString().Contains(TEXT("1 of 4")) && Vertices->DisplayName.ToString().Contains(TEXT("50.0000")));
+			}
+			else
+			{
+				AddError(TEXT("The move of the vertex is not in the diff"));
+			}
+		}
+	}
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(MeshFolder), false, true);
+
+	// A change of the geometry on synthetic meshes.
+	const auto MakeGeometry = [](const TArray<FVector3f>& Positions, const int32 Triangles) {
+		FAssetMeshGeometry Geometry;
+		Geometry.bLoaded = true;
+		Geometry.VertexCount = Positions.Num();
+		Geometry.TriangleCount = Triangles;
+		Geometry.PolygonCount = Triangles;
+		Geometry.Positions = Positions;
+		for (const FVector3f& Position : Positions)
+		{
+			Geometry.Bounds += FVector(Position);
+		}
+		return Geometry;
+	};
+
+	const TArray<FVector3f> Quad = { FVector3f(0, 0, 0), FVector3f(100, 0, 0), FVector3f(100, 100, 0), FVector3f(0, 100, 0) };
+	{
+		TArray<FAssetNativeDataChange> Changes;
+		AssetMeshGeometry::AppendGeometryChange(MakeGeometry(Quad, 2), MakeGeometry(Quad, 2), Changes);
+		TestTrue(TEXT("The same geometry is no change"), Changes.IsEmpty());
+	}
+	{
+		TArray<FVector3f> Moved = Quad;
+		Moved[2] = FVector3f(100, 100, 50);
+		TArray<FAssetNativeDataChange> Changes;
+		AssetMeshGeometry::AppendGeometryChange(MakeGeometry(Quad, 2), MakeGeometry(Moved, 2), Changes);
+		const FAssetNativeDataChange* Vertices = Changes.FindByPredicate([](const FAssetNativeDataChange& Change) { return Change.Key == TEXT("BulkData/Vertices"); });
+		if (TestNotNull(TEXT("A moved vertex is reported"), Vertices))
+		{
+			TestTrue(TEXT("One of four moved"), Vertices->Title.Contains(TEXT("1 of 4")));
+			TestTrue(TEXT("By 50"), Vertices->Title.Contains(TEXT("50.0000")));
+		}
+		TestTrue(TEXT("The bounds changed with it"), Changes.ContainsByPredicate([](const FAssetNativeDataChange& Change) { return Change.Key == TEXT("BulkData/Bounds"); }));
+	}
+	{
+		TArray<FVector3f> Bigger = Quad;
+		Bigger.Add(FVector3f(50, 150, 0));
+		TArray<FAssetNativeDataChange> Changes;
+		AssetMeshGeometry::AppendGeometryChange(MakeGeometry(Quad, 2), MakeGeometry(Bigger, 3), Changes);
+		const FAssetNativeDataChange* Counts = Changes.FindByPredicate([](const FAssetNativeDataChange& Change) { return Change.Key == TEXT("BulkData/Geometry"); });
+		if (TestNotNull(TEXT("A change of the counts is reported"), Counts))
+		{
+			TestTrue(TEXT("From 4 vertices"), Counts->OldValue.Contains(TEXT("4 vertices")));
+			TestTrue(TEXT("To 5"), Counts->NewValue.Contains(TEXT("5 vertices")));
+		}
+		TestFalse(
+			TEXT("Vertices of another number are not compared one by one"), Changes.ContainsByPredicate([](const FAssetNativeDataChange& Change) { return Change.Key == TEXT("BulkData/Vertices"); }));
+	}
+	{
+		FAssetMeshGeometry NotLoaded;
+		NotLoaded.Error = TEXT("The mesh description is virtualized, outside the package");
+		TArray<FAssetNativeDataChange> Changes;
+		AssetMeshGeometry::AppendGeometryChange(NotLoaded, MakeGeometry(Quad, 2), Changes);
+		if (TestEqual(TEXT("A note"), Changes.Num(), 1))
+		{
+			TestTrue(TEXT("That says why"), Changes[0].NewValue.Contains(TEXT("virtualized")));
+		}
+	}
+
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ComparesThePixelsOfTwoImages, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ComparesThePixelsOfTwoImages",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
