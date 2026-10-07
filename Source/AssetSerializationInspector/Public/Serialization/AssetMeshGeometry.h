@@ -11,8 +11,8 @@ struct FAssetPackageDocument;
 
 /**
  * The geometry of a mesh description (the source geometry of a static mesh, as the editor keeps it in the package trailer): how many
- * vertices, triangles and polygons it has, its bounds, and the position of each vertex. The attributes other than the positions (normals,
- * UVs, materials, groups) are not kept.
+ * vertices, triangles and polygons it has, its bounds, the position of each vertex, the normals, tangents and UVs of its corners and the
+ * material slot of each triangle. The other attributes (colors, edge hardness, smoothing groups) are not kept.
  */
 struct FAssetMeshGeometry
 {
@@ -29,6 +29,17 @@ struct FAssetMeshGeometry
 
 	/** The position of each vertex, by the index of the vertex in the mesh description. */
 	TArray<FVector3f> Positions;
+
+	/** The normal and the tangent of each vertex instance (a corner of a polygon), by its index in the mesh description. */
+	TArray<FVector3f> Normals;
+	TArray<FVector3f> Tangents;
+
+	/** The UVs of each channel for each vertex instance. */
+	TArray<TArray<FVector2f>> UVs;
+
+	/** The material slot name of each polygon group, and the slot name each triangle uses. */
+	TArray<FString> MaterialSlots;
+	TArray<FString> TriangleSlots;
 };
 
 namespace AssetMeshGeometry
@@ -38,7 +49,8 @@ namespace AssetMeshGeometry
 
 	/**
 	 * Appends the change of the geometry between two meshes to Changes: the counts of vertices, triangles and polygons, the bounds, and
-	 * when the vertices are the same in number, how many moved, the largest move, and where they are. Appends a note instead when one of
+	 * when the vertices are the same in number, how many moved, the largest move, and where they are; the same for the normals, the tangents and
+	 * the UVs of the corners, and the material slots and which triangles use which. Appends a note instead when one of
 	 * the geometries could not be loaded, and nothing when they are the same.
 	 */
 	void AppendGeometryChange(const FAssetMeshGeometry& Old, const FAssetMeshGeometry& New, TArray<FAssetNativeDataChange>& Changes);

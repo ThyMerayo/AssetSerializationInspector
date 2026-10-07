@@ -105,6 +105,11 @@ namespace BulkDataTestUtils
 		UPackage* Package = nullptr;
 		UStaticMesh* Mesh = nullptr;
 
+		/** What the corners and the polygon carry besides the positions; SetQuad writes them. */
+		FVector3f Normal = FVector3f(0, 0, 1);
+		float UVShift = 0.0f;
+		FName SlotName = FName(TEXT("None"));
+
 		FTestMesh()
 		{
 			Package = CreatePackage(*AssetTestPackages::Unique(MeshPackage));
@@ -132,12 +137,13 @@ namespace BulkDataTestUtils
 				const FVertexID Vertex = Description->CreateVertex();
 				Attributes.GetVertexPositions()[Vertex] = Position;
 				const FVertexInstanceID Instance = Description->CreateVertexInstance(Vertex);
-				Attributes.GetVertexInstanceNormals()[Instance] = FVector3f(0, 0, 1);
+				Attributes.GetVertexInstanceNormals()[Instance] = Normal;
+				Attributes.GetVertexInstanceUVs().Set(Instance, 0, FVector2f(Position.X / 100.0f + UVShift, Position.Y / 100.0f));
 				Instances.Add(Instance);
 			}
 
 			const FPolygonGroupID Group = Description->CreatePolygonGroup();
-			Attributes.GetPolygonGroupMaterialSlotNames()[Group] = FName(TEXT("None"));
+			Attributes.GetPolygonGroupMaterialSlotNames()[Group] = SlotName;
 			Description->CreatePolygon(Group, Instances);
 			Mesh->CommitMeshDescription(0);
 			Mesh->Build(true);
@@ -274,10 +280,18 @@ bool FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription::RunTest(const FStr
 		Test.SetQuad(50.0f);
 		const FString Lifted = Test.Save(TEXT("lifted.uasset"));
 
+		// The same flat quad with a tilted normal, shifted UVs and another material slot.
+		Test.Normal = FVector3f(0.6f, 0.0f, 0.8f);
+		Test.UVShift = 0.25f;
+		Test.SlotName = FName(TEXT("Metal"));
+		Test.SetQuad(0.0f);
+		const FString Reshaded = Test.Save(TEXT("reshaded.uasset"));
+
 		FText Error;
 		const TSharedPtr<FAssetPackageDocument> FlatDocument = FAssetPackageReader::LoadFromFile(Flat, Error);
 		const TSharedPtr<FAssetPackageDocument> LiftedDocument = FAssetPackageReader::LoadFromFile(Lifted, Error);
-		if (TestTrue(TEXT("Both versions are written and load"), FlatDocument.IsValid() && LiftedDocument.IsValid()))
+		const TSharedPtr<FAssetPackageDocument> ReshadedDocument = FAssetPackageReader::LoadFromFile(Reshaded, Error);
+		if (TestTrue(TEXT("The three versions are written and load"), FlatDocument.IsValid() && LiftedDocument.IsValid() && ReshadedDocument.IsValid()))
 		{
 			const TSharedPtr<FAssetPackageTraceCollection> FlatTraces = FAssetPackageFieldDecoder::Decode(*FlatDocument);
 			const TSharedPtr<FAssetPackageTraceCollection> LiftedTraces = FAssetPackageFieldDecoder::Decode(*LiftedDocument);
@@ -316,6 +330,37 @@ bool FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription::RunTest(const FStr
 			{
 				AddError(TEXT("The move of the vertex is not in the diff"));
 			}
+
+			// Another normal, UVs and material slot: each is named, and the vertices are not reported as moved.
+			const TSharedPtr<FAssetPackageTraceCollection> ReshadedTraces = FAssetPackageFieldDecoder::Decode(*ReshadedDocument);
+			const FAssetPackageDiffResult Reshading = AssetPackageDiff::Compare(*FlatDocument, *ReshadedDocument, FlatTraces.Get(), ReshadedTraces.Get());
+			if (const FAssetPackageDiffEntry* Normals = FindByKey(Reshading, TEXT("BulkData/Normals")))
+			{
+				TestTrue(FString::Printf(TEXT("All four normals turned by about 36.87 degrees (%s)"), *Normals->DisplayName.ToString()),
+					Normals->DisplayName.ToString().Contains(TEXT("4 of 4")) && Normals->DisplayName.ToString().Contains(TEXT("36.8")));
+			}
+			else
+			{
+				AddError(TEXT("The change of the normals is not in the diff"));
+			}
+			if (const FAssetPackageDiffEntry* Uvs = FindByKey(Reshading, TEXT("BulkData/UV/0")))
+			{
+				TestTrue(FString::Printf(TEXT("Four corners moved by 0.25 (%s)"), *Uvs->DisplayName.ToString()),
+					Uvs->DisplayName.ToString().Contains(TEXT("4 of 4")) && Uvs->DisplayName.ToString().Contains(TEXT("0.25")));
+			}
+			else
+			{
+				AddError(TEXT("The change of the UVs is not in the diff"));
+			}
+			if (const FAssetPackageDiffEntry* Slots = FindByKey(Reshading, TEXT("BulkData/MaterialSlots")))
+			{
+				TestTrue(TEXT("From None to Metal"), Slots->OldValue.Contains(TEXT("None")) && Slots->NewValue.Contains(TEXT("Metal")));
+			}
+			else
+			{
+				AddError(TEXT("The change of the material slot is not in the diff"));
+			}
+			TestNull(TEXT("The vertices did not move"), FindByKey(Reshading, TEXT("BulkData/Vertices")));
 		}
 	}
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(MeshFolder), false, true);
