@@ -74,7 +74,8 @@ Open items, in order:
 - [x] The native data of static meshes: collision, sockets, lighting GUID and material slots (all 184 of the engine content); the geometry is the mesh description, and the render data of a cooked mesh is not read
 - [x] The start of the native data of skeletal meshes: bounds, material slots and reference skeleton (bones, parents, poses); all three of the engine content
 - [x] The imported model of skeletal meshes: LODs, sections, vertices (as a hash), index buffers and bones; all three of the engine content
-- [ ] Skeletal meshes saved by UE4-era versions (the Mannequins, four of the 58 in the engine's plugins): the model keeps its vertices, skin weights, colors, adjacency and cloth in separate buffers instead of the sections, each with its own layout
+- [x] Skeletal meshes saved by 4.2x and early 5.0 versions (the Mannequins, four of the 58 in the engine's plugins): the raw point indices and the reduction sources as blocks of bulk data, and the sections and their settings without the ray tracing flag; all 58 of the engine's plugins
+- [ ] Skeletal meshes from before the model and the render data were split (their vertices, skin weights, colors, adjacency and cloth in separate buffers); no sample in the engine
 - [ ] Skeletal meshes with cloth data or skin weight profiles, and the render data of cooked skeletal meshes: no sample in the engine content, and the engine's skeletal meshes did not cook with `-CookDir`, so a sample has to be made first (these fail with a reason until then)
 - [ ] Morph targets: they are objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), not part of the mesh's data; the class is not read
 - [x] Texture classes that write more after the texture's data: `LightMapTexture2D` adds its lightmap flags (the 69 exports of the engine's plugins that ended with unread bytes)

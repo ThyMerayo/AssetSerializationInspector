@@ -13,6 +13,7 @@
 #include "UObject/UE5MainStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
 
@@ -72,72 +73,14 @@ namespace
 		}
 	}
 
-	/**
-	 * FByteBulkData::Serialize, the format before FEditorBulkData: the flags, the element count, the size on disk and the offset (32 bit
-	 * sizes unless the flags say 64), and the payload inline unless it is at the end of the file. The payload is not decoded, only hashed.
-	 */
+	/** The header of the format before FEditorBulkData (see AssetLegacyBulkData) as the record of a source image or a mesh description. */
 	void ReadLegacyBulkDataRecord(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetBulkDataInfo& Out)
 	{
-		constexpr uint32 FlagBadDataVersion = 1u << 15;
-
+		const FAssetLegacyBulkData Legacy = AssetLegacyBulkData::Read(Reader, Document);
 		Out.bLegacy = true;
-		Out.Flags = Reader.Read<uint32>();
-
-		const bool b64Bit = (Out.Flags & BULKDATA_Size64Bit) != 0;
-		const int64 ElementCount = b64Bit ? Reader.Read<int64>() : Reader.Read<int32>();
-		const int64 SizeOnDisk = b64Bit ? Reader.Read<int64>() : Reader.Read<int32>();
-		const int64 Offset = Reader.Read<int64>();
-		if ((Out.Flags & FlagBadDataVersion) != 0)
-		{
-			Reader.Read<uint16>();
-		}
-		if ((Out.Flags & BULKDATA_DuplicateNonOptionalPayload) != 0)
-		{
-			Reader.Read<uint32>();
-			if (b64Bit)
-			{
-				Reader.Read<int64>();
-			}
-			else
-			{
-				Reader.Read<int32>();
-			}
-			Reader.Read<int64>();
-		}
-
-		if (!Reader.Ok())
-		{
-			return;
-		}
-		if (ElementCount < 0 || SizeOnDisk < 0)
-		{
-			Reader.Fail(TEXT("The header of the older bulk data format has a negative size"));
-			return;
-		}
-
-		Out.PayloadSize = ElementCount;
-		const auto Hash = [&Out](const FAssetPackageDocument& InDocument, const int64 Start, const int64 Size) {
-			if (Size > 0 && InDocument.IsValidRange(Start, Size))
-			{
-				Out.ContentHash = FSHA1::HashBuffer(InDocument.FileData.GetData() + Start, static_cast<uint64>(Size)).ToString();
-			}
-		};
-
-		if ((Out.Flags & BULKDATA_PayloadAtEndOfFile) == 0)
-		{
-			const int64 Start = Reader.Tell();
-			Reader.Skip(SizeOnDisk);
-			if (Reader.Ok())
-			{
-				Hash(Document, Start, SizeOnDisk);
-			}
-		}
-		else
-		{
-			// The offset is relative to where the bulk data section of the package starts, unless the flags say it is absolute.
-			const int64 Start = (Out.Flags & BULKDATA_NoOffsetFixUp) != 0 ? Offset : Offset + Document.PackageSummary.BulkDataStartOffset;
-			Hash(Document, Start, SizeOnDisk);
-		}
+		Out.Flags = Legacy.Flags;
+		Out.PayloadSize = Legacy.ElementCount;
+		Out.ContentHash = Legacy.PayloadHash;
 	}
 
 	FString DescribeBulkContent(const FAssetBulkDataInfo& Bulk)

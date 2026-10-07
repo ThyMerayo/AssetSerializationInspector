@@ -72,7 +72,21 @@ bool FAssetSkeletalMeshData_ReadsTheSkeletalMeshesOfTheEngineContent::RunTest(co
 		return true;
 	}
 
-	for (const FString& File : Meshes)
+	// Two meshes the engine's plugins keep from before 5.0 (the mannequins), whose model is stored in the layouts of those versions: the
+	// raw point indices and the reduction sources are blocks of bulk data of their own, and the sections have no ray tracing flag.
+	TArray<FString> AllMeshes = Meshes;
+	for (const FString& Older : { FPaths::Combine(FPaths::EnginePluginsDir(), TEXT("Runtime"), TEXT("NetworkPredictionExtras"), TEXT("Content"), TEXT("Animation"), TEXT("Characters"), TEXT("UE4_Guy"),
+									  TEXT("Mesh"), TEXT("SK_Mannequin.uasset")),
+			 FPaths::Combine(
+				 FPaths::EnginePluginsDir(), TEXT("Experimental"), TEXT("AnimToTexture"), TEXT("Content"), TEXT("Characters"), TEXT("Mannequin"), TEXT("Meshes"), TEXT("SKM_Mannequin.uasset")) })
+	{
+		if (IFileManager::Get().FileExists(*Older))
+		{
+			AllMeshes.Add(Older);
+		}
+	}
+
+	for (const FString& File : AllMeshes)
 	{
 		FText Error;
 		const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(File, Error);

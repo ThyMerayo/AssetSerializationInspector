@@ -18,6 +18,7 @@
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetNumberText.h"
 #include "Serialization/AssetSchemaReflection.h"
@@ -140,7 +141,7 @@ namespace
 		Reader.Read<int32>();
 	}
 
-	/** FSkelMeshSection (SkeletalMeshLODModel.cpp), in the layout since the clothing and the build refactors; older layouts are not read. */
+	/** FSkelMeshSection (SkeletalMeshLODModel.cpp), in the layout since the clothing and the build refactors, and the versions of it since the ray tracing flag; older layouts are not read. */
 	void ReadSection(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetSkeletalMeshSection& Out)
 	{
 		const uint8 GlobalStripFlags = Reader.Read<uint8>();
@@ -157,7 +158,8 @@ namespace
 		Out.bRecomputeTangent = Reader.ReadBool();
 		Reader.Read<uint8>(); // the vertex color channel to recompute the tangents from
 		Out.bCastShadow = Reader.ReadBool();
-		Out.bVisibleInRayTracing = Reader.ReadBool();
+		// A section is visible in ray tracing unless it says otherwise; before the flag existed it was not written.
+		Out.bVisibleInRayTracing = Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkelMeshSectionVisibleInRayTracingFlagAdded ? Reader.ReadBool() : true;
 		Out.BaseVertexIndex = Reader.Read<uint32>();
 
 		if ((GlobalStripFlags & 1) == 0)
@@ -171,7 +173,9 @@ namespace
 		Out.MaxBoneInfluences = Reader.Read<int32>();
 
 		// The cloth mapping of each LOD of the section: not read, and an error when there is some.
-		const int32 ClothLods = ReadCount(Reader, 4, TEXT("cloth mapping levels"));
+		// Before the LOD bias of the cloth was added there was a single mapping instead of one for each LOD.
+		const bool bClothLodBias = Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::AddClothMappingLODBias;
+		const int32 ClothLods = bClothLodBias ? ReadCount(Reader, 4, TEXT("cloth mapping levels")) : 1;
 		for (int32 Index = 0; Index < ClothLods && Reader.Ok(); ++Index)
 		{
 			if (Reader.Read<int32>() != 0)
@@ -211,7 +215,10 @@ namespace
 		Reader.ReadBool();	  // recompute tangents
 		Reader.Read<uint8>(); // and the color channel it uses
 		Reader.ReadBool();	  // casts shadows
-		Reader.ReadBool();	  // visible in ray tracing
+		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkelMeshSectionVisibleInRayTracingFlagAdded)
+		{
+			Reader.ReadBool(); // visible in ray tracing
+		}
 		Reader.ReadBool();	  // disabled
 		Reader.Read<int32>(); // generated up to this LOD
 		Reader.Read<int16>(); // the clothing asset
@@ -253,7 +260,7 @@ namespace
 		SkipHashedArray(Reader, Document, 2, TEXT("active bones"), ActiveBones, Unused);
 		Out.ActiveBoneCount = ActiveBones;
 
-		if (!bEditorStripped)
+		if (!bEditorStripped && Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkeletalMeshLODModelMeshInfo)
 		{
 			const int32 Meshes = ReadCount(Reader, 16, TEXT("imported meshes"));
 			for (int32 Index = 0; Index < Meshes && Reader.Ok(); ++Index)
@@ -274,8 +281,16 @@ namespace
 
 		if (!bEditorStripped)
 		{
-			int32 PointIndices = 0;
-			SkipHashedArray(Reader, Document, 4, TEXT("raw point indices"), PointIndices, Unused);
+			if (Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::RemoveSkeletalMeshLODModelBulkDatas)
+			{
+				// Before the indices moved into the model they were a block of bulk data of their own.
+				AssetLegacyBulkData::Read(Reader, Document);
+			}
+			else
+			{
+				int32 PointIndices = 0;
+				SkipHashedArray(Reader, Document, 4, TEXT("raw point indices"), PointIndices, Unused);
+			}
 			Reader.ReadString(); // the id of the source data
 			Reader.ReadBool();	 // whether the build data is available
 			Reader.ReadBool();	 // whether the source data is empty
@@ -309,9 +324,6 @@ namespace
 		const FGate Gates[] = {
 			{ TEXT("SkeletalMeshCustomVersion.RemoveEnableClothLOD"), FSkeletalMeshCustomVersion::GUID, FSkeletalMeshCustomVersion::RemoveEnableClothLOD },
 			{ TEXT("EditorObjectVersion.SkeletalMeshMoveEditorSourceDataToPrivateAsset"), FEditorObjectVersion::GUID, FEditorObjectVersion::SkeletalMeshMoveEditorSourceDataToPrivateAsset },
-			{ TEXT("UE5MainStreamObjectVersion.ConvertReductionBaseSkeletalMeshBulkDataToInlineReductionCacheData"), FUE5MainStreamObjectVersion::GUID,
-				FUE5MainStreamObjectVersion::ConvertReductionBaseSkeletalMeshBulkDataToInlineReductionCacheData },
-			{ TEXT("UE5ReleaseStreamObjectVersion.RemoveSkeletalMeshLODModelBulkDatas"), FUE5ReleaseStreamObjectVersion::GUID, FUE5ReleaseStreamObjectVersion::RemoveSkeletalMeshLODModelBulkDatas },
 			{ TEXT("FortniteMainBranchObjectVersion.AllowSkeletalMeshToReduceTheBaseLOD"), FFortniteMainBranchObjectVersion::GUID,
 				FFortniteMainBranchObjectVersion::AllowSkeletalMeshToReduceTheBaseLOD },
 			{ TEXT("RecomputeTangentCustomVersion.RecomputeTangentVertexColorMask"), RecomputeTangentVersionGuid, FRecomputeTangentCustomVersion::RecomputeTangentVertexColorMask },
@@ -357,8 +369,20 @@ namespace
 		Out.ModelGuid = Reader.ReadGuid().ToString(EGuidFormats::DigitsWithHyphens);
 		Reader.ReadBool(); // whether the identifier is a hash
 
-		const int32 Caches = ReadCount(Reader, 8, TEXT("reduction caches"));
-		Reader.Skip(static_cast<int64>(Caches) * 8);
+		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::ConvertReductionBaseSkeletalMeshBulkDataToInlineReductionCacheData)
+		{
+			// A block of bulk data for each LOD, kept for a reduction to start from.
+			const int32 Caches = ReadCount(Reader, 20, TEXT("reduction sources"));
+			for (int32 Index = 0; Index < Caches && Reader.Ok(); ++Index)
+			{
+				AssetLegacyBulkData::Read(Reader, Document);
+			}
+		}
+		else
+		{
+			const int32 Caches = ReadCount(Reader, 8, TEXT("reduction caches"));
+			Reader.Skip(static_cast<int64>(Caches) * 8);
+		}
 
 		// USkeletalMesh::Serialize again: whether it is cooked (its render data follows), and the objects it keeps.
 		const bool bCooked = Reader.ReadBool();
