@@ -3,6 +3,12 @@
 #include "Serialization/AssetBulkDataExport.h"
 
 #include "Engine/Texture.h"
+#include "Engine/Texture2D.h"
+#include "HAL/FileManager.h"
+#include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
+#include "Serialization/Archive.h"
+#include "Serialization/BulkData.h"
 #include "UObject/EditorObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 
@@ -66,14 +72,354 @@ namespace
 		}
 	}
 
+	/**
+	 * FByteBulkData::Serialize, the format before FEditorBulkData: the flags, the element count, the size on disk and the offset (32 bit
+	 * sizes unless the flags say 64), and the payload inline unless it is at the end of the file. The payload is not decoded, only hashed.
+	 */
+	void ReadLegacyBulkDataRecord(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetBulkDataInfo& Out)
+	{
+		constexpr uint32 FlagBadDataVersion = 1u << 15;
+
+		Out.bLegacy = true;
+		Out.Flags = Reader.Read<uint32>();
+
+		const bool b64Bit = (Out.Flags & BULKDATA_Size64Bit) != 0;
+		const int64 ElementCount = b64Bit ? Reader.Read<int64>() : Reader.Read<int32>();
+		const int64 SizeOnDisk = b64Bit ? Reader.Read<int64>() : Reader.Read<int32>();
+		const int64 Offset = Reader.Read<int64>();
+		if ((Out.Flags & FlagBadDataVersion) != 0)
+		{
+			Reader.Read<uint16>();
+		}
+		if ((Out.Flags & BULKDATA_DuplicateNonOptionalPayload) != 0)
+		{
+			Reader.Read<uint32>();
+			if (b64Bit)
+			{
+				Reader.Read<int64>();
+			}
+			else
+			{
+				Reader.Read<int32>();
+			}
+			Reader.Read<int64>();
+		}
+
+		if (!Reader.Ok())
+		{
+			return;
+		}
+		if (ElementCount < 0 || SizeOnDisk < 0)
+		{
+			Reader.Fail(TEXT("The header of the older bulk data format has a negative size"));
+			return;
+		}
+
+		Out.PayloadSize = ElementCount;
+		const auto Hash = [&Out](const FAssetPackageDocument& InDocument, const int64 Start, const int64 Size) {
+			if (Size > 0 && InDocument.IsValidRange(Start, Size))
+			{
+				Out.ContentHash = FSHA1::HashBuffer(InDocument.FileData.GetData() + Start, static_cast<uint64>(Size)).ToString();
+			}
+		};
+
+		if ((Out.Flags & BULKDATA_PayloadAtEndOfFile) == 0)
+		{
+			const int64 Start = Reader.Tell();
+			Reader.Skip(SizeOnDisk);
+			if (Reader.Ok())
+			{
+				Hash(Document, Start, SizeOnDisk);
+			}
+		}
+		else
+		{
+			// The offset is relative to where the bulk data section of the package starts, unless the flags say it is absolute.
+			const int64 Start = (Out.Flags & BULKDATA_NoOffsetFixUp) != 0 ? Offset : Offset + Document.PackageSummary.BulkDataStartOffset;
+			Hash(Document, Start, SizeOnDisk);
+		}
+	}
+
 	FString DescribeBulkContent(const FAssetBulkDataInfo& Bulk)
 	{
 		return FString::Printf(TEXT("%s (%lld bytes)"), Bulk.ContentHash.IsEmpty() ? TEXT("none") : *Bulk.ContentHash.Left(16), Bulk.PayloadSize);
+	}
+
+	/** An entry of the data resource table of a package (FObjectDataResource): where a block of bulk data is and how it is stored. */
+	struct FDataResource
+	{
+		uint32 BulkFlags = 0;
+		int64 SerialOffset = INDEX_NONE;
+		int64 SerialSize = 0;
+		int64 RawSize = 0;
+	};
+
+	/**
+	 * Reads the data resource table of the package, where the cook records every block of bulk data: the cooked mips of a texture
+	 * refer to it by index. The table is a version, a count and the entries (FObjectDataResource::Serialize).
+	 */
+	void ReadDataResources(const FAssetPackageDocument& Document, TArray<FDataResource>& Out, FString& Error)
+	{
+		const int64 Start = Document.PackageSummary.DataResourceOffset;
+		if (Start <= 0)
+		{
+			return;
+		}
+
+		FNativeReader Header(Document, Start, 8);
+		const uint32 Version = Header.Read<uint32>();
+		const int32 Count = Header.Read<int32>();
+		constexpr uint32 FirstVersionWithCookedIndex = 2;
+		if (!Header.Ok() || Version < 1 || Count < 0 || Count > 1 << 20)
+		{
+			Error = TEXT("The data resource table of the package is not in a layout this reading knows");
+			return;
+		}
+
+		// Flags 4, cooked index 1 (from version 2), offset 8, duplicate offset 8, serial size 8, raw size 8, outer index 4, legacy flags 4.
+		const int64 EntrySize = 4 + (Version >= FirstVersionWithCookedIndex ? 1 : 0) + 8 + 8 + 8 + 8 + 4 + 4;
+		if (!Document.IsValidRange(Start + 8, EntrySize * Count))
+		{
+			Error = TEXT("The data resource table ends after the file does");
+			return;
+		}
+
+		FNativeReader Reader(Document, Start + 8, EntrySize * Count);
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			FDataResource& Resource = Out.AddDefaulted_GetRef();
+			Reader.Read<uint32>();
+			if (Version >= FirstVersionWithCookedIndex)
+			{
+				Reader.Read<uint8>();
+			}
+			Resource.SerialOffset = Reader.Read<int64>();
+			Reader.Read<int64>();
+			Resource.SerialSize = Reader.Read<int64>();
+			Resource.RawSize = Reader.Read<int64>();
+			Reader.Read<int32>();
+			Resource.BulkFlags = Reader.Read<uint32>();
+		}
+	}
+
+	/** Whether two mips are the same: their size, their storage and their pixels, which are compared only when both could be read. */
+	bool SameMip(const FAssetTextureMip& A, const FAssetTextureMip& B)
+	{
+		const bool bSamePixels = A.PayloadHash.IsEmpty() || B.PayloadHash.IsEmpty() || A.PayloadHash.Equals(B.PayloadHash, ESearchCase::CaseSensitive);
+		return A.SizeX == B.SizeX && A.SizeY == B.SizeY && A.SizeZ == B.SizeZ && A.PayloadSize == B.PayloadSize && A.DescribeStorage() == B.DescribeStorage() && bSamePixels;
+	}
+
+	/** A hash of pixels, short enough to read: what tells that they changed without saying what they hold. */
+	FString HashBytes(const uint8* Data, const int64 Size)
+	{
+		return Size > 0 ? FSHA1::HashBuffer(Data, static_cast<uint64>(Size)).ToString().Left(16) : FString();
+	}
+
+	/**
+	 * A hash of a range of the sidecar file of the package (.ubulk for mips that stream), when the file is next to the package. Empty
+	 * when it is not there, as it is for a package that is not on disk or one copied without its sidecar.
+	 */
+	FString HashSidecarRange(const FAssetPackageDocument& Document, const TCHAR* Extension, const int64 Offset, const int64 Size)
+	{
+		if (Document.Filename.IsEmpty() || Offset < 0 || Size <= 0 || Size > (1LL << 30))
+		{
+			return FString();
+		}
+
+		const FString Path = FPaths::ChangeExtension(Document.Filename, Extension);
+		const TUniquePtr<FArchive> File(IFileManager::Get().CreateFileReader(*Path));
+		if (!File.IsValid() || Offset + Size > File->TotalSize())
+		{
+			return FString();
+		}
+
+		TArray64<uint8> Bytes;
+		Bytes.SetNumUninitialized(Size);
+		File->Seek(Offset);
+		File->Serialize(Bytes.GetData(), Size);
+		return File->IsError() ? FString() : HashBytes(Bytes.GetData(), Size);
+	}
+
+	/** The sidecar file the payload of a mip is in, by its flags; null for a payload that is inline. */
+	const TCHAR* SidecarExtension(const uint32 BulkFlags)
+	{
+		if ((BulkFlags & BULKDATA_PayloadAtEndOfFile) == 0)
+		{
+			return nullptr;
+		}
+		if ((BulkFlags & BULKDATA_OptionalPayload) != 0)
+		{
+			return TEXT("uptnl");
+		}
+		return TEXT("ubulk");
+	}
+
+	/**
+	 * FTexturePlatformData as a cooked texture stores it (SerializePlatformData, bulk data format): a flag for the derived data format
+	 * and a zeroed block that stands for it, the size, the packed flags, the pixel format, the optional data, the mips, and whether the
+	 * texture is virtual. The derived data format, the CPU copy and virtual textures are not read.
+	 */
+	void ReadPlatformData(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const bool bMipData, FAssetTexturePlatformData& Out)
+	{
+		constexpr uint32 PackedCubeMap = 1u << 31;
+		constexpr uint32 PackedHasOptData = 1u << 30;
+		constexpr uint32 PackedHasCpuCopy = 1u << 29;
+		constexpr uint32 PackedNumSlices = PackedHasCpuCopy - 1;
+
+		if (Reader.Read<uint8>() != 0)
+		{
+			Reader.Fail(TEXT("The platform data is stored as references to derived data, which are not read"));
+			return;
+		}
+		for (int32 Index = 0; Index < 15 && Reader.Ok(); ++Index)
+		{
+			if (Reader.Read<uint8>() != 0)
+			{
+				Reader.Fail(TEXT("The block that stands for the derived data format is not empty"));
+			}
+		}
+
+		Out.SizeX = Reader.Read<int32>();
+		Out.SizeY = Reader.Read<int32>();
+		const uint32 PackedData = Reader.Read<uint32>();
+		Out.NumSlices = static_cast<int32>(PackedData & PackedNumSlices);
+		Out.bCubeMap = (PackedData & PackedCubeMap) != 0;
+		Out.PixelFormat = Reader.ReadString();
+
+		if (bMipData && (PackedData & PackedHasOptData) != 0)
+		{
+			Reader.Read<uint32>();
+			Out.NumMipsInTail = Reader.Read<int32>();
+		}
+		if ((PackedData & PackedHasCpuCopy) != 0)
+		{
+			// A copy of the image the CPU keeps (FSharedImage): its size, slices, format and gamma, then the pixels.
+			Reader.Read<int32>();
+			Reader.Read<int32>();
+			Reader.Read<int32>();
+			Reader.Read<uint8>();
+			Reader.Read<uint8>();
+			const int64 PixelBytes = Reader.Read<int64>();
+			const int64 Start = Reader.Tell();
+			if (Reader.Ok() && (PixelBytes < 0 || PixelBytes > Reader.Remaining()))
+			{
+				Reader.Fail(TEXT("The CPU copy of a texture is longer than the data"));
+				return;
+			}
+			Reader.Skip(PixelBytes);
+			if (Reader.Ok())
+			{
+				Out.CpuCopyHash = HashBytes(Document.FileData.GetData() + Start, PixelBytes);
+			}
+		}
+
+		Out.FirstMipToSerialize = Reader.Read<int32>();
+		const int32 NumMips = Reader.Read<int32>();
+		if (!Reader.Ok() || NumMips < 0 || NumMips > 64)
+		{
+			Reader.Fail(TEXT("A texture does not have a number of mips that makes sense"));
+			return;
+		}
+
+		const bool bEditorOnlyStripped = (Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) != 0;
+		for (int32 MipIndex = 0; MipIndex < NumMips && Reader.Ok(); ++MipIndex)
+		{
+			FAssetTextureMip& Mip = Out.Mips.AddDefaulted_GetRef();
+			if (bMipData)
+			{
+				const int32 ResourceIndex = Reader.Read<int32>();
+				if (!Resources.IsValidIndex(ResourceIndex))
+				{
+					Reader.Fail(TEXT("A mip does not point into the data resource table of the package"));
+					return;
+				}
+
+				const FDataResource& Resource = Resources[ResourceIndex];
+				Mip.BulkFlags = Resource.BulkFlags;
+				Mip.PayloadSize = Resource.RawSize;
+				Mip.Offset = Resource.SerialOffset;
+
+				if (const TCHAR* Sidecar = SidecarExtension(Resource.BulkFlags))
+				{
+					Mip.PayloadHash = HashSidecarRange(Document, Sidecar, Resource.SerialOffset, Resource.SerialSize);
+				}
+				else
+				{
+					// Inline: the pixels follow the index.
+					const int64 Start = Reader.Tell();
+					Reader.Skip(Resource.SerialSize);
+					if (Reader.Ok())
+					{
+						Mip.PayloadHash = HashBytes(Document.FileData.GetData() + Start, Resource.SerialSize);
+					}
+				}
+			}
+
+			Mip.SizeX = Reader.Read<int32>();
+			Mip.SizeY = Reader.Read<int32>();
+			Mip.SizeZ = Reader.Read<int32>();
+			if (!bEditorOnlyStripped)
+			{
+				Reader.Fail(TEXT("A texture cooked for the editor, with the data of the editor kept, is not read"));
+			}
+		}
+
+		if (Reader.ReadBool())
+		{
+			Reader.Fail(TEXT("The data of a virtual texture is not read"));
+		}
+	}
+
+	/**
+	 * What UTexture::SerializeCookedPlatformData writes: whether the pixels are in the data, then for each pixel format the cook made its
+	 * name, the distance to the next one and its platform data, and at the end the name None.
+	 */
+	void ReadCookedPlatformData(FNativeReader& Reader, const FAssetPackageDocument& Document, const bool bWritesMipDataFlag, FAssetBulkDataExport& Out)
+	{
+		TArray<FDataResource> Resources;
+		FString TableError;
+		ReadDataResources(Document, Resources, TableError);
+		if (!TableError.IsEmpty())
+		{
+			Reader.Fail(TableError);
+			return;
+		}
+
+		// Only UTexture2D writes whether the pixels are in the data (the other kinds always have them).
+		const bool bMipData = bWritesMipDataFlag ? Reader.ReadBool() : true;
+		while (Reader.Ok())
+		{
+			const FString Format = Reader.ReadName();
+			if (!Reader.Ok() || Format == TEXT("None"))
+			{
+				break;
+			}
+			if (Out.PlatformData.Num() >= 8)
+			{
+				Reader.Fail(TEXT("A texture has more pixel formats than a cook writes"));
+				break;
+			}
+
+			const int64 SkipStart = Reader.Tell();
+			const int64 Skip = Reader.Read<int64>();
+			FAssetTexturePlatformData& Data = Out.PlatformData.AddDefaulted_GetRef();
+			ReadPlatformData(Reader, Document, Resources, bMipData, Data);
+			if (Reader.Ok() && Reader.Tell() != SkipStart + Skip)
+			{
+				Reader.Fail(TEXT("The platform data does not end where its size says"));
+			}
+		}
 	}
 } // namespace
 
 FString FAssetBulkDataInfo::DescribeStorage() const
 {
+	if (bLegacy)
+	{
+		return FString::Printf(TEXT("older bulk data format, %s%s"), (Flags & BULKDATA_PayloadAtEndOfFile) != 0 ? TEXT("at the end of the package") : TEXT("inline"),
+			(Flags & BULKDATA_SerializeCompressed) != 0 ? TEXT(", compressed") : TEXT(""));
+	}
+
 	static const TPair<uint32, const TCHAR*> Names[] = { { FlagIsVirtualized, TEXT("virtualized") }, { FlagHasPayloadSidecarFile, TEXT("sidecar file") },
 		{ FlagReferencesLegacyFile, TEXT("legacy file") }, { FlagLegacyFileIsCompressed, TEXT("legacy file compressed") }, { FlagDisablePayloadCompression, TEXT("not compressed") },
 		{ FlagLegacyKeyWasGuidDerived, TEXT("key from guid") }, { FlagReferencesWorkspaceDomain, TEXT("workspace domain") }, { FlagStoredInPackageTrailer, TEXT("package trailer") },
@@ -91,8 +437,57 @@ FString FAssetBulkDataInfo::DescribeStorage() const
 	return Parts.IsEmpty() ? FString(TEXT("in the package")) : FString::Join(Parts, TEXT(", "));
 }
 
+bool FAssetTextureMip::IsInline() const
+{
+	return (BulkFlags & BULKDATA_PayloadAtEndOfFile) == 0;
+}
+
+FString FAssetTextureMip::DescribeStorage() const
+{
+	if (IsInline())
+	{
+		return TEXT("inline");
+	}
+
+	const TCHAR* Extension = SidecarExtension(BulkFlags);
+	return FString::Printf(TEXT("%s (.%s)"), (BulkFlags & BULKDATA_OptionalPayload) != 0 ? TEXT("optional") : TEXT("streamed"), Extension != nullptr ? Extension : TEXT("?"));
+}
+
+FString FAssetTextureMip::Describe() const
+{
+	const FString Size = SizeZ > 1 ? FString::Printf(TEXT("%dx%dx%d"), SizeX, SizeY, SizeZ) : FString::Printf(TEXT("%dx%d"), SizeX, SizeY);
+	const FString Pixels = PayloadHash.IsEmpty() ? FString(TEXT("pixels not read")) : FString::Printf(TEXT("pixels %s"), *PayloadHash);
+	return FString::Printf(TEXT("%s, %lld bytes, %s, %s"), *Size, PayloadSize, *DescribeStorage(), *Pixels);
+}
+
+FString FAssetTexturePlatformData::Describe() const
+{
+	int32 Inline = 0;
+	for (const FAssetTextureMip& Mip : Mips)
+	{
+		Inline += Mip.IsInline() ? 1 : 0;
+	}
+
+	FString Result = FString::Printf(TEXT("%s, %dx%d"), *PixelFormat, SizeX, SizeY);
+	if (bCubeMap)
+	{
+		Result += TEXT(", cube map");
+	}
+	else if (NumSlices > 1)
+	{
+		Result += FString::Printf(TEXT(", %d slices"), NumSlices);
+	}
+	Result += FString::Printf(TEXT(", %d mips (%d inline, %d in files next to the package)"), Mips.Num(), Inline, Mips.Num() - Inline);
+	return Result;
+}
+
 FString FAssetBulkDataExport::Summarize() const
 {
+	if (!PlatformData.IsEmpty())
+	{
+		return FString::Printf(TEXT("%s (cooked): %s"), *Kind, *PlatformData[0].Describe());
+	}
+
 	return bHasBulkData ? FString::Printf(TEXT("%s: %s"), *Kind, *DescribeBulkContent(Bulk)) : FString::Printf(TEXT("%s: no editor data"), *Kind);
 }
 
@@ -118,13 +513,6 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 
 	FNativeReader Reader(Document, NativeOffset, NativeSize);
 
-	// The record is written with an identifier of its own for each block of data since this version.
-	if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::VirtualizedBulkDataHaveUniqueGuids)
-	{
-		Out.Error = TEXT("The package stores its bulk data in an older format");
-		return true;
-	}
-
 	// UObject::Serialize ends with the object's GUID, when it has one.
 	if (Reader.ReadBool())
 	{
@@ -139,7 +527,14 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 		if ((GlobalStripFlags & 1) == 0 && Reader.Ok())
 		{
 			Out.bHasBulkData = true;
-			ReadEditorBulkDataRecord(Reader, Out.Bulk);
+			if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::TextureSourceVirtualization)
+			{
+				ReadLegacyBulkDataRecord(Reader, Document, Out.Bulk);
+			}
+			else
+			{
+				ReadEditorBulkDataRecord(Reader, Out.Bulk);
+			}
 		}
 
 		// UTexture2D, UTextureCube and the others of its kind: strip flags, whether it is cooked, and the cooked data.
@@ -150,7 +545,7 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 			Out.bCooked = Reader.ReadBool();
 			if (Reader.Ok() && Out.bCooked)
 			{
-				Reader.Fail(TEXT("The platform data of a cooked texture is not read"));
+				ReadCookedPlatformData(Reader, Document, NativeClass->IsChildOf(UTexture2D::StaticClass()), Out);
 			}
 		}
 	}
@@ -164,7 +559,14 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 		else
 		{
 			Out.bHasBulkData = true;
-			ReadEditorBulkDataRecord(Reader, Out.Bulk);
+			if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::MeshDescriptionVirtualization)
+			{
+				ReadLegacyBulkDataRecord(Reader, Document, Out.Bulk);
+			}
+			else
+			{
+				ReadEditorBulkDataRecord(Reader, Out.Bulk);
+			}
 			Out.MeshGuid = Reader.ReadGuid().ToString(EGuidFormats::DigitsWithHyphens);
 			Reader.ReadBool();
 		}
@@ -203,12 +605,15 @@ TArray<FAssetNativeDataChange> AssetBulkDataExport::Compare(const FAssetBulkData
 
 	if (Old.bHasBulkData != New.bHasBulkData)
 	{
-		Add(TEXT("BulkData/Source"), DataName, New.bHasBulkData ? FAssetNativeDataChange::EState::Added : FAssetNativeDataChange::EState::Removed, Old.bHasBulkData ? DescribeBulkContent(Old.Bulk) : FString(),
-			New.bHasBulkData ? DescribeBulkContent(New.Bulk) : FString());
+		Add(TEXT("BulkData/Source"), DataName, New.bHasBulkData ? FAssetNativeDataChange::EState::Added : FAssetNativeDataChange::EState::Removed,
+			Old.bHasBulkData ? DescribeBulkContent(Old.Bulk) : FString(), New.bHasBulkData ? DescribeBulkContent(New.Bulk) : FString());
 	}
 	else if (Old.bHasBulkData)
 	{
-		if (!Old.Bulk.ContentHash.Equals(New.Bulk.ContentHash, ESearchCase::CaseSensitive) || Old.Bulk.PayloadSize != New.Bulk.PayloadSize)
+		// The hash of a record in the older format is of the stored bytes, and the one of the current format is of the content, so
+		// across a resave that upgraded the format only the size can be compared.
+		const bool bSameFormat = Old.Bulk.bLegacy == New.Bulk.bLegacy;
+		if ((bSameFormat && !Old.Bulk.ContentHash.Equals(New.Bulk.ContentHash, ESearchCase::CaseSensitive)) || Old.Bulk.PayloadSize != New.Bulk.PayloadSize)
 		{
 			Add(TEXT("BulkData/Source"), DataName + TEXT(" content"), FAssetNativeDataChange::EState::Modified, DescribeBulkContent(Old.Bulk), DescribeBulkContent(New.Bulk));
 		}
@@ -217,7 +622,9 @@ TArray<FAssetNativeDataChange> AssetBulkDataExport::Compare(const FAssetBulkData
 			Add(TEXT("BulkData/MeshGuid"), TEXT("Mesh description id"), FAssetNativeDataChange::EState::Modified, Old.MeshGuid, New.MeshGuid);
 		}
 
-		if ((Old.Bulk.Flags & ~BulkTransientFlags) != (New.Bulk.Flags & ~BulkTransientFlags))
+		const bool bStorageChanged =
+			!bSameFormat || (Old.Bulk.bLegacy ? Old.Bulk.DescribeStorage() != New.Bulk.DescribeStorage() : (Old.Bulk.Flags & ~BulkTransientFlags) != (New.Bulk.Flags & ~BulkTransientFlags));
+		if (bStorageChanged)
 		{
 			Add(TEXT("BulkData/Storage"), DataName + TEXT(" storage"), FAssetNativeDataChange::EState::Modified, Old.Bulk.DescribeStorage(), New.Bulk.DescribeStorage());
 		}
@@ -226,6 +633,91 @@ TArray<FAssetNativeDataChange> AssetBulkDataExport::Compare(const FAssetBulkData
 	if (Old.bCooked != New.bCooked)
 	{
 		Add(TEXT("BulkData/Cooked"), TEXT("Cooked"), FAssetNativeDataChange::EState::Modified, Old.bCooked ? TEXT("yes") : TEXT("no"), New.bCooked ? TEXT("yes") : TEXT("no"));
+	}
+
+	// The platform data of a cooked texture: the format, the size and the mips, each matched by its place. Where the pixels are in
+	// the file (and so their offsets) moves from cook to cook and is not a difference.
+	const int32 PlatformCount = FMath::Max(Old.PlatformData.Num(), New.PlatformData.Num());
+	for (int32 PlatformIndex = 0; PlatformIndex < PlatformCount; ++PlatformIndex)
+	{
+		const FString Key = FString::Printf(TEXT("Platform/%d"), PlatformIndex);
+		const FString Prefix = PlatformCount > 1 ? FString::Printf(TEXT("Platform data %d: "), PlatformIndex) : FString();
+		const auto AddPlatform = [&Changes, &Key](const FString& KeySuffix, const FString& Title, const FAssetNativeDataChange::EState State, const FString& OldValue, const FString& NewValue) {
+			FAssetNativeDataChange& Change = Changes.AddDefaulted_GetRef();
+			Change.Key = Key + KeySuffix;
+			Change.Title = Title;
+			Change.State = State;
+			Change.OldValue = OldValue;
+			Change.NewValue = NewValue;
+		};
+
+		if (!Old.PlatformData.IsValidIndex(PlatformIndex))
+		{
+			AddPlatform(FString(), Prefix + TEXT("Platform data"), FAssetNativeDataChange::EState::Added, FString(), New.PlatformData[PlatformIndex].Describe());
+			continue;
+		}
+		if (!New.PlatformData.IsValidIndex(PlatformIndex))
+		{
+			AddPlatform(FString(), Prefix + TEXT("Platform data"), FAssetNativeDataChange::EState::Removed, Old.PlatformData[PlatformIndex].Describe(), FString());
+			continue;
+		}
+
+		const FAssetTexturePlatformData& OldPlatform = Old.PlatformData[PlatformIndex];
+		const FAssetTexturePlatformData& NewPlatform = New.PlatformData[PlatformIndex];
+		const auto Modified = FAssetNativeDataChange::EState::Modified;
+
+		if (!OldPlatform.PixelFormat.Equals(NewPlatform.PixelFormat, ESearchCase::CaseSensitive))
+		{
+			AddPlatform(TEXT("/PixelFormat"), Prefix + TEXT("Pixel format"), Modified, OldPlatform.PixelFormat, NewPlatform.PixelFormat);
+		}
+		if (OldPlatform.SizeX != NewPlatform.SizeX || OldPlatform.SizeY != NewPlatform.SizeY)
+		{
+			AddPlatform(TEXT("/Size"), Prefix + TEXT("Size"), Modified, FString::Printf(TEXT("%dx%d"), OldPlatform.SizeX, OldPlatform.SizeY),
+				FString::Printf(TEXT("%dx%d"), NewPlatform.SizeX, NewPlatform.SizeY));
+		}
+		if (OldPlatform.NumSlices != NewPlatform.NumSlices || OldPlatform.bCubeMap != NewPlatform.bCubeMap)
+		{
+			const auto Describe = [](const FAssetTexturePlatformData& Data) {
+				return Data.bCubeMap ? FString::Printf(TEXT("cube map, %d slices"), Data.NumSlices) : FString::Printf(TEXT("%d slices"), Data.NumSlices);
+			};
+			AddPlatform(TEXT("/Slices"), Prefix + TEXT("Slices"), Modified, Describe(OldPlatform), Describe(NewPlatform));
+		}
+		if (OldPlatform.NumMipsInTail != NewPlatform.NumMipsInTail)
+		{
+			AddPlatform(TEXT("/MipTail"), Prefix + TEXT("Mips in the tail"), Modified, FString::FromInt(OldPlatform.NumMipsInTail), FString::FromInt(NewPlatform.NumMipsInTail));
+		}
+		if (OldPlatform.FirstMipToSerialize != NewPlatform.FirstMipToSerialize)
+		{
+			AddPlatform(TEXT("/FirstMip"), Prefix + TEXT("Mips left out of the cook"), Modified, FString::FromInt(OldPlatform.FirstMipToSerialize), FString::FromInt(NewPlatform.FirstMipToSerialize));
+		}
+		if (!OldPlatform.CpuCopyHash.Equals(NewPlatform.CpuCopyHash, ESearchCase::CaseSensitive))
+		{
+			AddPlatform(TEXT("/CpuCopy"), Prefix + TEXT("CPU copy of the image"), Modified, OldPlatform.CpuCopyHash.IsEmpty() ? FString(TEXT("none")) : OldPlatform.CpuCopyHash,
+				NewPlatform.CpuCopyHash.IsEmpty() ? FString(TEXT("none")) : NewPlatform.CpuCopyHash);
+		}
+		if (OldPlatform.Mips.Num() != NewPlatform.Mips.Num())
+		{
+			AddPlatform(TEXT("/MipCount"), Prefix + TEXT("Number of mips"), Modified, FString::FromInt(OldPlatform.Mips.Num()), FString::FromInt(NewPlatform.Mips.Num()));
+		}
+
+		const int32 MipCount = FMath::Max(OldPlatform.Mips.Num(), NewPlatform.Mips.Num());
+		for (int32 MipIndex = 0; MipIndex < MipCount; ++MipIndex)
+		{
+			const FString MipKey = FString::Printf(TEXT("/Mip/%d"), MipIndex);
+			const FString MipTitle = FString::Printf(TEXT("%sMip %d"), *Prefix, MipIndex);
+			if (!OldPlatform.Mips.IsValidIndex(MipIndex))
+			{
+				AddPlatform(MipKey, MipTitle, FAssetNativeDataChange::EState::Added, FString(), NewPlatform.Mips[MipIndex].Describe());
+			}
+			else if (!NewPlatform.Mips.IsValidIndex(MipIndex))
+			{
+				AddPlatform(MipKey, MipTitle, FAssetNativeDataChange::EState::Removed, OldPlatform.Mips[MipIndex].Describe(), FString());
+			}
+			else if (!SameMip(OldPlatform.Mips[MipIndex], NewPlatform.Mips[MipIndex]))
+			{
+				AddPlatform(MipKey, MipTitle, Modified, OldPlatform.Mips[MipIndex].Describe(), NewPlatform.Mips[MipIndex].Describe());
+			}
+		}
 	}
 
 	return Changes;

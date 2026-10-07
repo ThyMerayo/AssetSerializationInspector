@@ -16,7 +16,14 @@ struct FAssetPackageExportEntry;
  */
 struct FAssetBulkDataInfo
 {
-	/** EFlags of FEditorBulkData. */
+	/**
+	 * A package from before the editor bulk data existed stores the source in the older bulk data format (FByteBulkData): a small header
+	 * (flags, size, where the payload is), and the payload inline or at the end of the file. It has no identifier and no content hash
+	 * of its own; the hash here is of the bytes as stored, so it is not comparable with the hash of a record in the current format.
+	 */
+	bool bLegacy = false;
+
+	/** EFlags of FEditorBulkData; for a legacy record, the EBulkDataFlags of the header. */
 	uint32 Flags = 0;
 
 	/** The identifier of the bulk data, and the hash of its content (what decides whether it changed). */
@@ -30,6 +37,63 @@ struct FAssetBulkDataInfo
 
 	/** The names of the flags that describe how the data is stored ("Virtualized, StoredInPackageTrailer"). */
 	FString DescribeStorage() const;
+};
+
+/**
+ * One mip of the platform data of a cooked texture: its size and where its pixels are kept. The package holds a small record of the
+ * mip; the pixels are inline in the package, or in a sidecar file (.ubulk, .uptnl) that streaming reads when the mip is needed.
+ */
+struct FAssetTextureMip
+{
+	int32 SizeX = 0;
+	int32 SizeY = 0;
+	int32 SizeZ = 0;
+
+	/** The size of the pixels in bytes (BC7 and the like: the encoded size, not the size of the image). */
+	int64 PayloadSize = 0;
+
+	/** EBulkDataFlags of the data resource of the mip. */
+	uint32 BulkFlags = 0;
+
+	/** Where the pixels are in the package (inline) or in its sidecar file; it moves from cook to cook. */
+	int64 Offset = INDEX_NONE;
+
+	/** A hash of the pixels, when they could be read: inline, or in the sidecar file next to the package. Empty otherwise. */
+	FString PayloadHash;
+
+	bool IsInline() const;
+
+	/** "Inline", "streamed (.ubulk)", "optional (.uptnl)" and the like. */
+	FString DescribeStorage() const;
+
+	/** "1024x512, 349,525 bytes, streamed (.ubulk), pixels 3fa2c1d9". */
+	FString Describe() const;
+};
+
+/** The platform data of a cooked texture (FTexturePlatformData): what the cooker made of the source image for one platform. */
+struct FAssetTexturePlatformData
+{
+	/** "PF_DXT5", "PF_BC7"... */
+	FString PixelFormat;
+
+	int32 SizeX = 0;
+	int32 SizeY = 0;
+	int32 NumSlices = 0;
+	bool bCubeMap = false;
+
+	/** How many of the smallest mips are packed together in a tail (a layout some platforms need). */
+	int32 NumMipsInTail = 0;
+
+	/** The lowest mips of the source that the cook left out (the LOD bias applied by the texture group). */
+	int32 FirstMipToSerialize = 0;
+
+	TArray<FAssetTextureMip> Mips;
+
+	/** A hash of the copy of the image that the CPU keeps for some textures (small ones sampled on the CPU); empty when there is none. */
+	FString CpuCopyHash;
+
+	/** "PF_BC7, 1024x1024, 11 mips (2 inline, 9 streamed)". */
+	FString Describe() const;
 };
 
 /**
@@ -58,6 +122,9 @@ struct FAssetBulkDataExport
 
 	/** A texture saved for a platform (its mips are stored cooked). */
 	bool bCooked = false;
+
+	/** A cooked texture: the data the cook made for each platform it holds (one, in every package the cooker writes). */
+	TArray<FAssetTexturePlatformData> PlatformData;
 
 	/** A mesh description: its id, and whether the id is a hash of the content. */
 	FString MeshGuid;
