@@ -41,6 +41,7 @@ public class AssetSerializationInspector : ModuleRules
                 "DesktopPlatform",
                 "DeveloperSettings",
                 "Engine",
+                "ImageCore",
                 "InputCore",
                 "Json",
                 "Projects",

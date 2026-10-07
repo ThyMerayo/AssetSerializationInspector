@@ -17,6 +17,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetBulkDataExport.h"
+#include "Serialization/AssetSourceImage.h"
 #include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
@@ -173,6 +174,80 @@ bool FAssetBulkDataExport_ReadsTheTexturesAndMeshesOfTheEngineContent::RunTest(c
 	return true;
 }
 
+namespace SourceImageTestUtils
+{
+	/** A 2 by 2 BGRA8 image of the given pixels (four bytes each, blue first). */
+	static FAssetSourceImage MakeImage(const TArray<uint8>& Bytes)
+	{
+		FAssetSourceImage Image;
+		Image.bLoaded = true;
+		Image.Width = 2;
+		Image.Height = 2;
+		Image.NumSlices = 1;
+		Image.Format = TEXT("TSF_BGRA8");
+		Image.Pixels.Append(Bytes.GetData(), Bytes.Num());
+		return Image;
+	}
+} // namespace SourceImageTestUtils
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ComparesThePixelsOfTwoImages, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ComparesThePixelsOfTwoImages",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ComparesThePixelsOfTwoImages::RunTest(const FString& Parameters)
+{
+	using namespace SourceImageTestUtils;
+
+	const TArray<uint8> Black = { 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255 };
+	TArray<uint8> OneRed = Black;
+	OneRed[2 * 4 + 2] = 255; // the red of the pixel at x 0, y 1
+
+	// The same image: no change.
+	{
+		TArray<FAssetNativeDataChange> Changes;
+		AssetSourceImage::AppendPixelChange(MakeImage(Black), MakeImage(Black), Changes);
+		TestTrue(TEXT("The same pixels are no change"), Changes.IsEmpty());
+	}
+
+	// One pixel: counted, and placed.
+	{
+		TArray<FAssetNativeDataChange> Changes;
+		AssetSourceImage::AppendPixelChange(MakeImage(Black), MakeImage(OneRed), Changes);
+		if (TestEqual(TEXT("One change"), Changes.Num(), 1))
+		{
+			TestTrue(TEXT("It says 1 of the 4 pixels differs"), Changes[0].Title.Contains(TEXT("1 of 4")));
+			TestTrue(TEXT("At x 0 to 0"), Changes[0].Title.Contains(TEXT("x 0 to 0")));
+			TestTrue(TEXT("And y 1 to 1"), Changes[0].Title.Contains(TEXT("y 1 to 1")));
+			TestTrue(TEXT("The largest change is the whole range of the channel"), Changes[0].Title.Contains(TEXT("1.000")));
+			TestTrue(TEXT("The average red of the new image is a quarter"), Changes[0].NewValue.Contains(TEXT("0.250")));
+			TestTrue(TEXT("The old one is black with full alpha"), Changes[0].OldValue.Contains(TEXT("(0.000, 0.000, 0.000, 1.000)")));
+		}
+	}
+
+	// Another size or a pixel that could not be loaded is a note, not a guess.
+	{
+		FAssetSourceImage Wider = MakeImage(Black);
+		Wider.Width = 4;
+		Wider.Height = 1;
+		TArray<FAssetNativeDataChange> Changes;
+		AssetSourceImage::AppendPixelChange(MakeImage(Black), Wider, Changes);
+		if (TestEqual(TEXT("One note"), Changes.Num(), 1))
+		{
+			TestTrue(TEXT("It says the size changed"), Changes[0].NewValue.Contains(TEXT("size")));
+		}
+
+		FAssetSourceImage NotLoaded;
+		NotLoaded.Error = TEXT("The image is virtualized, outside the package");
+		Changes.Reset();
+		AssetSourceImage::AppendPixelChange(NotLoaded, MakeImage(Black), Changes);
+		if (TestEqual(TEXT("One note for the image that is not there"), Changes.Num(), 1))
+		{
+			TestTrue(TEXT("It says why"), Changes[0].NewValue.Contains(TEXT("virtualized")));
+		}
+	}
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ShowsAChangeOfTheSourceImage, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ShowsAChangeOfTheSourceImage",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
@@ -233,6 +308,18 @@ bool FAssetBulkDataExport_ShowsAChangeOfTheSourceImage::RunTest(const FString& P
 	else
 	{
 		AddError(TEXT("The change of the source image is not in the diff"));
+	}
+
+	// And what changed in the pixels: all 16 of the 4 by 4 image went from one grey to another.
+	if (const FAssetPackageDiffEntry* Pixels = FindByKey(ToLighter, TEXT("BulkData/Pixels")))
+	{
+		TestTrue(TEXT("Every pixel differs"), Pixels->DisplayName.ToString().Contains(TEXT("16 of 16")));
+		TestTrue(TEXT("With the average color of each"), Pixels->OldValue.Contains(TEXT("average color")) && Pixels->NewValue.Contains(TEXT("average color")));
+		AddInfo(FString::Printf(TEXT("Pixels: %s | %s | %s"), *Pixels->DisplayName.ToString(), *Pixels->OldValue, *Pixels->NewValue));
+	}
+	else
+	{
+		AddError(TEXT("The change of the pixels is not in the diff"));
 	}
 
 	// The same content saved again: nothing of the texture changed, whatever the identifier of the save and the place of the data.

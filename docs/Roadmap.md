@@ -83,4 +83,6 @@ Open items, in order:
 - [x] The platform data of cooked textures (pixel format, size, mips with their storage and a hash of their pixels), and the source data of packages from before the editor bulk data (the older bulk data format)
 - [x] The tiled data of virtual textures: layers, tile layout and the chunks with the hash the engine keeps for each (the 6 of a cook of the engine's textures)
 - [ ] Cooked textures that store their platform data as derived data references (a cook option): no sample, they fail with a reason
-- [ ] Decode the pixels and the vertices themselves, not only the record that identifies them (the data is in the package, a sidecar file or a virtualization backend)
+- [x] Decode the pixels of the source image of a texture and say what changed in them (count, where, largest change, average color); the delta transform is undone, PNG/JPEG, virtualized and legacy images are reported as not compared
+- [ ] Decode the vertices of a mesh description (position, count, bounds) and say what moved
+- [ ] Decode the pixels of cooked mips (BC and ASTC blocks) and of the source images that are virtualized or compressed as PNG/JPEG
