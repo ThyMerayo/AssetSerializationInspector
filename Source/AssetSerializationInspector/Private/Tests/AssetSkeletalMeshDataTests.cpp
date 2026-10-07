@@ -100,7 +100,33 @@ bool FAssetSkeletalMeshData_ReadsTheSkeletalMeshesOfTheEngineContent::RunTest(co
 
 			TestFalse(TEXT("It has bones"), Data.Bones.IsEmpty());
 			TestFalse(TEXT("And material slots"), Data.Materials.IsEmpty());
-			TestTrue(TEXT("The imported model follows, and is not read"), Data.RemainingSize > 0);
+			TestTrue(TEXT("The imported model follows the skeleton"), Data.RemainingSize > 0);
+
+			// The imported model is read to the last byte, and what it says adds up: the triangles of the sections are the indices of the
+			// LOD, and the vertices of the sections are its vertices.
+			if (TestTrue(FString::Printf(TEXT("%s: the imported model is read to the last byte (%s)"), *File, *Data.ModelError), Data.bComplete))
+			{
+				TestFalse(TEXT("It has a LOD"), Data.Lods.IsEmpty());
+				for (const FAssetSkeletalMeshLod& Lod : Data.Lods)
+				{
+					TestFalse(TEXT("With sections"), Lod.Sections.IsEmpty());
+
+					uint32 Triangles = 0;
+					int64 Vertices = 0;
+					for (const FAssetSkeletalMeshSection& Section : Lod.Sections)
+					{
+						Triangles += Section.NumTriangles;
+						Vertices += Section.NumVertices;
+						TestEqual(TEXT("A section keeps as many vertices as it says"), Section.VertexCount, Section.NumVertices);
+						TestFalse(TEXT("And a hash of them"), Section.VertexHash.IsEmpty());
+						TestTrue(TEXT("Its material is a slot of the mesh"), Section.MaterialIndex < Data.Materials.Num());
+					}
+
+					TestEqual(TEXT("The index buffer has three indices for each triangle"), Lod.IndexCount, static_cast<int32>(Triangles * 3));
+					TestEqual(TEXT("The LOD has the vertices of its sections"), static_cast<int64>(Lod.NumVertices), Vertices);
+					AddInfo(FString::Printf(TEXT("%s: %s"), *FPaths::GetBaseFilename(File), *Lod.Describe()));
+				}
+			}
 
 			// A skeleton is a tree: one root, and every other bone hangs from a bone of the skeleton.
 			int32 Roots = 0;
@@ -208,6 +234,108 @@ bool FAssetSkeletalMeshData_ComparesBonesAndMaterialSlots::RunTest(const FString
 			TestEqual(TEXT("It is the skin"), Changes[0].Key, FString(TEXT("Material/Skin")));
 			TestTrue(TEXT("With the new material"), Changes[0].NewValue.Contains(TEXT("M_Skin2")));
 		}
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSkeletalMeshData_ComparesTheLodsAndSections, "AssetSerializationInspector.Serialization.AssetSkeletalMeshData.ComparesTheLodsAndSections",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& Parameters)
+{
+	using namespace SkeletalMeshTestUtils;
+
+	const auto MakeSection = [](const uint32 Triangles, const int32 Vertices, const TCHAR* Hash) {
+		FAssetSkeletalMeshSection Section;
+		Section.NumTriangles = Triangles;
+		Section.NumVertices = Vertices;
+		Section.VertexCount = Vertices;
+		Section.VertexHash = Hash;
+		Section.BoneCount = 2;
+		return Section;
+	};
+
+	const auto MakeLod = [](const TArray<FAssetSkeletalMeshSection>& Sections, const TCHAR* IndexHash) {
+		FAssetSkeletalMeshLod Lod;
+		Lod.Sections = Sections;
+		Lod.IndexHash = IndexHash;
+		Lod.IndexCount = 36;
+		Lod.NumTexCoords = 1;
+		Lod.RequiredBoneCount = 2;
+		Lod.ActiveBoneCount = 2;
+		for (const FAssetSkeletalMeshSection& Section : Sections)
+		{
+			Lod.NumVertices += Section.NumVertices;
+		}
+		return Lod;
+	};
+
+	FAssetSkeletalMeshData Base = MakeMesh({});
+	Base.bComplete = true;
+	Base.ModelGuid = TEXT("11111111-1111-1111-1111-111111111111");
+	Base.Lods.Add(MakeLod({ MakeSection(12, 24, TEXT("aaaa")), MakeSection(4, 8, TEXT("bbbb")) }, TEXT("iiii")));
+
+	TestTrue(TEXT("The same model is no change"), AssetSkeletalMeshData::Compare(Base, Base).IsEmpty());
+
+	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
+		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
+	};
+
+	// The vertices of a section moved (the hash changes, the counts do not): the geometry changed.
+	{
+		FAssetSkeletalMeshData Moved = Base;
+		Moved.Lods[0].Sections[1].VertexHash = TEXT("cccc");
+		Moved.ModelGuid = TEXT("22222222-2222-2222-2222-222222222222");
+
+		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Base, Moved);
+		if (const FAssetNativeDataChange* Change = Find(Changes, TEXT("Lod/0/Section/1")))
+		{
+			TestEqual(TEXT("The section is modified"), static_cast<uint8>(Change->State), static_cast<uint8>(FAssetNativeDataChange::EState::Modified));
+			TestTrue(TEXT("From the old vertex data"), Change->OldValue.Contains(TEXT("bbbb")));
+			TestTrue(TEXT("To the new"), Change->NewValue.Contains(TEXT("cccc")));
+		}
+		else
+		{
+			AddError(TEXT("The change of the vertices is not reported"));
+		}
+		TestNull(TEXT("The other section is not"), Find(Changes, TEXT("Lod/0/Section/0")));
+		TestNotNull(TEXT("The identifier of the model follows, since something changed"), Find(Changes, TEXT("ModelGuid")));
+	}
+
+	// A section added, a LOD added, and the index buffer of a LOD.
+	{
+		FAssetSkeletalMeshData Grown = Base;
+		Grown.Lods[0].Sections.Add(MakeSection(2, 4, TEXT("dddd")));
+		Grown.Lods[0].NumVertices += 4;
+		Grown.Lods.Add(MakeLod({ MakeSection(6, 12, TEXT("eeee")) }, TEXT("jjjj")));
+
+		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Base, Grown);
+		if (const FAssetNativeDataChange* Section = Find(Changes, TEXT("Lod/0/Section/2")))
+		{
+			TestEqual(TEXT("The new section is added"), static_cast<uint8>(Section->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
+		}
+		else
+		{
+			AddError(TEXT("The added section is not reported"));
+		}
+		if (const FAssetNativeDataChange* Lod = Find(Changes, TEXT("Lod/1")))
+		{
+			TestEqual(TEXT("The new LOD is added"), static_cast<uint8>(Lod->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
+		}
+		else
+		{
+			AddError(TEXT("The added LOD is not reported"));
+		}
+		TestNotNull(TEXT("The vertices of the LOD changed with the new section"), Find(Changes, TEXT("Lod/0/Whole")));
+	}
+
+	// A model that is not read on one side is not compared.
+	{
+		FAssetSkeletalMeshData NotRead = Base;
+		NotRead.bComplete = false;
+		NotRead.Lods.Reset();
+		TestTrue(TEXT("Nothing is said of a model that was not read"), AssetSkeletalMeshData::Compare(NotRead, Base).IsEmpty());
 	}
 
 	return true;

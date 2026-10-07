@@ -1067,9 +1067,9 @@ namespace
 	}
 
 	/**
-	 * The start of the data of a skeletal mesh (its bounds, material slots and reference skeleton), read on both sides. What follows
-	 * (the imported model with its LODs, sections and vertices) is not read, so the range is never explained as a whole: what was read
-	 * is listed as changes, and the entry says that the rest is not.
+	 * The data of a skeletal mesh: its bounds, material slots and reference skeleton, and the imported model (LODs, sections and
+	 * vertices) when it is in a layout that is read. When both sides are read to the last byte the range is explained like any other;
+	 * when only the start is, what was read is listed as changes, and the entry says that the rest is not.
 	 */
 	bool AppendSkeletalMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
 		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
@@ -1089,6 +1089,18 @@ namespace
 
 		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "SkeletalMeshData", "Skeletal mesh data");
 		AddNativeDataChildren(AssetSkeletalMeshData::Compare(OldData, NewData), RangeEntry);
+
+		if (OldData.bComplete && NewData.bComplete)
+		{
+			// Everything was read: what differs is what the children say; when nothing does, only ids and numbering differ.
+			if (RangeEntry.Children.IsEmpty())
+			{
+				RangeEntry.bRepresentationOnly = true;
+				RangeEntry.Explanation = NSLOCTEXT("AssetPackageDiff", "SkeletalMeshRenumbered",
+					"The bones, material slots, LODs and sections are the same; the bytes differ because of ids and the numbering of the objects they refer to.");
+			}
+			return true;
+		}
 
 		// Only the start was read, so the changed bytes of the range are not accounted for.
 		RangeEntry.bNativeDataDecoded = false;

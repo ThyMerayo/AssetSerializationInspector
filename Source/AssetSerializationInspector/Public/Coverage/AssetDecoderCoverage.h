@@ -101,6 +101,9 @@ struct FAssetDecoderCoverageResult
 	/** The skeletal meshes found, how many had the start of their data (bounds, materials, skeleton) read, and why the others did not. */
 	int32 SkeletalMeshesScanned = 0;
 	int32 SkeletalMeshesRead = 0;
+
+	/** How many of them were read to the last byte, imported model included. */
+	int32 SkeletalMeshesWholeRead = 0;
 	TArray<FAssetDecoderCoverageIssue> SkeletalMeshIssues;
 
 	/** Most widespread (then largest) first. */
