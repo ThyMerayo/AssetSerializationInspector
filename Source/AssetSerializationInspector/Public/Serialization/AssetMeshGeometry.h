@@ -12,7 +12,8 @@ struct FAssetPackageDocument;
 /**
  * The geometry of a mesh description (the source geometry of a static mesh, as the editor keeps it in the package trailer): how many
  * vertices, triangles and polygons it has, its bounds, the position of each vertex, the normals, tangents and UVs of its corners and the
- * material slot of each triangle. The other attributes (colors, edge hardness, smoothing groups) are not kept.
+ * material slot of each triangle, and the colors, binormal signs, edge hardness and polygon names. A mesh description has no smoothing groups:
+ * those exist when a mesh is imported, and the hard edges they became are what it keeps.
  */
 struct FAssetMeshGeometry
 {
@@ -36,6 +37,12 @@ struct FAssetMeshGeometry
 
 	/** The UVs of each channel for each vertex instance. */
 	TArray<TArray<FVector2f>> UVs;
+
+	/** The color and the sign of the binormal of each vertex instance, whether each edge is hard, and the object name of each polygon. */
+	TArray<FVector4f> Colors;
+	TArray<float> BinormalSigns;
+	TArray<bool> EdgeHardness;
+	TArray<FString> PolygonNames;
 
 	/** The material slot name of each polygon group, and the slot name each triangle uses. */
 	TArray<FString> MaterialSlots;

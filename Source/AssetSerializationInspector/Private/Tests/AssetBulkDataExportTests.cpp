@@ -112,6 +112,10 @@ namespace BulkDataTestUtils
 		FVector3f Normal = FVector3f(0, 0, 1);
 		float UVShift = 0.0f;
 		FName SlotName = FName(TEXT("None"));
+		FVector4f Color = FVector4f(1, 1, 1, 1);
+		float BinormalSign = 1.0f;
+		bool bHardEdges = false;
+		FName ObjectName = FName(TEXT("Quad"));
 
 		FTestMesh()
 		{
@@ -132,6 +136,7 @@ namespace BulkDataTestUtils
 			Description->Empty();
 			FStaticMeshAttributes Attributes(*Description);
 			Attributes.Register();
+			Attributes.RegisterPolygonObjectNameAttribute();
 
 			const FVector3f Positions[4] = { FVector3f(0, 0, 0), FVector3f(100, 0, 0), FVector3f(100, 100, LiftedCorner), FVector3f(0, 100, 0) };
 			TArray<FVertexInstanceID> Instances;
@@ -141,13 +146,20 @@ namespace BulkDataTestUtils
 				Attributes.GetVertexPositions()[Vertex] = Position;
 				const FVertexInstanceID Instance = Description->CreateVertexInstance(Vertex);
 				Attributes.GetVertexInstanceNormals()[Instance] = Normal;
+				Attributes.GetVertexInstanceColors()[Instance] = Color;
+				Attributes.GetVertexInstanceBinormalSigns()[Instance] = BinormalSign;
 				Attributes.GetVertexInstanceUVs().Set(Instance, 0, FVector2f(Position.X / 100.0f + UVShift, Position.Y / 100.0f));
 				Instances.Add(Instance);
 			}
 
 			const FPolygonGroupID Group = Description->CreatePolygonGroup();
 			Attributes.GetPolygonGroupMaterialSlotNames()[Group] = SlotName;
-			Description->CreatePolygon(Group, Instances);
+			const FPolygonID Polygon = Description->CreatePolygon(Group, Instances);
+			Attributes.GetPolygonObjectNames()[Polygon] = ObjectName;
+			for (const FEdgeID Edge : Description->Edges().GetElementIDs())
+			{
+				Attributes.GetEdgeHardnesses()[Edge] = bHardEdges;
+			}
 			Mesh->CommitMeshDescription(0);
 			Mesh->Build(true);
 		}
@@ -290,11 +302,23 @@ bool FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription::RunTest(const FStr
 		Test.SetQuad(0.0f);
 		const FString Reshaded = Test.Save(TEXT("reshaded.uasset"));
 
+		// The same flat quad, painted red, with a flipped binormal, hard edges and another object name.
+		Test.Normal = FVector3f(0, 0, 1);
+		Test.UVShift = 0.0f;
+		Test.SlotName = FName(TEXT("None"));
+		Test.Color = FVector4f(1, 0, 0, 1);
+		Test.BinormalSign = -1.0f;
+		Test.bHardEdges = true;
+		Test.ObjectName = FName(TEXT("Panel"));
+		Test.SetQuad(0.0f);
+		const FString Painted = Test.Save(TEXT("painted.uasset"));
+
 		FText Error;
 		const TSharedPtr<FAssetPackageDocument> FlatDocument = FAssetPackageReader::LoadFromFile(Flat, Error);
 		const TSharedPtr<FAssetPackageDocument> LiftedDocument = FAssetPackageReader::LoadFromFile(Lifted, Error);
 		const TSharedPtr<FAssetPackageDocument> ReshadedDocument = FAssetPackageReader::LoadFromFile(Reshaded, Error);
-		if (TestTrue(TEXT("The three versions are written and load"), FlatDocument.IsValid() && LiftedDocument.IsValid() && ReshadedDocument.IsValid()))
+		const TSharedPtr<FAssetPackageDocument> PaintedDocument = FAssetPackageReader::LoadFromFile(Painted, Error);
+		if (TestTrue(TEXT("The three versions are written and load"), FlatDocument.IsValid() && LiftedDocument.IsValid() && ReshadedDocument.IsValid() && PaintedDocument.IsValid()))
 		{
 			const TSharedPtr<FAssetPackageTraceCollection> FlatTraces = FAssetPackageFieldDecoder::Decode(*FlatDocument);
 			const TSharedPtr<FAssetPackageTraceCollection> LiftedTraces = FAssetPackageFieldDecoder::Decode(*LiftedDocument);
@@ -364,6 +388,31 @@ bool FAssetBulkDataExport_ReadsTheGeometryOfAMeshDescription::RunTest(const FStr
 				AddError(TEXT("The change of the material slot is not in the diff"));
 			}
 			TestNull(TEXT("The vertices did not move"), FindByKey(Reshading, TEXT("BulkData/Vertices")));
+
+			// Colors, binormals, edges and the names of the polygons.
+			const TSharedPtr<FAssetPackageTraceCollection> PaintedTraces = FAssetPackageFieldDecoder::Decode(*PaintedDocument);
+			const FAssetPackageDiffResult Painting = AssetPackageDiff::Compare(*FlatDocument, *PaintedDocument, FlatTraces.Get(), PaintedTraces.Get());
+			if (const FAssetPackageDiffEntry* Colors = FindByKey(Painting, TEXT("BulkData/Colors")))
+			{
+				TestTrue(FString::Printf(TEXT("All four colors changed by the whole range (%s)"), *Colors->DisplayName.ToString()),
+					Colors->DisplayName.ToString().Contains(TEXT("4 of 4")) && Colors->DisplayName.ToString().Contains(TEXT("1.000")));
+			}
+			else
+			{
+				AddError(TEXT("The change of the colors is not in the diff"));
+			}
+			TestNotNull(TEXT("The binormal signs"), FindByKey(Painting, TEXT("BulkData/BinormalSigns")));
+			if (const FAssetPackageDiffEntry* Edges = FindByKey(Painting, TEXT("BulkData/EdgeHardness")))
+			{
+				TestTrue(FString::Printf(TEXT("From no hard edge to all five (the four sides and the diagonal) (%s: %s to %s)"), *Edges->DisplayName.ToString(), *Edges->OldValue, *Edges->NewValue),
+					Edges->OldValue.Contains(TEXT("0 hard")) && Edges->DisplayName.ToString().Contains(TEXT("5 of 5")) && Edges->NewValue.Contains(TEXT("5 hard")));
+			}
+			else
+			{
+				AddError(TEXT("The change of the edge hardness is not in the diff"));
+			}
+			TestNotNull(TEXT("The polygon names"), FindByKey(Painting, TEXT("BulkData/PolygonNames")));
+			TestNull(TEXT("The normals did not change"), FindByKey(Painting, TEXT("BulkData/Normals")));
 		}
 	}
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(MeshFolder), false, true);

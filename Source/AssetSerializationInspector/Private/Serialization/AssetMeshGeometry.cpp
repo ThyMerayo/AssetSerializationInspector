@@ -92,6 +92,8 @@ FAssetMeshGeometry AssetMeshGeometry::Load(const FAssetPackageDocument& Document
 	const TVertexInstanceAttributesConstRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
 	const TVertexInstanceAttributesConstRef<FVector3f> Tangents = Attributes.GetVertexInstanceTangents();
 	const TVertexInstanceAttributesConstRef<FVector2f> UVs = Attributes.GetVertexInstanceUVs();
+	const TVertexInstanceAttributesConstRef<FVector4f> Colors = Attributes.GetVertexInstanceColors();
+	const TVertexInstanceAttributesConstRef<float> BinormalSigns = Attributes.GetVertexInstanceBinormalSigns();
 	Geometry.UVs.SetNum(UVs.IsValid() ? UVs.GetNumChannels() : 0);
 	for (const FVertexInstanceID Instance : MeshDescription.VertexInstances().GetElementIDs())
 	{
@@ -103,9 +105,35 @@ FAssetMeshGeometry AssetMeshGeometry::Load(const FAssetPackageDocument& Document
 		{
 			Geometry.Tangents.Add(Tangents[Instance]);
 		}
+		if (Colors.IsValid())
+		{
+			Geometry.Colors.Add(Colors[Instance]);
+		}
+		if (BinormalSigns.IsValid())
+		{
+			Geometry.BinormalSigns.Add(BinormalSigns[Instance]);
+		}
 		for (int32 Channel = 0; Channel < Geometry.UVs.Num(); ++Channel)
 		{
 			Geometry.UVs[Channel].Add(UVs.Get(Instance, Channel));
+		}
+	}
+
+	// Whether each edge is hard, and the name of the object each polygon came from.
+	const TEdgeAttributesConstRef<bool> Hardness = Attributes.GetEdgeHardnesses();
+	if (Hardness.IsValid())
+	{
+		for (const FEdgeID Edge : MeshDescription.Edges().GetElementIDs())
+		{
+			Geometry.EdgeHardness.Add(Hardness[Edge]);
+		}
+	}
+	const TPolygonAttributesConstRef<FName> ObjectNames = Attributes.GetPolygonObjectNames();
+	if (ObjectNames.IsValid())
+	{
+		for (const FPolygonID Polygon : MeshDescription.Polygons().GetElementIDs())
+		{
+			Geometry.PolygonNames.Add(ObjectNames[Polygon].ToString());
 		}
 	}
 
@@ -232,6 +260,78 @@ void AssetMeshGeometry::AppendGeometryChange(const FAssetMeshGeometry& Old, cons
 		{
 			Add(*FString::Printf(TEXT("BulkData/UV/%d"), Channel),
 				FString::Printf(TEXT("Mesh UV channel %d: %d of %d corners moved, the largest by %.4f"), Channel, Changed, Old.UVs[Channel].Num(), Largest), TEXT("UVs before"), TEXT("UVs after"));
+		}
+	}
+
+	// The vertex colors: how many changed and the largest change of a channel.
+	if (Old.Colors.Num() == New.Colors.Num() && !Old.Colors.IsEmpty())
+	{
+		int32 Changed = 0;
+		double Largest = 0.0;
+		for (int32 Index = 0; Index < Old.Colors.Num(); ++Index)
+		{
+			if (!Old.Colors[Index].Equals(New.Colors[Index], 1e-4f))
+			{
+				++Changed;
+				const FVector4f Delta = Old.Colors[Index] - New.Colors[Index];
+				Largest = FMath::Max(Largest, static_cast<double>(FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)))));
+			}
+		}
+
+		if (Changed > 0)
+		{
+			Add(TEXT("BulkData/Colors"), FString::Printf(TEXT("Mesh vertex colors: %d of %d changed, the largest by %.3f of the range"), Changed, Old.Colors.Num(), Largest), TEXT("colors before"),
+				TEXT("colors after"));
+		}
+	}
+
+	// The sign of the binormal: how many corners flipped.
+	if (Old.BinormalSigns.Num() == New.BinormalSigns.Num() && !Old.BinormalSigns.IsEmpty())
+	{
+		int32 Flipped = 0;
+		for (int32 Index = 0; Index < Old.BinormalSigns.Num(); ++Index)
+		{
+			Flipped += FMath::IsNearlyEqual(Old.BinormalSigns[Index], New.BinormalSigns[Index], 1e-4f) ? 0 : 1;
+		}
+
+		if (Flipped > 0)
+		{
+			Add(TEXT("BulkData/BinormalSigns"), FString::Printf(TEXT("Mesh binormal signs: %d of %d changed"), Flipped, Old.BinormalSigns.Num()), TEXT("signs before"), TEXT("signs after"));
+		}
+	}
+
+	// The edges: how many are hard now compared with before, and how many changed.
+	if (Old.EdgeHardness.Num() == New.EdgeHardness.Num() && !Old.EdgeHardness.IsEmpty())
+	{
+		int32 Changed = 0;
+		int32 OldHard = 0;
+		int32 NewHard = 0;
+		for (int32 Index = 0; Index < Old.EdgeHardness.Num(); ++Index)
+		{
+			Changed += Old.EdgeHardness[Index] != New.EdgeHardness[Index] ? 1 : 0;
+			OldHard += Old.EdgeHardness[Index] ? 1 : 0;
+			NewHard += New.EdgeHardness[Index] ? 1 : 0;
+		}
+
+		if (Changed > 0)
+		{
+			Add(TEXT("BulkData/EdgeHardness"), FString::Printf(TEXT("Mesh edge hardness: %d of %d edges changed"), Changed, Old.EdgeHardness.Num()), FString::Printf(TEXT("%d hard edges"), OldHard),
+				FString::Printf(TEXT("%d hard edges"), NewHard));
+		}
+	}
+
+	// The objects the polygons came from.
+	if (Old.PolygonNames.Num() == New.PolygonNames.Num() && !Old.PolygonNames.IsEmpty())
+	{
+		int32 Renamed = 0;
+		for (int32 Index = 0; Index < Old.PolygonNames.Num(); ++Index)
+		{
+			Renamed += Old.PolygonNames[Index].Equals(New.PolygonNames[Index], ESearchCase::CaseSensitive) ? 0 : 1;
+		}
+
+		if (Renamed > 0)
+		{
+			Add(TEXT("BulkData/PolygonNames"), FString::Printf(TEXT("Mesh polygon object names: %d of %d changed"), Renamed, Old.PolygonNames.Num()), TEXT("names before"), TEXT("names after"));
 		}
 	}
 
