@@ -7,6 +7,8 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
+#include "ImageCore.h"
+#include "ImageUtils.h"
 #include "Interfaces/IPluginManager.h"
 #include "MeshDescription.h"
 #include "Misc/FileHelper.h"
@@ -614,6 +616,70 @@ bool FAssetBulkDataExport_ShowsAChangeOfTheSourceImage::RunTest(const FString& P
 	// The same content saved again: nothing of the texture changed, whatever the identifier of the save and the place of the data.
 	const FAssetPackageDiffResult Same = AssetPackageDiff::Compare(*GreyDocument, *AgainDocument, GreyTraces.Get(), AgainTraces.Get());
 	TestNull(TEXT("A resave of the same image reports no change of the source image"), FindByKey(Same, TEXT("BulkData/Source")));
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(TextureFolder), false, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ComparesThePixelsOfAPngSourceImage, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ComparesThePixelsOfAPngSourceImage",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ComparesThePixelsOfAPngSourceImage::RunTest(const FString& Parameters)
+{
+	using namespace BulkDataTestUtils;
+
+	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(TextureFolder), false, true);
+
+	// The source image compressed as PNG, the way the editor keeps the art of an imported texture. A BGRA image is written to the PNG with its
+	// red and blue swapped (a legacy of the engine that is undone when it is read), so the pixels given to the encoder are red first.
+	FTestTexture Test;
+	const auto SetPng = [&Test](const uint8 Blue, const uint8 Green, const uint8 Red) {
+		TArray<uint8> Pixels;
+		for (int32 Index = 0; Index < 16; ++Index)
+		{
+			Pixels.Append({ Red, Green, Blue, static_cast<uint8>(255) });
+		}
+		const FImageView View(Pixels.GetData(), 4, 4, ERawImageFormat::BGRA8);
+		TArray64<uint8> Png;
+		if (FImageUtils::CompressImage(Png, TEXT("png"), View))
+		{
+			Test.Texture->Source.InitWithCompressedSourceData(4, 4, 1, TSF_BGRA8, TArrayView64<uint8>(Png.GetData(), Png.Num()), TSCF_PNG);
+		}
+	};
+
+	SetPng(0x10, 0x20, 0x30);
+	if (!TestTrue(TEXT("The source is compressed as PNG"), Test.Texture->Source.GetSourceCompression() == TSCF_PNG))
+	{
+		return false;
+	}
+	const FString Dark = Test.Save(TEXT("dark.uasset"));
+
+	SetPng(0x50, 0x60, 0x70);
+	const FString Light = Test.Save(TEXT("light.uasset"));
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> GreyDocument = FAssetPackageReader::LoadFromFile(Dark, Error);
+	const TSharedPtr<FAssetPackageDocument> LighterDocument = FAssetPackageReader::LoadFromFile(Light, Error);
+	if (!TestTrue(TEXT("The two versions are written and load"), GreyDocument.IsValid() && LighterDocument.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> GreyTraces = FAssetPackageFieldDecoder::Decode(*GreyDocument);
+	const TSharedPtr<FAssetPackageTraceCollection> LighterTraces = FAssetPackageFieldDecoder::Decode(*LighterDocument);
+	const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*GreyDocument, *LighterDocument, GreyTraces.Get(), LighterTraces.Get());
+	if (const FAssetPackageDiffEntry* Pixels = FindByKey(Diff, TEXT("BulkData/Pixels")))
+	{
+		const FString Title = Pixels->DisplayName.ToString();
+		AddInfo(FString::Printf(TEXT("Pixels: %s | %s | %s"), *Title, *Pixels->OldValue, *Pixels->NewValue));
+		TestTrue(TEXT("Every pixel differs"), Title.Contains(TEXT("16 of 16")));
+		TestTrue(TEXT("The first went from (0.188, 0.125, 0.063) with red and blue as the source has them"), Pixels->OldValue.Contains(TEXT("(0.188, 0.125, 0.063, 1.000)")));
+		TestTrue(TEXT("To (0.439, 0.376, 0.314)"), Pixels->NewValue.Contains(TEXT("(0.439, 0.376, 0.314, 1.000)")));
+	}
+	else
+	{
+		AddError(TEXT("The change of the pixels is not in the diff"));
+	}
 
 	IFileManager::Get().DeleteDirectory(*FPackageName::LongPackageNameToFilename(TextureFolder), false, true);
 	return true;
