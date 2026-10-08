@@ -301,7 +301,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 
 			// A static mesh writes its collision, sockets and material slots after its tagged properties.
 			FAssetStaticMeshData StaticMeshData;
-			if (LastNative != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, StaticMeshData))
+			if (LastNative != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + LastNative->Offset, LastNative->Size, StaticMeshData, Trace))
 			{
 				++Result.StaticMeshesScanned;
 				if (StaticMeshData.bComplete)

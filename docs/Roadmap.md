@@ -87,6 +87,8 @@ Open items, in order:
 - [x] Decode the vertices of a mesh description (counts, bounds, the position of each vertex) and say what moved
 - [x] Compare the other attributes of a mesh description: normals, tangents, UV channels, material slots and which triangles use them
 - [x] Read the render data of a cooked static mesh: LODs with their sections and bounds, the inline vertex and index buffers (counted and hashed), the screen sizes and bounds; 85 of 85 meshes of a cook of the engine's meshes
+- [x] Read the source models that an older editor wrote inline in a static mesh (a mesh description each, in the older bulk data format) and compare their content; 69 of the 70 meshes of the engine's plugins that were not read (the last one stores a raw mesh)
+- [ ] Read the source models of a static mesh saved with a raw mesh (before editor version 28), of which the engine's plugins have one sample whose layout did not match what the engine code writes
 - [ ] Decode what lies between the LODs and the bounds of the render data of a cooked static mesh (Nanite resources, ray tracing proxy, card representation, distance fields), which is only hashed, and the LODs whose buffers stream from a sidecar file
 - [x] Compare the vertex colors, binormal signs, edge hardness and polygon object names of a mesh description (it has no smoothing groups: they exist at import, and become hard edges)
 - [x] Compare the pixels of cooked mips block by block (BC, ASTC and uncompressed formats): how many blocks changed, how much of the mip, and where

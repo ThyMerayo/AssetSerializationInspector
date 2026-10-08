@@ -34,7 +34,7 @@ namespace StaticMeshTestUtils
 			}
 		}
 
-		return Native != nullptr && AssetStaticMeshData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return Native != nullptr && AssetStaticMeshData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out, Trace);
 	}
 
 	static FAssetMeshMaterialSlot MakeSlot(const TCHAR* SlotName, const TCHAR* Material)
@@ -340,6 +340,108 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Pa
 			AddError(TEXT("The added LOD is not reported"));
 		}
 	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ReadsTheSourceModelsOfAnOlderEditor, "AssetSerializationInspector.Serialization.AssetStaticMeshData.ReadsTheSourceModelsOfAnOlderEditor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetStaticMeshData_ReadsTheSourceModelsOfAnOlderEditor::RunTest(const FString& Parameters)
+{
+	using namespace StaticMeshTestUtils;
+
+	// The meshes of the Concert plugin were saved before the mesh description was an object of its own: each source model has its mesh description inline.
+	const FString Path = FPaths::Combine(FPaths::EnginePluginsDir(), TEXT("Developer/Concert/ConcertSync/ConcertSyncClient/Content/MonitorMesh.uasset"));
+	if (!IFileManager::Get().FileExists(*Path))
+	{
+		AddInfo(TEXT("The engine does not have the Concert plugin, so there is nothing to read."));
+		return true;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(Path, Error);
+	if (!TestTrue(TEXT("The mesh loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+	int32 Read = 0;
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		FAssetStaticMeshData Data;
+		if (!DecodeData(*Document, *Traces, Export, Data))
+		{
+			continue;
+		}
+
+		++Read;
+		TestTrue(FString::Printf(TEXT("Read to the last byte (%s)"), *Data.Error), Data.bComplete);
+		if (TestFalse(TEXT("It has its source models inline"), Data.SourceModels.IsEmpty()))
+		{
+			for (const FAssetStaticMeshSourceModel& Model : Data.SourceModels)
+			{
+				TestTrue(TEXT("Each has a mesh description"), Model.bHasMeshDescription && Model.PayloadSize > 0 && !Model.MeshGuid.IsEmpty());
+			}
+			AddInfo(FString::Printf(TEXT("%d source models; the first is %s"), Data.SourceModels.Num(), *Data.SourceModels[0].Describe()));
+		}
+
+		// Without the properties the number of source models is not known, so the mesh is not read rather than guessed.
+		FAssetStaticMeshData Guessed;
+		const FAssetSerializationTraceNode* Native = nullptr;
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Traces->FindExportTrace(Export.Index)->Root->Children)
+		{
+			Native = Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native ? Node.Get() : Native;
+		}
+		if (Native != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Guessed))
+		{
+			TestFalse(TEXT("Not read without the properties"), Guessed.bComplete);
+		}
+	}
+
+	TestEqual(TEXT("It has one static mesh"), Read, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ComparesTheSourceModels, "AssetSerializationInspector.Serialization.AssetStaticMeshData.ComparesTheSourceModels",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetStaticMeshData_ComparesTheSourceModels::RunTest(const FString& Parameters)
+{
+	using namespace StaticMeshTestUtils;
+
+	const auto MakeModel = [](const TCHAR* Hash, const int64 Size) {
+		FAssetStaticMeshSourceModel Model;
+		Model.bHasMeshDescription = true;
+		Model.PayloadHash = Hash;
+		Model.PayloadSize = Size;
+		Model.MeshGuid = TEXT("11111111-2222-3333-4444-555555555555");
+		return Model;
+	};
+
+	FAssetStaticMeshData Base = MakeMesh({ MakeSlot(TEXT("Body"), TEXT("/Game/M_Body")) });
+	Base.SourceModels = { MakeModel(TEXT("AAAAAAAAAAAAAAAAAAAA"), 100), MakeModel(TEXT("BBBBBBBBBBBBBBBBBBBB"), 50) };
+	TestTrue(TEXT("The same mesh is no change"), AssetStaticMeshData::Compare(Base, Base).IsEmpty());
+
+	// The second model has other content, and a third is added.
+	FAssetStaticMeshData Edited = Base;
+	Edited.SourceModels[1] = MakeModel(TEXT("CCCCCCCCCCCCCCCCCCCC"), 60);
+	Edited.SourceModels.Add(MakeModel(TEXT("DDDDDDDDDDDDDDDDDDDD"), 10));
+	const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, Edited);
+	if (TestEqual(TEXT("Two changes"), Changes.Num(), 2))
+	{
+		TestEqual(TEXT("The second model changed"), Changes[0].Key, FString(TEXT("SourceModel/1")));
+		TestTrue(TEXT("Modified, from one content to the other"),
+			Changes[0].State == FAssetNativeDataChange::EState::Modified && Changes[0].OldValue.Contains(TEXT("BBBB")) && Changes[0].NewValue.Contains(TEXT("CCCC")));
+		TestEqual(TEXT("The third was added"), Changes[1].Key, FString(TEXT("SourceModel/2")));
+		TestTrue(TEXT("Added"), Changes[1].State == FAssetNativeDataChange::EState::Added);
+	}
+
+	// A new identifier for the same content is not a change of the content.
+	FAssetStaticMeshData Renamed = Base;
+	Renamed.SourceModels[0].MeshGuid = TEXT("99999999-2222-3333-4444-555555555555");
+	TestTrue(TEXT("A new identifier alone is no change"), AssetStaticMeshData::Compare(Base, Renamed).IsEmpty());
 
 	return true;
 }

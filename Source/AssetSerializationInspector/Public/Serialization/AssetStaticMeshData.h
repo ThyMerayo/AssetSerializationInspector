@@ -8,6 +8,7 @@
 
 struct FAssetPackageDocument;
 struct FAssetPackageExportEntry;
+struct FAssetSerializationTrace;
 
 /** One material slot of a static mesh (FStaticMaterial): which material it holds, and how the slot is called. */
 struct FAssetMeshMaterialSlot
@@ -111,6 +112,24 @@ struct FAssetStaticMeshRenderData
 };
 
 /**
+ * A source model of a mesh saved by an editor from before the mesh description was an object of its own: the mesh description is
+ * written inline, in the source model's slot of the static mesh.
+ */
+struct FAssetStaticMeshSourceModel
+{
+	bool bHasMeshDescription = false;
+
+	/** The size of the mesh description, and a hash of the bytes as stored (comparable between two saves in the same format). */
+	int64 PayloadSize = 0;
+	FString PayloadHash;
+
+	/** The identifier the mesh description was saved with; empty when the package does not keep one. */
+	FString MeshGuid;
+
+	FString Describe() const;
+};
+
+/**
  * What a static mesh writes after its tagged properties, decoded (UStaticMesh::Serialize): its collision and navigation objects, its
  * lighting GUID, its sockets and its material slots, and for a cooked mesh its render data. The geometry of an uncooked mesh is not here:
  * it is the mesh description a source model refers to.
@@ -136,6 +155,9 @@ struct FAssetStaticMeshData
 	TArray<FString> Sockets;
 	TArray<FAssetMeshMaterialSlot> Materials;
 
+	/** The source models written inline by an older editor; empty for a package whose source models are objects of their own. */
+	TArray<FAssetStaticMeshSourceModel> SourceModels;
+
 	/** The render data of a cooked mesh, when it was read. */
 	FAssetStaticMeshRenderData RenderData;
 
@@ -150,8 +172,11 @@ namespace AssetStaticMeshData
 	 *
 	 * @param NativeOffset Where the native data starts in the document (right after the tagged properties).
 	 * @param NativeSize How many bytes it has.
+	 * @param Trace The tagged properties of the export. A mesh saved by an older editor writes its source models inline, as many as the
+	 *        SourceModels property has; without the trace such a mesh is not read.
 	 */
-	bool Decode(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, int64 NativeOffset, int64 NativeSize, FAssetStaticMeshData& Out);
+	bool Decode(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, int64 NativeOffset, int64 NativeSize, FAssetStaticMeshData& Out,
+		const FAssetSerializationTrace* Trace = nullptr);
 
 	/**
 	 * What differs between two versions: material slots added, removed or changed (matched by their slot name), the sockets, the

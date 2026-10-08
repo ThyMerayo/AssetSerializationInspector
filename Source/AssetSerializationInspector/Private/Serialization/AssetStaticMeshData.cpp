@@ -4,6 +4,7 @@
 
 #include "Engine/StaticMesh.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/EnterpriseObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/ObjectVersion.h"
 #include "UObject/RenderingObjectVersion.h"
@@ -12,14 +13,76 @@
 
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetCookedBulkData.h"
+#include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Trace/AssetSerializationTrace.h"
 
 using namespace AssetCookedBulkData;
 
 namespace
 {
 	constexpr int32 MaximumMeshEntries = 4096;
+
+	/** How many elements the SourceModels property has, from the tagged properties of the export; INDEX_NONE when it cannot be told. */
+	int32 CountSourceModels(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const FAssetSerializationTrace* Trace)
+	{
+		if (Trace == nullptr || !Trace->Root.IsValid())
+		{
+			return INDEX_NONE;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		{
+			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Property && Node->Name == TEXT("SourceModels"))
+			{
+				// The elements are structs whose layout is the engine's own, so only their count is read: the first value of the array.
+				if (Node->bIsZeroValue)
+				{
+					return 0;
+				}
+
+				FNativeReader Reader(Document, Export.SerialOffset + Node->Offset, Node->Size);
+				const int32 Count = Reader.Read<int32>();
+				return Reader.Ok() && Count >= 0 ? Count : INDEX_NONE;
+			}
+		}
+
+		// A mesh without the property has no source model.
+		return 0;
+	}
+
+	/**
+	 * FStaticMeshSourceModel::SerializeBulkData of an editor from before the mesh description was an object: whether there is a mesh
+	 * description, and then FMeshDescriptionBulkData, which is the bulk data, an identifier and whether the identifier is a hash.
+	 */
+	void ReadLegacySourceModel(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetStaticMeshSourceModel& Out)
+	{
+		Out.bHasMeshDescription = Reader.ReadBool();
+		if (!Reader.Ok() || !Out.bHasMeshDescription)
+		{
+			return;
+		}
+
+		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::MeshDescriptionVirtualization)
+		{
+			Reader.Fail(TEXT("The source models hold a mesh description in a layout that is not read"));
+			return;
+		}
+
+		const FAssetLegacyBulkData Bulk = AssetLegacyBulkData::Read(Reader, Document);
+		Out.PayloadSize = Bulk.ElementCount;
+		Out.PayloadHash = Bulk.PayloadHash;
+
+		if (Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::MeshDescriptionBulkDataGuid)
+		{
+			Out.MeshGuid = Reader.ReadGuid().ToString(EGuidFormats::DigitsWithHyphens);
+		}
+		if (Reader.CustomVer(FEnterpriseObjectVersion::GUID) >= FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash)
+		{
+			Reader.ReadBool();
+		}
+	}
 
 	FString MeshOptionalName(const FString& Name)
 	{
@@ -503,12 +566,18 @@ FString FAssetStaticMeshRenderLod::Describe() const
 	return Text;
 }
 
+FString FAssetStaticMeshSourceModel::Describe() const
+{
+	return bHasMeshDescription ? FString::Printf(TEXT("%s (%lld bytes)"), PayloadHash.IsEmpty() ? TEXT("none") : *PayloadHash.Left(16), PayloadSize) : FString(TEXT("no mesh description"));
+}
+
 FString FAssetStaticMeshData::Summarize() const
 {
 	return FString::Printf(TEXT("%d material slots, %d sockets"), Materials.Num(), Sockets.Num());
 }
 
-bool AssetStaticMeshData::Decode(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const int64 NativeOffset, const int64 NativeSize, FAssetStaticMeshData& Out)
+bool AssetStaticMeshData::Decode(
+	const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const int64 NativeOffset, const int64 NativeSize, FAssetStaticMeshData& Out, const FAssetSerializationTrace* Trace)
 {
 	const UClass* NativeClass = AssetSchemaReflection::FindNativeClass(Document, Export.Index);
 	if (NativeClass == nullptr || !NativeClass->IsChildOf(UStaticMesh::StaticClass()) || NativeSize <= 0 || !Document.IsValidRange(NativeOffset, NativeSize))
@@ -565,14 +634,26 @@ bool AssetStaticMeshData::Decode(const FAssetPackageDocument& Document, const FA
 		Out.Sockets.Add(MeshOptionalObject(Reader.ReadObject()));
 	}
 
-	// The source models write nothing here once the mesh description is an object of its own; older layouts are not read.
+	// The source models write nothing here once the mesh description is an object of its own. Before that each wrote its mesh description
+	// inline, and before the raw mesh went away a raw mesh instead; the latter and the section info map of the oldest packages are not read.
 	if (!bEditorDataStripped)
 	{
 		if (Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::StaticMeshDeprecatedRawMesh
-			|| Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::SerializeMeshDescriptionBase
 			|| Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::UPropertryForMeshSection)
 		{
 			Reader.Fail(TEXT("The source models are stored in an older format"));
+		}
+		else if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::SerializeMeshDescriptionBase)
+		{
+			const int32 SourceModelCount = CountSourceModels(Document, Export, Trace);
+			if (SourceModelCount == INDEX_NONE || SourceModelCount > MaximumMeshEntries)
+			{
+				Reader.Fail(TEXT("The number of source models is not known"));
+			}
+			for (int32 Index = 0; Index < SourceModelCount && Reader.Ok(); ++Index)
+			{
+				ReadLegacySourceModel(Reader, Document, Out.SourceModels.AddDefaulted_GetRef());
+			}
 		}
 	}
 
@@ -666,6 +747,28 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 		{
 			Add(FString::Printf(TEXT("Material/%s"), *Old.Materials[Index].SlotName), FString::Printf(TEXT("Material slot %s"), *SlotLabel(Old.Materials[Index])),
 				FAssetNativeDataChange::EState::Removed, Old.Materials[Index].Describe(), FString());
+		}
+	}
+
+	// The mesh descriptions an older editor kept inline in the source models.
+	const int32 SourceModelCount = FMath::Max(Old.SourceModels.Num(), New.SourceModels.Num());
+	for (int32 Index = 0; Index < SourceModelCount; ++Index)
+	{
+		const FString Key = FString::Printf(TEXT("SourceModel/%d"), Index);
+		const FString Title = FString::Printf(TEXT("Source model %d mesh description"), Index);
+		const FAssetStaticMeshSourceModel* Before = Old.SourceModels.IsValidIndex(Index) && Old.SourceModels[Index].bHasMeshDescription ? &Old.SourceModels[Index] : nullptr;
+		const FAssetStaticMeshSourceModel* After = New.SourceModels.IsValidIndex(Index) && New.SourceModels[Index].bHasMeshDescription ? &New.SourceModels[Index] : nullptr;
+		if (Before == nullptr && After != nullptr)
+		{
+			Add(Key, Title, FAssetNativeDataChange::EState::Added, FString(), After->Describe());
+		}
+		else if (Before != nullptr && After == nullptr)
+		{
+			Add(Key, Title, FAssetNativeDataChange::EState::Removed, Before->Describe(), FString());
+		}
+		else if (Before != nullptr && After != nullptr && (Before->PayloadSize != After->PayloadSize || !Before->PayloadHash.Equals(After->PayloadHash, ESearchCase::CaseSensitive)))
+		{
+			Add(Key, Title, FAssetNativeDataChange::EState::Modified, Before->Describe(), After->Describe());
 		}
 	}
 
