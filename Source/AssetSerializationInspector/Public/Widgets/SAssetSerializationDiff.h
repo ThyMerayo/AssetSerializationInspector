@@ -13,6 +13,7 @@
 #include "Save/AssetSaveAnalyzer.h"
 #include "Save/RepeatedSaveAnalyzer.h"
 #include "Trace/AssetSerializationTrace.h"
+#include "Widgets/AssetLinkedScroll.h"
 
 class SCheckBox;
 class SEditableTextBox;
@@ -196,6 +197,11 @@ private:
 	void ExpandDiffAncestors(const FDiffTreeNodePtr& Node);
 
 private:
+	/** The old and the new hex panels scroll together while this is linked. */
+	FAssetLinkedScroll HexScrollLink;
+	TSharedPtr<SScrollBox> OldHexScrollBox;
+	TSharedPtr<SScrollBox> NewHexScrollBox;
+
 	FHexPreviewText OldHexPreview;
 	FHexPreviewText NewHexPreview;
 
