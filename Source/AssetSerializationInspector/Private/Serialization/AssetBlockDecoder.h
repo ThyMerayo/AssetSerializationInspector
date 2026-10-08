@@ -7,8 +7,8 @@
 #include "Serialization/AssetMipBlocks.h"
 
 /**
- * Decoders for the block formats of the BC family that are plain interpolation (BC1 to BC5), so the colors of a cooked mip can be
- * compared and not only its blocks. BC6H, BC7 and ASTC have many modes and are not decoded.
+ * Decoders for the block formats BC1 to BC5 (plain interpolation) and BC7 (eight modes), so the colors of a cooked mip can be compared
+ * and not only its blocks. BC6H and ASTC are not decoded.
  */
 namespace AssetBlockDecoder
 {

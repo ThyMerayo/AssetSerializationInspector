@@ -11,9 +11,11 @@
 #include "ImageUtils.h"
 #include "Interfaces/IPluginManager.h"
 #include "MeshDescription.h"
+#include "Misc/App.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "PixelFormat.h"
 #include "StaticMeshAttributes.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -770,13 +772,213 @@ bool FAssetBulkDataExport_DecodesTheBlocksOfTheBcFormats::RunTest(const FString&
 
 		// A format without a codec is still compared by blocks.
 		FAssetBlockFormat Bc7;
-		AssetMipBlocks::FindBlockFormat(TEXT("PF_BC7"), Bc7);
+		AssetMipBlocks::FindBlockFormat(TEXT("PF_BC6H"), Bc7);
 		TArray<uint8> Seven;
 		Seven.Init(1, 16);
 		TArray<uint8> Changed = Seven;
 		Changed[3] = 2;
 		const FAssetMipBlockDiff SevenDiff = AssetMipBlocks::CompareBytes(Seven.GetData(), Changed.GetData(), 16, 4, 4, Bc7);
-		TestTrue(TEXT("BC7 is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
+		TestTrue(TEXT("BC6H is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder,
+	"AssetSerializationInspector.Serialization.AssetBulkDataExport.DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::RunTest(const FString& Parameters)
+{
+	// A BC7 block of mode 6 packed by hand: two endpoints of 7 bits a channel and a P-bit each, and 4 bit indices (3 bits for the anchor pixel 0).
+	{
+		uint8 Block[16] = {};
+		int32 Position = 0;
+		const auto Put = [&Block, &Position](const uint32 Value, const int32 Count) {
+			for (int32 Bit = 0; Bit < Count; ++Bit, ++Position)
+			{
+				Block[Position >> 3] |= ((Value >> Bit) & 1) << (Position & 7);
+			}
+		};
+		Put(1 << 6, 7); // mode 6: six zeros and a one
+		Put(127, 7);	// red of the first endpoint
+		Put(0, 7);		// red of the second
+		Put(0, 7);		// green of the first
+		Put(127, 7);	// green of the second
+		Put(0, 14);		// blue of both
+		Put(127, 7);	// alpha of the first
+		Put(127, 7);	// alpha of the second
+		Put(1, 1);		// P-bit of the first endpoint
+		Put(0, 1);		// P-bit of the second
+		Put(0, 3);		// pixel 0, the anchor
+		Put(15, 4);		// pixel 1
+		Put(0, 56);		// the other fourteen
+
+		FVector4f Pixels[16];
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC7, Block, Pixels);
+		TestTrue(TEXT("Index 0 is the first endpoint, with its P-bit in every channel"), Pixels[0].Equals(FVector4f(255.0f, 1.0f, 1.0f, 255.0f) / 255.0f, 1e-4f));
+		TestTrue(TEXT("Index 15 is the second endpoint"), Pixels[1].Equals(FVector4f(0.0f, 254.0f, 0.0f, 254.0f) / 255.0f, 1e-4f));
+
+		uint8 Invalid[16] = {};
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC7, Invalid, Pixels);
+		TestTrue(TEXT("A block with no mode is transparent black"), Pixels[7].Equals(FVector4f(0, 0, 0, 0)));
+	}
+
+	// The real thing: textures compressed by the engine's own encoder from a smooth image, decoded and compared with the image. The engine
+	// only builds the data of a texture when it can render, which a run without a renderer cannot.
+	if (!FApp::CanEverRender())
+	{
+		AddInfo(TEXT("The engine does not build textures without a renderer, so the decoders are not compared with its encoder in this run."));
+		return true;
+	}
+
+	struct FCase
+	{
+		const TCHAR* Name;
+		TextureCompressionSettings Compression;
+		bool bAlpha;
+		const TCHAR* ExpectedFormat;
+		double Tolerance;
+
+		/** 0: gradients. 1: two colors in diagonal stripes, 2: three colors, 4: a ramp of sixteen steps in the four channels, 5: two halves of every block that each have a ramp. The last ones have
+		 * blocks that BC7 stores with its subsets or its larger modes. */
+		int32 Pattern = 0;
+	};
+	const FCase Cases[] = {
+		{ TEXT("BC7 with alpha"), TC_BC7, true, TEXT("PF_BC7"), 0.02 },
+		{ TEXT("BC7 opaque"), TC_BC7, false, TEXT("PF_BC7"), 0.02 },
+		{ TEXT("DXT1"), TC_Default, false, TEXT("PF_DXT1"), 0.06 },
+		{ TEXT("DXT5"), TC_Default, true, TEXT("PF_DXT5"), 0.06 },
+		{ TEXT("BC7 stripes"), TC_BC7, false, TEXT("PF_BC7"), 0.03, 1 },
+		{ TEXT("BC7 stripes with alpha"), TC_BC7, true, TEXT("PF_BC7"), 0.03, 1 },
+		{ TEXT("BC7 three colors"), TC_BC7, false, TEXT("PF_BC7"), 0.03, 2 },
+		{ TEXT("BC7 ramp in four channels"), TC_BC7, true, TEXT("PF_BC7"), 0.02, 4 },
+		{ TEXT("BC7 two regions with ramps"), TC_BC7, true, TEXT("PF_BC7"), 0.03, 5 },
+		{ TEXT("BC7 two regions with ramps, opaque"), TC_BC7, false, TEXT("PF_BC7"), 0.03, 5 },
+	};
+
+	constexpr int32 Size = 64;
+	for (const FCase& Case : Cases)
+	{
+		TArray<uint8> Source;
+		Source.SetNumUninitialized(Size * Size * 4);
+		for (int32 Y = 0; Y < Size; ++Y)
+		{
+			for (int32 X = 0; X < Size; ++X)
+			{
+				uint8* Pixel = Source.GetData() + (Y * Size + X) * 4; // BGRA
+				Pixel[2] = static_cast<uint8>(X * 4);
+				Pixel[1] = static_cast<uint8>(Y * 4);
+				Pixel[0] = static_cast<uint8>((X + Y) * 2);
+				Pixel[3] = Case.bAlpha ? static_cast<uint8>(255 - X * 3) : 255;
+				if (Case.Pattern == 1)
+				{
+					const bool bFirst = ((X * 3 + Y * 2) / 5) % 2 == 0;
+					Pixel[2] = bFirst ? 255 : 20;
+					Pixel[1] = bFirst ? 40 : 200;
+					Pixel[0] = bFirst ? 20 : 90;
+					Pixel[3] = Case.bAlpha ? (bFirst ? 255 : 100) : 255;
+				}
+				else if (Case.Pattern == 2)
+				{
+					static const uint8 Colors[3][4] = { { 255, 40, 20, 255 }, { 20, 200, 90, 160 }, { 30, 60, 240, 60 } };
+					const uint8* Color = Colors[((X * 3 + Y * 2) / 3) % 3];
+					Pixel[2] = Color[0];
+					Pixel[1] = Color[1];
+					Pixel[0] = Color[2];
+					Pixel[3] = Case.bAlpha ? Color[3] : 255;
+				}
+				else if (Case.Pattern == 4)
+				{
+					const int32 Step = ((X & 3) + 4 * (Y & 3)) * 16;
+					Pixel[2] = static_cast<uint8>(Step);
+					Pixel[1] = static_cast<uint8>(255 - Step);
+					Pixel[0] = static_cast<uint8>(Step / 2);
+					Pixel[3] = Case.bAlpha ? static_cast<uint8>(255 - Step / 2) : 255;
+				}
+				else if (Case.Pattern == 5)
+				{
+					// The left and the right half of every block each have a ramp of four steps down the block.
+					const bool bFirst = (X & 3) < 2;
+					const int32 T = (Y & 3) * 85;
+					Pixel[2] = static_cast<uint8>(bFirst ? T : 255 - T);
+					Pixel[1] = static_cast<uint8>(bFirst ? 255 - T : 40 + T / 3);
+					Pixel[0] = static_cast<uint8>(bFirst ? 30 : 200 - T / 2);
+					Pixel[3] = Case.bAlpha ? static_cast<uint8>(bFirst ? 255 - T / 2 : 50 + T / 2) : 255;
+				}
+			}
+		}
+
+		UTexture2D* Texture = NewObject<UTexture2D>(GetTransientPackage(), NAME_None, RF_Transient);
+		Texture->Source.Init(Size, Size, 1, 1, TSF_BGRA8, Source.GetData());
+		Texture->CompressionSettings = Case.Compression;
+		Texture->MipGenSettings = TMGS_NoMipmaps;
+		Texture->SRGB = false;
+		Texture->PostEditChange();
+		Texture->FinishCachePlatformData();
+
+		FTexturePlatformData* Data = Texture->GetPlatformData();
+		if (Data == nullptr || Data->Mips.IsEmpty())
+		{
+			AddInfo(FString::Printf(TEXT("%s: platform data %s"), Case.Name, Data != nullptr ? TEXT("exists but has no mips") : TEXT("is null")));
+		}
+		if (!TestTrue(FString::Printf(TEXT("%s: the engine builds the texture"), Case.Name), Data != nullptr && !Data->Mips.IsEmpty()))
+		{
+			continue;
+		}
+
+		const FString Format = GetPixelFormatString(Data->PixelFormat);
+		if (!TestEqual(FString::Printf(TEXT("%s: the format"), Case.Name), Format, FString(Case.ExpectedFormat)))
+		{
+			continue;
+		}
+
+		FAssetBlockFormat BlockFormat;
+		if (!TestTrue(TEXT("The format has a codec"), AssetMipBlocks::FindBlockFormat(Format, BlockFormat) && BlockFormat.Codec != EAssetBlockCodec::None))
+		{
+			continue;
+		}
+
+		Data->TryInlineMipData(0, TEXT("AssetSerializationInspector test"));
+		FByteBulkData& Bulk = Data->Mips[0].BulkData;
+		const uint8* Bytes = static_cast<const uint8*>(Bulk.LockReadOnly());
+		if (!TestTrue(FString::Printf(TEXT("%s: the pixels are there and are the blocks of the format"), Case.Name),
+				Bytes != nullptr && Bulk.GetBulkDataSize() == (Size / 4) * (Size / 4) * BlockFormat.BytesPerBlock))
+		{
+			Bulk.Unlock();
+			continue;
+		}
+
+		double Total = 0.0;
+		double Largest = 0.0;
+		int32 ModeCounts[9] = {};
+		for (int32 BlockIndex = 0; BlockIndex < (Size / 4) * (Size / 4); ++BlockIndex)
+		{
+			FVector4f Pixels[16];
+			AssetBlockDecoder::DecodeBlock(BlockFormat.Codec, Bytes + BlockIndex * BlockFormat.BytesPerBlock, Pixels);
+			const uint8 First = Bytes[BlockIndex * BlockFormat.BytesPerBlock];
+			++ModeCounts[First == 0 ? 8 : FMath::CountTrailingZeros(static_cast<uint32>(First))];
+			for (int32 Pixel = 0; Pixel < 16; ++Pixel)
+			{
+				const int32 X = (BlockIndex % (Size / 4)) * 4 + (Pixel & 3);
+				const int32 Y = (BlockIndex / (Size / 4)) * 4 + (Pixel >> 2);
+				const uint8* Expected = Source.GetData() + (Y * Size + X) * 4;
+				const FVector4f Want(Expected[2] / 255.0f, Expected[1] / 255.0f, Expected[0] / 255.0f, Expected[3] / 255.0f);
+				const FVector4f Delta = Pixels[Pixel] - Want;
+				const double Error = FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)));
+				Total += Error;
+				Largest = FMath::Max(Largest, Error);
+			}
+		}
+		Bulk.Unlock();
+
+		const double Mean = Total / (Size * Size);
+		AddInfo(FString::Printf(TEXT("%s: mean error %.4f, largest %.4f"), Case.Name, Mean, Largest));
+		if (BlockFormat.Codec == EAssetBlockCodec::BC7)
+		{
+			AddInfo(FString::Printf(TEXT("%s: blocks by BC7 mode 0 to 7: %d %d %d %d %d %d %d %d"), Case.Name, ModeCounts[0], ModeCounts[1], ModeCounts[2], ModeCounts[3], ModeCounts[4], ModeCounts[5],
+				ModeCounts[6], ModeCounts[7]));
+		}
+		TestTrue(FString::Printf(TEXT("%s: the decoded colors are those of the image (mean error %.4f)"), Case.Name, Mean), Mean < Case.Tolerance);
 	}
 
 	return true;
