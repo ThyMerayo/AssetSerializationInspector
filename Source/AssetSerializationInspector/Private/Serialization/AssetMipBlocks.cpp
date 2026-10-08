@@ -3,6 +3,7 @@
 #include "Serialization/AssetMipBlocks.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetBlockDecoder.h"
 #include "Serialization/AssetCookedBulkData.h"
 
 bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockFormat& Out)
@@ -13,14 +14,15 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 		int32 Width;
 		int32 Height;
 		int32 Bytes;
+		EAssetBlockCodec Codec = EAssetBlockCodec::None;
 	};
 
 	static const FKnownFormat Formats[] = {
-		{ TEXT("PF_DXT1"), 4, 4, 8 },
-		{ TEXT("PF_DXT3"), 4, 4, 16 },
-		{ TEXT("PF_DXT5"), 4, 4, 16 },
-		{ TEXT("PF_BC4"), 4, 4, 8 },
-		{ TEXT("PF_BC5"), 4, 4, 16 },
+		{ TEXT("PF_DXT1"), 4, 4, 8, EAssetBlockCodec::BC1 },
+		{ TEXT("PF_DXT3"), 4, 4, 16, EAssetBlockCodec::BC2 },
+		{ TEXT("PF_DXT5"), 4, 4, 16, EAssetBlockCodec::BC3 },
+		{ TEXT("PF_BC4"), 4, 4, 8, EAssetBlockCodec::BC4 },
+		{ TEXT("PF_BC5"), 4, 4, 16, EAssetBlockCodec::BC5 },
 		{ TEXT("PF_BC6H"), 4, 4, 16 },
 		{ TEXT("PF_BC7"), 4, 4, 16 },
 		{ TEXT("PF_ASTC_4x4"), 4, 4, 16 },
@@ -53,6 +55,7 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 			Out.BlockWidth = Format.Width;
 			Out.BlockHeight = Format.Height;
 			Out.BytesPerBlock = Format.Bytes;
+			Out.Codec = Format.Codec;
 			return true;
 		}
 	}
@@ -79,18 +82,58 @@ FAssetMipBlockDiff AssetMipBlocks::CompareBytes(const uint8* Old, const uint8* N
 	Result.bComparable = true;
 	Result.TotalBlocks = BlocksX * BlocksY;
 	int64 MinBlockX = MAX_int64, MinBlockY = MAX_int64, MaxBlockX = -1, MaxBlockY = -1;
+
+	// With a codec the colors of every block are decoded on both sides, for the average of the mip and the largest change.
+	const bool bDecode = Format.Codec != EAssetBlockCodec::None && Format.BlockWidth == 4 && Format.BlockHeight == 4;
+	FVector4d OldSum(0.0, 0.0, 0.0, 0.0);
+	FVector4d NewSum(0.0, 0.0, 0.0, 0.0);
 	for (int64 Index = 0; Index < Result.TotalBlocks; ++Index)
 	{
-		if (FMemory::Memcmp(Old + Index * Format.BytesPerBlock, New + Index * Format.BytesPerBlock, Format.BytesPerBlock) != 0)
+		const int64 BlockX = Index % BlocksX;
+		const int64 BlockY = Index / BlocksX;
+		const bool bDiffers = FMemory::Memcmp(Old + Index * Format.BytesPerBlock, New + Index * Format.BytesPerBlock, Format.BytesPerBlock) != 0;
+
+		if (bDecode)
+		{
+			FVector4f OldPixels[16];
+			FVector4f NewPixels[16];
+			AssetBlockDecoder::DecodeBlock(Format.Codec, Old + Index * Format.BytesPerBlock, OldPixels);
+			AssetBlockDecoder::DecodeBlock(Format.Codec, New + Index * Format.BytesPerBlock, NewPixels);
+			for (int32 Pixel = 0; Pixel < 16; ++Pixel)
+			{
+				// The pixels of a block that lie outside the image are padding.
+				if (BlockX * 4 + (Pixel & 3) >= Width || BlockY * 4 + (Pixel >> 2) >= Height)
+				{
+					continue;
+				}
+
+				OldSum += FVector4d(OldPixels[Pixel]);
+				NewSum += FVector4d(NewPixels[Pixel]);
+				if (bDiffers)
+				{
+					const FVector4f Delta = OldPixels[Pixel] - NewPixels[Pixel];
+					Result.LargestChange =
+						FMath::Max(Result.LargestChange, static_cast<double>(FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)))));
+				}
+			}
+		}
+
+		if (bDiffers)
 		{
 			++Result.DifferingBlocks;
-			const int64 BlockX = Index % BlocksX;
-			const int64 BlockY = Index / BlocksX;
 			MinBlockX = FMath::Min(MinBlockX, BlockX);
 			MaxBlockX = FMath::Max(MaxBlockX, BlockX);
 			MinBlockY = FMath::Min(MinBlockY, BlockY);
 			MaxBlockY = FMath::Max(MaxBlockY, BlockY);
 		}
+	}
+
+	if (bDecode)
+	{
+		const double Pixels = static_cast<double>(Width) * Height;
+		Result.bColors = true;
+		Result.OldAverage = OldSum / Pixels;
+		Result.NewAverage = NewSum / Pixels;
 	}
 
 	if (Result.DifferingBlocks > 0)
@@ -140,6 +183,11 @@ void AssetMipBlocks::AppendBlockChanges(const FAssetPackageDocument& OldDocument
 		Change.State = FAssetNativeDataChange::EState::Modified;
 		Change.OldValue = OldMip.PayloadHash;
 		Change.NewValue = NewMip.PayloadHash;
+		if (Diff.bColors)
+		{
+			Change.OldValue += FString::Printf(TEXT("; average color (%.3f, %.3f, %.3f, %.3f)"), Diff.OldAverage.X, Diff.OldAverage.Y, Diff.OldAverage.Z, Diff.OldAverage.W);
+			Change.NewValue += FString::Printf(TEXT("; average color (%.3f, %.3f, %.3f, %.3f)"), Diff.NewAverage.X, Diff.NewAverage.Y, Diff.NewAverage.Z, Diff.NewAverage.W);
+		}
 		if (!Diff.bComparable)
 		{
 			Change.Title = FString::Printf(TEXT("Mip %d blocks: not compared, %s"), MipIndex, *Diff.Reason);
@@ -148,6 +196,10 @@ void AssetMipBlocks::AppendBlockChanges(const FAssetPackageDocument& OldDocument
 		{
 			Change.Title = FString::Printf(TEXT("Mip %d blocks: %lld of %lld differ (%.1f%%), within x %d to %d and y %d to %d (pixels)"), MipIndex, Diff.DifferingBlocks, Diff.TotalBlocks,
 				100.0 * static_cast<double>(Diff.DifferingBlocks) / static_cast<double>(FMath::Max<int64>(Diff.TotalBlocks, 1)), Diff.MinX, Diff.MaxX, Diff.MinY, Diff.MaxY);
+			if (Diff.bColors)
+			{
+				Change.Title += FString::Printf(TEXT("; the largest change of a channel is %.3f of the range"), Diff.LargestChange);
+			}
 		}
 	}
 }

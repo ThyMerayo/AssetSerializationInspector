@@ -22,6 +22,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
+#include "Serialization/AssetBlockDecoder.h"
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetMeshGeometry.h"
@@ -685,6 +686,102 @@ bool FAssetBulkDataExport_ComparesThePixelsOfAPngSourceImage::RunTest(const FStr
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_DecodesTheBlocksOfTheBcFormats, "AssetSerializationInspector.Serialization.AssetBulkDataExport.DecodesTheBlocksOfTheBcFormats",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_DecodesTheBlocksOfTheBcFormats::RunTest(const FString& Parameters)
+{
+	const auto Near = [](const FVector4f& A, const FVector4f& B) { return A.Equals(B, 1e-3f); };
+
+	// BC1: red and blue as the end colors; the indices pick the end colors and the two between them.
+	{
+		uint8 Block[8] = { 0x00, 0xF8, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00 };
+		FVector4f Pixels[16];
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC1, Block, Pixels);
+		TestTrue(TEXT("Index 0 is the first color"), Near(Pixels[0], FVector4f(1, 0, 0, 1)));
+
+		Block[4] = 0b11100100; // the first four pixels use the indices 0, 1, 2 and 3
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC1, Block, Pixels);
+		TestTrue(TEXT("Index 1 is the second color"), Near(Pixels[1], FVector4f(0, 0, 1, 1)));
+		TestTrue(TEXT("Index 2 is two thirds of the first and a third of the second"), Near(Pixels[2], FVector4f(2.0f / 3.0f, 0, 1.0f / 3.0f, 1)));
+		TestTrue(TEXT("Index 3 is a third and two thirds"), Near(Pixels[3], FVector4f(1.0f / 3.0f, 0, 2.0f / 3.0f, 1)));
+
+		// The first color not above the second: three colors, and the last is transparent.
+		uint8 ThreeColors[8] = { 0x1F, 0x00, 0x00, 0xF8, 0b11100100, 0x00, 0x00, 0x00 };
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC1, ThreeColors, Pixels);
+		TestTrue(TEXT("Index 2 is the middle of the two"), Near(Pixels[2], FVector4f(0.5f, 0, 0.5f, 1)));
+		TestTrue(TEXT("Index 3 is transparent black"), Near(Pixels[3], FVector4f(0, 0, 0, 0)));
+	}
+
+	// BC4 (and BC3 alpha, BC5 channels): 255 and 0 as the ends.
+	{
+		uint8 Block[8] = { 255, 0, 0b00001000, 0b00000000, 0, 0, 0, 0 }; // the indices 0, 1 and then 0s
+		FVector4f Pixels[16];
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC4, Block, Pixels);
+		TestTrue(TEXT("Index 0 is the first end"), Near(Pixels[0], FVector4f(1, 1, 1, 1)));
+		TestTrue(TEXT("Index 1 is the second end"), Near(Pixels[1], FVector4f(0, 0, 0, 1)));
+
+		Block[2] = 0b00010010; // 2 then 2 then 0: the indices are 3 bits each, from the lowest
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC4, Block, Pixels);
+		TestTrue(TEXT("Index 2 is six sevenths of the way to the first end"), Near(Pixels[0], FVector4f(6.0f / 7.0f, 6.0f / 7.0f, 6.0f / 7.0f, 1)));
+
+		// With the ends the other way round there are six steps and the values 0 and 1.
+		uint8 Six[8] = { 0, 255, 0b11110110, 0b00000001, 0, 0, 0, 0 }; // the indices 6, 6, 7, 0
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC4, Six, Pixels);
+		TestTrue(TEXT("Index 6 is 0 and 7 is 1"), Near(Pixels[0], FVector4f(0, 0, 0, 1)) && Near(Pixels[2], FVector4f(1, 1, 1, 1)));
+
+		// BC5: the first block is red and the second is green.
+		uint8 Two[16] = { 255, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0 };
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC5, Two, Pixels);
+		TestTrue(TEXT("Red from the first block, green from the second"), Near(Pixels[5], FVector4f(1, 1, 0, 1)));
+	}
+
+	// BC3: the alpha from a block of its own, then the colors.
+	{
+		uint8 Block[16] = { 0, 255, 0, 0, 0, 0, 0, 0, 0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0 };
+		FVector4f Pixels[16];
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC3, Block, Pixels);
+		TestTrue(TEXT("Red with the alpha of the first end, which is 0"), Near(Pixels[0], FVector4f(1, 0, 0, 0)));
+	}
+
+	// The comparison: the colors of a mip of red where one block turned blue.
+	{
+		FAssetBlockFormat Dxt1;
+		AssetMipBlocks::FindBlockFormat(TEXT("PF_DXT1"), Dxt1);
+		TestTrue(TEXT("DXT1 is decoded"), Dxt1.Codec == EAssetBlockCodec::BC1);
+
+		const uint8 RedBlock[8] = { 0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0 };
+		const uint8 BlueBlock[8] = { 0x1F, 0x00, 0x1F, 0x00, 0, 0, 0, 0 };
+		TArray<uint8> Old;
+		for (int32 Block = 0; Block < 16; ++Block)
+		{
+			Old.Append(RedBlock, 8);
+		}
+		TArray<uint8> New = Old;
+		FMemory::Memcpy(New.GetData() + 5 * 8, BlueBlock, 8);
+
+		const FAssetMipBlockDiff Diff = AssetMipBlocks::CompareBytes(Old.GetData(), New.GetData(), Old.Num(), 16, 16, Dxt1);
+		if (TestTrue(TEXT("The colors are compared"), Diff.bComparable && Diff.bColors && Diff.DifferingBlocks == 1))
+		{
+			TestEqual(TEXT("The largest change is the whole range"), Diff.LargestChange, 1.0);
+			TestTrue(TEXT("The average of the old mip is red"), Diff.OldAverage.Equals(FVector4d(1, 0, 0, 1), 1e-3));
+			TestTrue(TEXT("The new one has a sixteenth of blue"), Diff.NewAverage.Equals(FVector4d(15.0 / 16.0, 0, 1.0 / 16.0, 1), 1e-3));
+		}
+
+		// A format without a codec is still compared by blocks.
+		FAssetBlockFormat Bc7;
+		AssetMipBlocks::FindBlockFormat(TEXT("PF_BC7"), Bc7);
+		TArray<uint8> Seven;
+		Seven.Init(1, 16);
+		TArray<uint8> Changed = Seven;
+		Changed[3] = 2;
+		const FAssetMipBlockDiff SevenDiff = AssetMipBlocks::CompareBytes(Seven.GetData(), Changed.GetData(), 16, 4, 4, Bc7);
+		TestTrue(TEXT("BC7 is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
+	}
+
+	return true;
+}
+
 namespace CookedTextureTestUtils
 {
 	/** Reads the texture of a cooked package kept with the plugin (cooked for Windows by this engine version), with its sidecar file next to it. */
@@ -1264,6 +1361,9 @@ bool FAssetBulkDataExport_ShowsTheBlocksThatChangedInACookedTexture::RunTest(con
 			const FString Title = Blocks->DisplayName.ToString();
 			AddInfo(Title);
 			TestTrue(TEXT("One block differs"), Title.Contains(TEXT("1 of")));
+			TestTrue(TEXT("The colors are decoded: the largest change and the average color of both"),
+				Title.Contains(TEXT("largest change of a channel")) && Blocks->OldValue.Contains(TEXT("average color")) && Blocks->NewValue.Contains(TEXT("average color")));
+			AddInfo(FString::Printf(TEXT("%s | %s | %s"), *Title, *Blocks->OldValue, *Blocks->NewValue));
 			TestTrue(TEXT("The second block of the first row: pixels x 4 to 7, y 0 to 3"), Title.Contains(TEXT("x 4 to 7")) && Title.Contains(TEXT("y 0 to 3")));
 		}
 		else

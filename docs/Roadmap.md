@@ -93,4 +93,5 @@ Open items, in order:
 - [x] Compare the vertex colors, binormal signs, edge hardness and polygon object names of a mesh description (it has no smoothing groups: they exist at import, and become hard edges)
 - [x] Compare the pixels of cooked mips block by block (BC, ASTC and uncompressed formats): how many blocks changed, how much of the mip, and where
 - [x] Compare the pixels of source images compressed as PNG or JPEG (decoded with the engine's image reader)
-- [ ] Decode the colors of block compressed mips (BC and ASTC decoders) and the pixels of source images that are virtualized; a change that is only in the sidecar file of a streamed mip is not seen, since the package itself is the same
+- [x] Decode the colors of the block compressed mips that are plain interpolation (BC1 to BC5): largest change of a channel and the average color of each version
+- [ ] Decode the colors of BC6H, BC7 and ASTC mips, and the pixels of source images that are virtualized; a change that is only in the sidecar file of a streamed mip is not seen, since the package itself is the same

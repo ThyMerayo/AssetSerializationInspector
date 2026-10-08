@@ -9,12 +9,26 @@
 
 struct FAssetPackageDocument;
 
+/** The block compression a pixel format uses, for the ones whose colors this reading can decode. */
+enum class EAssetBlockCodec : uint8
+{
+	None,
+	BC1,
+	BC2,
+	BC3,
+	BC4,
+	BC5
+};
+
 /** How a pixel format stores a mip: in blocks of Width by Height pixels, each BytesPerBlock bytes (an uncompressed format has blocks of one pixel). */
 struct FAssetBlockFormat
 {
 	int32 BlockWidth = 1;
 	int32 BlockHeight = 1;
 	int32 BytesPerBlock = 0;
+
+	/** How the colors of a block can be decoded; None when they cannot (the blocks are still compared). */
+	EAssetBlockCodec Codec = EAssetBlockCodec::None;
 };
 
 /** What differs between two versions of the same mip, counted in blocks. */
@@ -32,6 +46,12 @@ struct FAssetMipBlockDiff
 	int32 MinY = 0;
 	int32 MaxX = 0;
 	int32 MaxY = 0;
+
+	/** The colors were decoded (a format with a codec): the largest change of a channel over the blocks that differ, from 0 to 1, and the average color of the whole mip on each side. */
+	bool bColors = false;
+	double LargestChange = 0.0;
+	FVector4d OldAverage = FVector4d(0.0, 0.0, 0.0, 0.0);
+	FVector4d NewAverage = FVector4d(0.0, 0.0, 0.0, 0.0);
 };
 
 /**
