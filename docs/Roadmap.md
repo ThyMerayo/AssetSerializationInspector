@@ -88,6 +88,6 @@ Open items, in order:
 - [x] Compare the other attributes of a mesh description: normals, tangents, UV channels, material slots and which triangles use them
 - [x] Read the render data of a cooked static mesh: LODs with their sections and bounds, the inline vertex and index buffers (counted and hashed), the screen sizes and bounds; 85 of 85 meshes of a cook of the engine's meshes
 - [ ] Decode what lies between the LODs and the bounds of the render data of a cooked static mesh (Nanite resources, ray tracing proxy, card representation, distance fields), which is only hashed, and the LODs whose buffers stream from a sidecar file
-- [ ] Compare the colors, edge hardness and smoothing groups of a mesh description
+- [x] Compare the vertex colors, binormal signs, edge hardness and polygon object names of a mesh description (it has no smoothing groups: they exist at import, and become hard edges)
 - [x] Compare the pixels of cooked mips block by block (BC, ASTC and uncompressed formats): how many blocks changed, how much of the mip, and where
 - [ ] Decode the colors of block compressed mips (BC and ASTC decoders) and the pixels of source images that are virtualized or compressed as PNG/JPEG; a change that is only in the sidecar file of a streamed mip is not seen, since the package itself is the same
