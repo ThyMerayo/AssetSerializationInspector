@@ -26,6 +26,10 @@ namespace AssetCookedBulkData
 		int64 RawSize = 0;
 		int64 Offset = INDEX_NONE;
 
+		/** Where the payload is to be read and how many bytes it takes: its offset in the document when inline, in the sidecar file otherwise. */
+		int64 DataOffset = INDEX_NONE;
+		int64 StoredSize = 0;
+
 		/** A hash of the payload, when it is inline or in the sidecar file next to the package. */
 		FString PayloadHash;
 	};
@@ -41,6 +45,12 @@ namespace AssetCookedBulkData
 
 	/** The extension of the sidecar file a payload is in, by its bulk data flags; null for a payload that is inline. */
 	const TCHAR* SidecarExtension(uint32 BulkFlags);
+
+	/**
+	 * The bytes of a block of cooked bulk data: from the document when they are inline, from the sidecar file next to the package otherwise.
+	 * Returns false when the file is not there or is shorter than the block.
+	 */
+	bool LoadBytes(const FAssetPackageDocument& Document, uint32 BulkFlags, int64 DataOffset, int64 StoredSize, TArray64<uint8>& Out);
 
 	/** Reads the index of a block, and the payload when it follows inline (skipped and hashed); a payload in a sidecar file is hashed from there. */
 	bool ReadBulkReference(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const TCHAR* What, FBulkReference& Out);

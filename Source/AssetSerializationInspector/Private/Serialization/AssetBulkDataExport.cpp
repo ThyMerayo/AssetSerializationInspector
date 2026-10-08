@@ -282,6 +282,8 @@ namespace
 				Mip.PayloadSize = Data.RawSize;
 				Mip.Offset = Data.Offset;
 				Mip.PayloadHash = Data.PayloadHash;
+				Mip.DataOffset = Data.DataOffset;
+				Mip.StoredSize = Data.StoredSize;
 			}
 
 			Mip.SizeX = Reader.Read<int32>();

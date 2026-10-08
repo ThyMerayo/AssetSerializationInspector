@@ -61,6 +61,10 @@ struct FAssetTextureMip
 	/** A hash of the pixels, when they could be read: inline, or in the sidecar file next to the package. Empty otherwise. */
 	FString PayloadHash;
 
+	/** Where the pixels are to be read and how many bytes they take: the offset in the document when inline, in the sidecar file otherwise. */
+	int64 DataOffset = INDEX_NONE;
+	int64 StoredSize = 0;
+
 	bool IsInline() const;
 
 	/** "Inline", "streamed (.ubulk)", "optional (.uptnl)" and the like. */

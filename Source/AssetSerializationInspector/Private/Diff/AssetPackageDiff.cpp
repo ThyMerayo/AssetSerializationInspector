@@ -15,6 +15,7 @@
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetMeshGeometry.h"
+#include "Serialization/AssetMipBlocks.h"
 #include "Serialization/AssetMorphTargetData.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
@@ -1174,6 +1175,15 @@ namespace
 		{
 			AssetSourceImage::AppendPixelChange(
 				AssetSourceImage::Load(OldDocument, OldExport, OldTrace, OldData.Bulk), AssetSourceImage::Load(NewDocument, NewExport, NewTrace, NewData.Bulk), Changes);
+		}
+
+		// A cooked texture whose mips changed: which blocks of each, when the package or its sidecar file holds them.
+		if (NewData.Kind == TEXT("Texture"))
+		{
+			for (int32 PlatformIndex = 0; PlatformIndex < FMath::Min(OldData.PlatformData.Num(), NewData.PlatformData.Num()); ++PlatformIndex)
+			{
+				AssetMipBlocks::AppendBlockChanges(OldDocument, OldData.PlatformData[PlatformIndex], NewDocument, NewData.PlatformData[PlatformIndex], PlatformIndex, Changes);
+			}
 		}
 
 		// A mesh description whose content changed: say what changed in the geometry, when the package holds it.
