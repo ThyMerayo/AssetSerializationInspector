@@ -8,10 +8,14 @@
 #include "UObject/ObjectVersion.h"
 #include "UObject/RenderingObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
+
+using namespace AssetCookedBulkData;
 
 namespace
 {
@@ -53,6 +57,404 @@ namespace
 		}
 	}
 
+	/** How many bytes a material slot takes in the data (FStaticMaterial), by the versions of the package. */
+	int64 MaterialSlotBytes(const FNativeReader& Reader, const bool bEditorOnlyStripped)
+	{
+		int64 Size = 4 + 8; // the material and the name of the slot
+		if (!bEditorOnlyStripped)
+		{
+			Size += 8; // the name it was imported with
+		}
+		if (Reader.CustomVer(FRenderingObjectVersion::GUID) >= FRenderingObjectVersion::TextureStreamingMeshUVChannelData)
+		{
+			Size += 4 + 4 + 4 * 4; // FMeshUVChannelInfo
+		}
+		if (Reader.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::MeshMaterialSlotOverlayMaterialAdded)
+		{
+			Size += 4; // the overlay material
+		}
+		return Size;
+	}
+
+	/** FBoxSphereBounds, in doubles: the center, the half extents and the radius of the sphere. */
+	FBoxSphereBounds ReadRenderBounds(FNativeReader& Reader)
+	{
+		FBoxSphereBounds Bounds(ForceInit);
+		Bounds.Origin.X = Reader.Read<double>();
+		Bounds.Origin.Y = Reader.Read<double>();
+		Bounds.Origin.Z = Reader.Read<double>();
+		Bounds.BoxExtent.X = Reader.Read<double>();
+		Bounds.BoxExtent.Y = Reader.Read<double>();
+		Bounds.BoxExtent.Z = Reader.Read<double>();
+		Bounds.SphereRadius = Reader.Read<double>();
+		return Bounds;
+	}
+
+	bool RenderBoundsEqual(const FBoxSphereBounds& A, const FBoxSphereBounds& B)
+	{
+		return A.Origin.Equals(B.Origin, 1e-4) && A.BoxExtent.Equals(B.BoxExtent, 1e-4) && FMath::IsNearlyEqual(A.SphereRadius, B.SphereRadius, 1e-4);
+	}
+
+	FString DescribeRenderBounds(const FBoxSphereBounds& Bounds)
+	{
+		return FString::Printf(TEXT("center (%.2f, %.2f, %.2f), half extents (%.2f, %.2f, %.2f), radius %.2f"), Bounds.Origin.X, Bounds.Origin.Y, Bounds.Origin.Z, Bounds.BoxExtent.X,
+			Bounds.BoxExtent.Y, Bounds.BoxExtent.Z, Bounds.SphereRadius);
+	}
+
+	/** FStaticMeshSection (StaticMesh.cpp). */
+	void ReadRenderSection(FNativeReader& Reader, const bool bEditorOnlyStripped, FAssetStaticMeshRenderSection& Out)
+	{
+		Out.MaterialIndex = Reader.Read<int32>();
+		Out.FirstIndex = Reader.Read<int32>();
+		Out.NumTriangles = Reader.Read<uint32>();
+		Out.MinVertexIndex = Reader.Read<uint32>();
+		Out.MaxVertexIndex = Reader.Read<uint32>();
+		Out.bEnableCollision = Reader.ReadBool();
+		Out.bCastShadow = Reader.ReadBool();
+		if (Reader.CustomVer(FRenderingObjectVersion::GUID) >= FRenderingObjectVersion::StaticMeshSectionForceOpaqueField)
+		{
+			Out.bForceOpaque = Reader.ReadBool();
+		}
+		if (!bEditorOnlyStripped)
+		{
+			Reader.Skip(8 * (4 + 4)); // the UV density and weight of each of the eight channels
+		}
+		Out.bVisibleInRayTracing = Reader.ReadBool();
+		Out.bAffectDistanceFieldLighting = Reader.ReadBool();
+	}
+
+	/** An array written with BulkSerialize: the size of an element, the number of elements, then the elements. Returns how many there are. */
+	int32 SkipRenderBulkArray(FNativeReader& Reader, const TCHAR* What)
+	{
+		const int32 ElementSize = Reader.Read<int32>();
+		const int32 Count = Reader.Read<int32>();
+		if (Reader.Ok() && (ElementSize <= 0 || Count < 0 || static_cast<int64>(ElementSize) * Count > Reader.Remaining()))
+		{
+			Reader.Fail(FString::Printf(TEXT("The %s of a LOD do not fit the data"), What));
+			return 0;
+		}
+		Reader.Skip(static_cast<int64>(ElementSize) * Count);
+		return Count;
+	}
+
+	/** FRawStaticIndexBuffer::Serialize: whether the indices are 32 bit, the indices as bytes, and whether they would be expanded to 32 bit. Returns the number of indices. */
+	int32 SkipRenderIndexBuffer(FNativeReader& Reader, bool* bOut32Bit = nullptr)
+	{
+		const bool b32Bit = Reader.ReadBool();
+		const int32 Bytes = SkipRenderBulkArray(Reader, TEXT("indices"));
+		Reader.ReadBool();
+		if (bOut32Bit != nullptr)
+		{
+			*bOut32Bit = b32Bit;
+		}
+		return Bytes / (b32Bit ? 4 : 2);
+	}
+
+	/** A weighted random sampler (FWeightedRandomSampler): the probabilities, the aliases and the total weight. */
+	void SkipRenderSampler(FNativeReader& Reader)
+	{
+		for (int32 Array = 0; Array < 2; ++Array)
+		{
+			const int32 Count = Reader.Read<int32>();
+			if (Reader.Ok() && (Count < 0 || static_cast<int64>(Count) * 4 > Reader.Remaining()))
+			{
+				Reader.Fail(TEXT("A sampler of a LOD does not fit the data"));
+				return;
+			}
+			Reader.Skip(static_cast<int64>(Count) * 4);
+		}
+		Reader.Read<float>();
+	}
+
+	/**
+	 * FStaticMeshLODResources::SerializeBuffers: the position, tangent and UV, and color vertex buffers, the index buffers (the LOD, reversed,
+	 * depth only, reversed depth only and wireframe), the ray tracing geometry and the samplers that pick a point on the surface. The
+	 * vertices and indices are counted and hashed, not listed.
+	 */
+	void ReadInlineBuffers(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetStaticMeshRenderLod& Out)
+	{
+		constexpr uint8 ReversedIndexBufferStripped = 4;
+		constexpr uint8 RayTracingResourcesStripped = 8;
+		constexpr uint8 EditorDataStripped = 1;
+		constexpr uint8 AudioVisualStripped = 2;
+
+		const int64 Start = Reader.Tell();
+		const uint8 GlobalStripFlags = Reader.Read<uint8>();
+		const uint8 ClassStripFlags = Reader.Read<uint8>();
+
+		// The positions.
+		Out.PositionStride = Reader.Read<uint32>();
+		Reader.Read<uint32>();
+		SkipRenderBulkArray(Reader, TEXT("positions"));
+
+		// The tangents and the UVs.
+		const uint8 VertexStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		Out.NumTexCoords = Reader.Read<uint32>();
+		Out.NumVertices = Reader.Read<uint32>();
+		Out.bFullPrecisionUVs = Reader.ReadBool();
+		Out.bHighPrecisionTangents = Reader.ReadBool();
+		if ((VertexStrip & AudioVisualStripped) == 0)
+		{
+			SkipRenderBulkArray(Reader, TEXT("tangents"));
+			SkipRenderBulkArray(Reader, TEXT("UVs"));
+		}
+
+		// The colors, when the mesh has any.
+		const uint8 ColorStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		Reader.Read<uint32>();
+		Out.ColorVertices = Reader.Read<uint32>();
+		if ((ColorStrip & AudioVisualStripped) == 0 && Out.ColorVertices > 0)
+		{
+			SkipRenderBulkArray(Reader, TEXT("colors"));
+		}
+
+		Out.NumIndices = SkipRenderIndexBuffer(Reader, &Out.b32BitIndices);
+		if ((ClassStripFlags & ReversedIndexBufferStripped) == 0)
+		{
+			Out.ReversedIndices = SkipRenderIndexBuffer(Reader);
+		}
+		Out.DepthOnlyIndices = SkipRenderIndexBuffer(Reader);
+		if ((ClassStripFlags & ReversedIndexBufferStripped) == 0)
+		{
+			Out.ReversedDepthOnlyIndices = SkipRenderIndexBuffer(Reader);
+		}
+		if ((GlobalStripFlags & EditorDataStripped) == 0)
+		{
+			Out.WireframeIndices = SkipRenderIndexBuffer(Reader);
+		}
+
+		if ((ClassStripFlags & RayTracingResourcesStripped) == 0)
+		{
+			Reader.Skip(6 * 4); // the header of the offline ray tracing data
+			SkipRenderBulkArray(Reader, TEXT("ray tracing data"));
+		}
+
+		for (int32 Index = 0; Index < Out.Sections.Num() && Reader.Ok(); ++Index)
+		{
+			SkipRenderSampler(Reader);
+		}
+		SkipRenderSampler(Reader);
+
+		if (Reader.Ok())
+		{
+			Out.BufferBytes = Reader.Tell() - Start;
+			Out.BufferHash = HashBytes(Document.FileData.GetData() + Start, Out.BufferBytes);
+		}
+
+		Out.SerializedBuffersSize = Reader.Read<uint32>();
+		Out.DepthOnlyIndexBytes = Reader.Read<uint32>();
+		Out.ReversedIndexBytes = Reader.Read<uint32>();
+	}
+
+	/**
+	 * FStaticMeshLODResources::Serialize for a cooked mesh: the sections and bounds, then, when the buffers stream from a sidecar file,
+	 * the reference to them and the record of what they hold (SerializeAvailabilityInfo); when they are kept in the export, the buffers themselves.
+	 */
+	void ReadRenderLod(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const bool bEditorOnlyStripped, FAssetStaticMeshRenderLod& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+
+		const uint8 GlobalStripFlags = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+
+		const int32 SectionCount = Reader.Read<int32>();
+		if (Reader.Ok() && (SectionCount < 0 || SectionCount > MaximumMeshEntries || SectionCount > Reader.Remaining() / 20))
+		{
+			Reader.Fail(TEXT("The number of sections of a LOD does not fit the data"));
+			return;
+		}
+		for (int32 Index = 0; Index < SectionCount && Reader.Ok(); ++Index)
+		{
+			ReadRenderSection(Reader, bEditorOnlyStripped, Out.Sections.AddDefaulted_GetRef());
+		}
+
+		Out.SourceMeshBounds = ReadRenderBounds(Reader);
+		Out.MaxDeviation = Reader.Read<float>();
+		if (!bEditorOnlyStripped)
+		{
+			Reader.Fail(TEXT("The editor data of a LOD of the render data is not read"));
+			return;
+		}
+
+		Out.bCookedOut = Reader.ReadBool();
+		Out.bInlined = Reader.ReadBool();
+		if ((GlobalStripFlags & AudioVisualStripped) != 0 || Out.bCookedOut || !Reader.Ok())
+		{
+			return;
+		}
+
+		Out.bHasRayTracingGeometry = Reader.ReadBool();
+		if (Out.bInlined)
+		{
+			ReadInlineBuffers(Reader, Document, Out);
+			return;
+		}
+
+		// The buffers stream from a sidecar file; the export keeps the reference to them.
+		FBulkReference Buffers;
+		if (!ReadBulkReference(Reader, Document, Resources, TEXT("The buffers of a LOD"), Buffers))
+		{
+			return;
+		}
+		Out.BulkFlags = Buffers.Flags;
+		Out.BufferBytes = Buffers.RawSize;
+		Out.BufferHash = Buffers.PayloadHash;
+
+		if (Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::RemovingTessellation)
+		{
+			Reader.Fail(TEXT("The availability record of a LOD is in a layout older than the removal of tessellation"));
+			return;
+		}
+
+		// SerializeAvailabilityInfo: the number of depth only triangles, what the LOD has, and the metadata of each buffer.
+		Reader.Read<uint32>();
+		Reader.Read<uint32>();
+		Out.NumTexCoords = Reader.Read<uint32>();
+		Out.NumVertices = Reader.Read<uint32>();
+		Out.bFullPrecisionUVs = Reader.ReadBool();
+		Out.bHighPrecisionTangents = Reader.ReadBool();
+		Out.PositionStride = Reader.Read<uint32>();
+		Reader.Read<uint32>(); // the vertices of the position buffer
+		Reader.Read<uint32>(); // the stride of the color buffer
+		Out.ColorVertices = Reader.Read<uint32>();
+		Out.NumIndices = Reader.Read<int32>();
+		Out.b32BitIndices = Reader.ReadBool();
+		Out.ReversedIndices = Reader.Read<int32>();
+		Reader.ReadBool();
+		Out.DepthOnlyIndices = Reader.Read<int32>();
+		Reader.ReadBool();
+		Out.ReversedDepthOnlyIndices = Reader.Read<int32>();
+		Reader.ReadBool();
+		Out.WireframeIndices = Reader.Read<int32>();
+		Reader.ReadBool();
+		Reader.Skip(6 * 4); // the header of the ray tracing geometry
+
+		Out.SerializedBuffersSize = Reader.Read<uint32>();
+		Out.DepthOnlyIndexBytes = Reader.Read<uint32>();
+		Out.ReversedIndexBytes = Reader.Read<uint32>();
+	}
+
+	/**
+	 * FStaticMeshRenderData::Serialize for a cooked mesh. The LODs are read from the start. The end is found from the other side: what
+	 * follows the render data is the SpeedTree flag and the material slots, whose size is known, so the render data ends where a flag
+	 * and a count that matches the slots that follow it start. Between the LODs and the bounds lie the Nanite resources, the ray tracing
+	 * proxy, the card representation and the distance fields; they are hashed, not decoded.
+	 */
+	void ReadRenderData(FNativeReader& Reader, const FAssetPackageDocument& Document, const int64 NativeEnd, const bool bEditorOnlyStripped, FAssetStaticMeshRenderData& Out)
+	{
+		constexpr int64 TailBytes =
+			56 + 1 + 8 * 8 + 2; // the bounds, the flags, the screen size of each of the eight LODs (a flag and a float), and the flags of the data a cook keeps for a cooked cooker
+
+		TArray<FDataResource> Resources;
+		FString TableError;
+		ReadDataResources(Document, Resources, TableError);
+		if (!TableError.IsEmpty())
+		{
+			Reader.Fail(TableError);
+			return;
+		}
+
+		// Where the render data ends: the largest number of slots whose flag and count are where the slots would put them.
+		const int64 Start = Reader.Tell();
+		const int64 SlotBytes = MaterialSlotBytes(Reader, bEditorOnlyStripped);
+		int64 RenderEnd = INDEX_NONE;
+		int32 SlotCount = 0;
+		for (int32 Count = 0; Count <= MaximumMeshEntries; ++Count)
+		{
+			const int64 Position = NativeEnd - (8 + Count * SlotBytes);
+			if (Position < Start + TailBytes)
+			{
+				break;
+			}
+
+			FNativeReader Probe(Document, Position, 8);
+			const bool bSpeedTree = Probe.ReadBool();
+			const int32 Slots = Probe.Read<int32>();
+			if (Probe.Ok() && !bSpeedTree && Slots == Count)
+			{
+				RenderEnd = Position;
+				SlotCount = Count;
+			}
+		}
+		if (RenderEnd == INDEX_NONE)
+		{
+			Reader.Fail(TEXT("The end of the render data is not where the material slots would start"));
+			return;
+		}
+
+		const int32 LodCount = Reader.Read<int32>();
+		if (Reader.Ok() && (LodCount < 0 || LodCount > 8))
+		{
+			Reader.Fail(TEXT("The number of LODs of the render data does not make sense"));
+		}
+		for (int32 Index = 0; Index < LodCount && Reader.Ok(); ++Index)
+		{
+			ReadRenderLod(Reader, Document, Resources, bEditorOnlyStripped, Out.Lods.AddDefaulted_GetRef());
+		}
+		Out.NumInlinedLODs = Reader.Read<uint8>();
+		if (!Reader.Ok())
+		{
+			return;
+		}
+
+		for (const FAssetStaticMeshRenderLod& Lod : Out.Lods)
+		{
+			for (const FAssetStaticMeshRenderSection& Section : Lod.Sections)
+			{
+				if (Section.MaterialIndex < 0 || Section.MaterialIndex >= SlotCount)
+				{
+					Reader.Fail(TEXT("A section uses a material slot that the mesh does not have"));
+					return;
+				}
+			}
+		}
+
+		const int64 OtherStart = Reader.Tell();
+		const int64 TailStart = RenderEnd - TailBytes;
+		if (TailStart < OtherStart)
+		{
+			Reader.Fail(TEXT("The LODs of the render data end after its bounds start"));
+			return;
+		}
+
+		Out.OtherBytes = TailStart - OtherStart;
+		Out.OtherHash = HashBytes(Document.FileData.GetData() + OtherStart, Out.OtherBytes);
+
+		Reader.Seek(TailStart);
+		Out.Bounds = ReadRenderBounds(Reader);
+		const uint8 Flags = Reader.Read<uint8>();
+		Out.bLodsShareStaticLighting = (Flags & 1) != 0;
+		Out.bHasNaniteFallbackMesh = (Flags & 2) != 0;
+		for (float& Size : Out.ScreenSize)
+		{
+			// A per platform value: whether it is the cooked one, and the value. Only the cooked form is read.
+			if (!Reader.ReadBool() && Reader.Ok())
+			{
+				Reader.Fail(TEXT("A screen size is stored for each platform, which is not read"));
+				return;
+			}
+			Size = Reader.Read<float>();
+		}
+
+		// A cook ends the render data with flags for the collision data a cooked cooker needs; the data itself is only there when they say so.
+		constexpr uint8 NeededForCookingStripped = 4;
+		const uint8 CookerFlags = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		if (Reader.Ok() && (CookerFlags & NeededForCookingStripped) == 0)
+		{
+			Reader.Fail(TEXT("The collision data kept for a cooked cooker is not read"));
+			return;
+		}
+
+		if (Reader.Ok() && Reader.Tell() != RenderEnd)
+		{
+			Reader.Fail(TEXT("The bounds of the render data do not end where its material slots start"));
+		}
+		Out.bRead = Reader.Ok();
+	}
+
 	FString SlotLabel(const FAssetMeshMaterialSlot& Material)
 	{
 		return Material.SlotName.IsEmpty() ? FString(TEXT("(unnamed)")) : Material.SlotName;
@@ -74,6 +476,30 @@ FString FAssetMeshMaterialSlot::Describe() const
 	{
 		Text += FString::Printf(TEXT(", UV densities %g %g %g %g"), UVDensities[0], UVDensities[1], UVDensities[2], UVDensities[3]);
 	}
+	return Text;
+}
+
+FString FAssetStaticMeshRenderSection::Describe() const
+{
+	FString Text = FString::Printf(TEXT("material %d, %u triangles from index %d, vertices %u to %u"), MaterialIndex, NumTriangles, FirstIndex, MinVertexIndex, MaxVertexIndex);
+	Text += bEnableCollision ? TEXT(", collision") : TEXT("");
+	Text += bCastShadow ? TEXT(", shadow") : TEXT("");
+	Text += bForceOpaque ? TEXT(", forced opaque") : TEXT("");
+	Text += bVisibleInRayTracing ? TEXT(", ray tracing") : TEXT("");
+	Text += bAffectDistanceFieldLighting ? TEXT(", distance field lighting") : TEXT("");
+	return Text;
+}
+
+FString FAssetStaticMeshRenderLod::Describe() const
+{
+	if (bCookedOut)
+	{
+		return TEXT("left out by the cook");
+	}
+
+	FString Text =
+		FString::Printf(TEXT("%d sections, %u vertices, %d indices (%s), %u UV channels"), Sections.Num(), NumVertices, NumIndices, b32BitIndices ? TEXT("32 bit") : TEXT("16 bit"), NumTexCoords);
+	Text += FString::Printf(TEXT(", %lld bytes of buffers %s, %s"), BufferBytes, bInlined ? TEXT("in the export") : TEXT("streamed"), BufferHash.IsEmpty() ? TEXT("not read") : *BufferHash);
 	return Text;
 }
 
@@ -150,9 +576,10 @@ bool AssetStaticMeshData::Decode(const FAssetPackageDocument& Document, const FA
 		}
 	}
 
+	const bool bEditorOnlyStripped = (Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) != 0;
 	if (Reader.Ok() && Out.bCooked)
 	{
-		Reader.Fail(TEXT("The render data of a cooked static mesh is not read"));
+		ReadRenderData(Reader, Document, NativeOffset + NativeSize, bEditorOnlyStripped, Out.RenderData);
 	}
 
 	if (Reader.Ok() && !Reader.UEVerBelow(VER_UE4_SPEEDTREE_STATICMESH) && Reader.ReadBool())
@@ -165,7 +592,6 @@ bool AssetStaticMeshData::Decode(const FAssetPackageDocument& Document, const FA
 		Reader.Fail(TEXT("The materials are stored in an older format"));
 	}
 
-	const bool bEditorOnlyStripped = (Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) != 0;
 	const int32 MaterialCount = Reader.Ok() ? Reader.Read<int32>() : 0;
 	if (Reader.Ok() && (MaterialCount < 0 || MaterialCount > MaximumMeshEntries || MaterialCount > Reader.Remaining() / 8))
 	{
@@ -274,6 +700,98 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 	if (Old.bCooked != New.bCooked)
 	{
 		Add(TEXT("Cooked"), TEXT("Cooked"), FAssetNativeDataChange::EState::Modified, Old.bCooked ? TEXT("yes") : TEXT("no"), New.bCooked ? TEXT("yes") : TEXT("no"));
+	}
+
+	// The render data of a cooked mesh: each LOD, then what lies between the LODs and the bounds, the bounds and the screen sizes.
+	if (Old.RenderData.bRead && New.RenderData.bRead)
+	{
+		const FAssetStaticMeshRenderData& OldRender = Old.RenderData;
+		const FAssetStaticMeshRenderData& NewRender = New.RenderData;
+		const int32 LodCount = FMath::Max(OldRender.Lods.Num(), NewRender.Lods.Num());
+		for (int32 LodIndex = 0; LodIndex < LodCount; ++LodIndex)
+		{
+			const FString LodKey = FString::Printf(TEXT("Render/Lod/%d"), LodIndex);
+			const FString LodTitle = FString::Printf(TEXT("Render LOD %d"), LodIndex);
+			if (!OldRender.Lods.IsValidIndex(LodIndex))
+			{
+				Add(LodKey, LodTitle, FAssetNativeDataChange::EState::Added, FString(), NewRender.Lods[LodIndex].Describe());
+				continue;
+			}
+			if (!NewRender.Lods.IsValidIndex(LodIndex))
+			{
+				Add(LodKey, LodTitle, FAssetNativeDataChange::EState::Removed, OldRender.Lods[LodIndex].Describe(), FString());
+				continue;
+			}
+
+			const FAssetStaticMeshRenderLod& OldLod = OldRender.Lods[LodIndex];
+			const FAssetStaticMeshRenderLod& NewLod = NewRender.Lods[LodIndex];
+			const int32 SectionCount = FMath::Max(OldLod.Sections.Num(), NewLod.Sections.Num());
+			for (int32 SectionIndex = 0; SectionIndex < SectionCount; ++SectionIndex)
+			{
+				const FString SectionKey = FString::Printf(TEXT("%s/Section/%d"), *LodKey, SectionIndex);
+				const FString SectionTitle = FString::Printf(TEXT("%s, section %d"), *LodTitle, SectionIndex);
+				if (!OldLod.Sections.IsValidIndex(SectionIndex))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Added, FString(), NewLod.Sections[SectionIndex].Describe());
+				}
+				else if (!NewLod.Sections.IsValidIndex(SectionIndex))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Removed, OldLod.Sections[SectionIndex].Describe(), FString());
+				}
+				else if (!OldLod.Sections[SectionIndex].Describe().Equals(NewLod.Sections[SectionIndex].Describe(), ESearchCase::CaseSensitive))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Modified, OldLod.Sections[SectionIndex].Describe(), NewLod.Sections[SectionIndex].Describe());
+				}
+			}
+
+			// The buffers: what they hold, and when both hashes could be read whether the bytes are the same.
+			const bool bSameHash = OldLod.BufferHash.IsEmpty() || NewLod.BufferHash.IsEmpty() || OldLod.BufferHash.Equals(NewLod.BufferHash, ESearchCase::CaseSensitive);
+			const bool bSameBuffers = OldLod.bCookedOut == NewLod.bCookedOut && OldLod.bInlined == NewLod.bInlined && OldLod.NumVertices == NewLod.NumVertices
+				&& OldLod.NumTexCoords == NewLod.NumTexCoords && OldLod.NumIndices == NewLod.NumIndices && OldLod.b32BitIndices == NewLod.b32BitIndices && OldLod.BufferBytes == NewLod.BufferBytes
+				&& OldLod.ColorVertices == NewLod.ColorVertices && OldLod.bFullPrecisionUVs == NewLod.bFullPrecisionUVs && OldLod.bHighPrecisionTangents == NewLod.bHighPrecisionTangents
+				&& OldLod.ReversedIndices == NewLod.ReversedIndices && OldLod.DepthOnlyIndices == NewLod.DepthOnlyIndices && OldLod.WireframeIndices == NewLod.WireframeIndices && bSameHash;
+			if (!bSameBuffers)
+			{
+				Add(LodKey + TEXT("/Buffers"), LodTitle + TEXT(": vertex and index buffers"), FAssetNativeDataChange::EState::Modified, OldLod.Describe(), NewLod.Describe());
+			}
+			if (!RenderBoundsEqual(OldLod.SourceMeshBounds, NewLod.SourceMeshBounds) || !FMath::IsNearlyEqual(OldLod.MaxDeviation, NewLod.MaxDeviation, 1e-6f))
+			{
+				Add(LodKey + TEXT("/Bounds"), LodTitle + TEXT(": bounds"), FAssetNativeDataChange::EState::Modified, DescribeRenderBounds(OldLod.SourceMeshBounds),
+					DescribeRenderBounds(NewLod.SourceMeshBounds));
+			}
+		}
+
+		if (OldRender.NumInlinedLODs != NewRender.NumInlinedLODs)
+		{
+			Add(TEXT("Render/InlinedLods"), TEXT("LODs kept in the export"), FAssetNativeDataChange::EState::Modified, FString::FromInt(OldRender.NumInlinedLODs),
+				FString::FromInt(NewRender.NumInlinedLODs));
+		}
+		if (OldRender.OtherBytes != NewRender.OtherBytes || !OldRender.OtherHash.Equals(NewRender.OtherHash, ESearchCase::CaseSensitive))
+		{
+			Add(TEXT("Render/Other"), TEXT("Nanite, ray tracing and distance field data"), FAssetNativeDataChange::EState::Modified,
+				FString::Printf(TEXT("%lld bytes, %s"), OldRender.OtherBytes, *OldRender.OtherHash), FString::Printf(TEXT("%lld bytes, %s"), NewRender.OtherBytes, *NewRender.OtherHash));
+		}
+		if (!RenderBoundsEqual(OldRender.Bounds, NewRender.Bounds))
+		{
+			Add(TEXT("Render/Bounds"), TEXT("Render bounds"), FAssetNativeDataChange::EState::Modified, DescribeRenderBounds(OldRender.Bounds), DescribeRenderBounds(NewRender.Bounds));
+		}
+		bool bScreenSizeChanged = false;
+		for (int32 Index = 0; Index < 8; ++Index)
+		{
+			bScreenSizeChanged |= !FMath::IsNearlyEqual(OldRender.ScreenSize[Index], NewRender.ScreenSize[Index], 1e-6f);
+		}
+		if (bScreenSizeChanged)
+		{
+			const auto Sizes = [](const FAssetStaticMeshRenderData& Render) {
+				TArray<FString> Parts;
+				for (int32 Index = 0; Index < FMath::Max(Render.Lods.Num(), 1); ++Index)
+				{
+					Parts.Add(FString::Printf(TEXT("%.4f"), Render.ScreenSize[Index]));
+				}
+				return FString::Join(Parts, TEXT(", "));
+			};
+			Add(TEXT("Render/ScreenSize"), TEXT("Screen size of each LOD"), FAssetNativeDataChange::EState::Modified, Sizes(OldRender), Sizes(NewRender));
+		}
 	}
 
 	return Changes;
