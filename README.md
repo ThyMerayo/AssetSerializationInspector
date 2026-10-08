@@ -64,6 +64,7 @@ Changed payload ranges can be inspected as side-by-side hex dumps with:
 - Changed-byte highlighting
 - Monospaced rendering
 - Copyable/selectable text
+- **Linked scrolling**: scrolling the old or the new hex (wheel or scroll bar) scrolls the other to the same offset, so a big range is compared with one hand; the *Link scrolling* box next to *Copy* turns it off
 - Changed byte-span detection
 - Navigation from semantic changes to their exact old/new byte ranges
 

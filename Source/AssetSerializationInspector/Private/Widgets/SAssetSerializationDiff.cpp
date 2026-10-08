@@ -373,6 +373,8 @@ void SAssetSerializationDiff::Construct(const FArguments& InArgs)
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(8.0f, 0.0f, 8.0f, 8.0f)[SNew(STextBlock).Text(this, &SAssetSerializationDiff::GetStatusText).ColorAndOpacity(FSlateColor::UseSubduedForeground())]];
 
+	HexScrollLink.SetBoxes(OldHexScrollBox, NewHexScrollBox);
+
 	if (DiffSession->Old.Document.IsValid() && DiffSession->New.Document.IsValid() && DiffSession->DiffResult.IsSet())
 	{
 		LoadSessionIntoUI();
@@ -421,9 +423,18 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 				  const FString Text = (bOldSide ? GetSelectedOldHexPlainText() : GetSelectedNewHexPlainText()).ToString();
 				  FPlatformApplicationMisc::ClipboardCopy(*Text);
 				  return FReply::Handled();
-			  })]]
+			  })]
+			+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.Padding(12.0f, 0.0f, 0.0f, 0.0f)
+				.VAlign(VAlign_Center)[SNew(SCheckBox)
+						.ToolTipText(LOCTEXT("LinkHexScrollTip", "Scroll the old and the new hex together, so the same rows stay side by side."))
+						.IsChecked_Lambda([this]() { return HexScrollLink.IsLinked() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda(
+							[this](const ECheckBoxState State) { HexScrollLink.SetLinked(State == ECheckBoxState::Checked); })[SNew(STextBlock).Text(LOCTEXT("LinkHexScroll", "Link scrolling"))]]]
 
-		+ SVerticalBox::Slot().FillHeight(1.0f)[SNew(SScrollBox)
+		+ SVerticalBox::Slot().FillHeight(
+			1.0f)[SAssignNew(bOldSide ? OldHexScrollBox : NewHexScrollBox, SScrollBox).OnUserScrolled_Lambda([this, bOldSide](const float Offset) { HexScrollLink.OnScrolled(bOldSide, Offset); })
 
 			+ SScrollBox::Slot()[SNew(SSelectableRichText)
 					.RichText_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexRichText() : GetSelectedNewHexRichText(); })
