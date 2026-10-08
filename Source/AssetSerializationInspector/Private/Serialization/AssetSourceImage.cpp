@@ -6,6 +6,7 @@
 #include "ImageCore.h"
 #include "ImageCoreDelta.h"
 #include "ImageCoreUtils.h"
+#include "ImageUtils.h"
 #include "Math/Float16.h"
 
 #include "Model/AssetPackageDocument.h"
@@ -156,11 +157,14 @@ FAssetSourceImage AssetSourceImage::Load(const FAssetPackageDocument& Document, 
 	Image.NumSlices = ReadSourceField(Document, Export, *Trace, TEXT("NumSlices"), Slices) ? FMath::Max(FCString::Atoi(*Slices), 1) : 1;
 	Image.Format = SourceEnumName(Format);
 
-	// Left out when it is the default (none). PNG and JPEG are not decoded; the delta transform that textures are saved with is undone below.
-	const bool bDelta = ReadSourceField(Document, Export, *Trace, TEXT("CompressionFormat"), Compression) && SourceEnumName(Compression) == TEXT("TSCF_UEDELTA");
-	if (!Compression.IsEmpty() && SourceEnumName(Compression) != TEXT("TSCF_None") && !bDelta)
+	// Left out when it is the default (none). The delta transform that textures are saved with is undone below, and PNG and JPEG are decoded.
+	const FString CompressionName = ReadSourceField(Document, Export, *Trace, TEXT("CompressionFormat"), Compression) ? SourceEnumName(Compression) : FString();
+	const bool bDelta = CompressionName == TEXT("TSCF_UEDELTA");
+	const bool bPng = CompressionName == TEXT("TSCF_PNG");
+	const bool bImageFile = bPng || CompressionName == TEXT("TSCF_JPEG");
+	if (!CompressionName.IsEmpty() && CompressionName != TEXT("TSCF_None") && !bDelta && !bImageFile)
 	{
-		Image.Error = FString::Printf(TEXT("The image is compressed as %s"), *SourceEnumName(Compression));
+		Image.Error = FString::Printf(TEXT("The image is compressed as %s"), *CompressionName);
 		return Image;
 	}
 
@@ -179,6 +183,60 @@ FAssetSourceImage AssetSourceImage::Load(const FAssetPackageDocument& Document, 
 	TArray64<uint8> Payload;
 	if (!AssetEditorPayload::Load(Document, Bulk, TEXT("The image"), MaximumImageBytes, Payload, Image.Error))
 	{
+		return Image;
+	}
+
+	// A PNG or JPEG file holds the first mip of an image of one slice (the engine does not compress more than that).
+	if (bImageFile)
+	{
+		if (Image.NumSlices != 1)
+		{
+			Image.Error = FString::Printf(TEXT("The image is compressed as %s and has several slices"), *CompressionName);
+			return Image;
+		}
+
+		FImage Decoded;
+		if (!FImageUtils::DecompressImage(Payload.GetData(), Payload.Num(), Decoded))
+		{
+			// The engine notes that some packages mark a payload as PNG when it is the raw pixels.
+			if (Payload.Num() == static_cast<int64>(Image.Width) * Image.Height * BytesPerPixel)
+			{
+				Image.Pixels = MoveTemp(Payload);
+				Image.bLoaded = true;
+				return Image;
+			}
+
+			Image.Error = FString::Printf(TEXT("The %s file of the image cannot be decoded"), bPng ? TEXT("PNG") : TEXT("JPEG"));
+			return Image;
+		}
+
+		const UEnum* SourceFormatEnum = StaticEnum<ETextureSourceFormat>();
+		const int64 FormatValue = SourceFormatEnum != nullptr ? SourceFormatEnum->GetValueByNameString(Image.Format) : INDEX_NONE;
+		if (FormatValue == INDEX_NONE)
+		{
+			Image.Error = FString::Printf(TEXT("The pixel format %s is not known"), *Image.Format);
+			return Image;
+		}
+
+		const ERawImageFormat::Type RawFormat = FImageCoreUtils::ConvertToRawImageFormat(static_cast<ETextureSourceFormat>(FormatValue));
+		if (Decoded.Format != RawFormat)
+		{
+			Decoded.ChangeFormat(RawFormat, EGammaSpace::Linear);
+		}
+		if (bPng && Image.Format == TEXT("TSF_BGRA8"))
+		{
+			// The engine stores a BGRA image as RGBA in the PNG, and undoes that when it reads it.
+			FImageCore::TransposeImageRGBABGRA(Decoded);
+		}
+
+		if (Decoded.SizeX != Image.Width || Decoded.SizeY != Image.Height || Decoded.RawData.Num() != static_cast<int64>(Image.Width) * Image.Height * BytesPerPixel)
+		{
+			Image.Error = TEXT("The decoded image does not have the size the source says");
+			return Image;
+		}
+
+		Image.Pixels = MoveTemp(Decoded.RawData);
+		Image.bLoaded = true;
 		return Image;
 	}
 
