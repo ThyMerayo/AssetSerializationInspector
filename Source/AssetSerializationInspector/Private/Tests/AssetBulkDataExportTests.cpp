@@ -9,6 +9,7 @@
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "MeshDescription.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "StaticMeshAttributes.h"
@@ -20,7 +21,9 @@
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetBulkDataExport.h"
+#include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetMeshGeometry.h"
+#include "Serialization/AssetMipBlocks.h"
 #include "Serialization/AssetSourceImage.h"
 #include "Tests/AssetTestPackageNames.h"
 #include "Trace/AssetPackageFieldDecoder.h"
@@ -950,6 +953,211 @@ bool FAssetBulkDataExport_ReadsTheTilesOfAVirtualTexture::RunTest(const FString&
 	TestNotNull(TEXT("The tile size"), Find(Changes, TEXT("Platform/0/VirtualTiles")));
 	TestTrue(TEXT("The same virtual texture is no change"), AssetBulkDataExport::Compare(Base, MakeVirtual(TEXT("aaaa"))).IsEmpty());
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ComparesTheBlocksOfACookedMip, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ComparesTheBlocksOfACookedMip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ComparesTheBlocksOfACookedMip::RunTest(const FString& Parameters)
+{
+	// The layouts of the formats.
+	FAssetBlockFormat Dxt1;
+	FAssetBlockFormat Bc7;
+	FAssetBlockFormat Astc;
+	FAssetBlockFormat Bgra;
+	TestTrue(TEXT("DXT1"), AssetMipBlocks::FindBlockFormat(TEXT("PF_DXT1"), Dxt1) && Dxt1.BlockWidth == 4 && Dxt1.BytesPerBlock == 8);
+	TestTrue(TEXT("BC7"), AssetMipBlocks::FindBlockFormat(TEXT("PF_BC7"), Bc7) && Bc7.BytesPerBlock == 16);
+	TestTrue(TEXT("ASTC 6x6"), AssetMipBlocks::FindBlockFormat(TEXT("PF_ASTC_6x6"), Astc) && Astc.BlockWidth == 6 && Astc.BlockHeight == 6 && Astc.BytesPerBlock == 16);
+	TestTrue(TEXT("BGRA8"), AssetMipBlocks::FindBlockFormat(TEXT("PF_B8G8R8A8"), Bgra) && Bgra.BlockWidth == 1 && Bgra.BytesPerBlock == 4);
+	FAssetBlockFormat Unknown;
+	TestFalse(TEXT("A format that is not known"), AssetMipBlocks::FindBlockFormat(TEXT("PF_Made_Up"), Unknown));
+
+	// 16 by 16 pixels of DXT1: 4 by 4 blocks of 8 bytes. Two blocks change: block (2, 1) and block (3, 3).
+	TArray<uint8> Old;
+	Old.Init(0x11, 16 * 8);
+	TArray<uint8> New = Old;
+	New[(1 * 4 + 2) * 8 + 3] = 0x99;
+	New[(3 * 4 + 3) * 8] = 0x99;
+	{
+		const FAssetMipBlockDiff Diff = AssetMipBlocks::CompareBytes(Old.GetData(), New.GetData(), Old.Num(), 16, 16, Dxt1);
+		if (TestTrue(TEXT("They can be compared"), Diff.bComparable))
+		{
+			TestEqual(TEXT("Two blocks differ"), Diff.DifferingBlocks, static_cast<int64>(2));
+			TestEqual(TEXT("Of sixteen"), Diff.TotalBlocks, static_cast<int64>(16));
+			TestEqual(TEXT("The box starts at x 8"), Diff.MinX, 8);
+			TestEqual(TEXT("And ends at x 15"), Diff.MaxX, 15);
+			TestEqual(TEXT("It starts at y 4"), Diff.MinY, 4);
+			TestEqual(TEXT("And ends at y 15"), Diff.MaxY, 15);
+		}
+	}
+	{
+		const FAssetMipBlockDiff Same = AssetMipBlocks::CompareBytes(Old.GetData(), Old.GetData(), Old.Num(), 16, 16, Dxt1);
+		TestTrue(TEXT("The same mip has no block that differs"), Same.bComparable && Same.DifferingBlocks == 0);
+	}
+
+	// A mip whose size is not a number of blocks (a layout this does not know) is not compared.
+	TestFalse(TEXT("A size that is not the blocks of the format"), AssetMipBlocks::CompareBytes(Old.GetData(), New.GetData(), Old.Num() - 1, 16, 16, Dxt1).bComparable);
+
+	// A mip whose size is not a multiple of the block: the blocks at the edge cover less, and the box is cut at the image.
+	{
+		TArray<uint8> Small;
+		Small.Init(0, 3 * 2 * 8); // 10 by 6 pixels: 3 by 2 blocks
+		TArray<uint8> Changed = Small;
+		Changed[(1 * 3 + 2) * 8] = 1; // the block at the right edge of the second row
+		const FAssetMipBlockDiff Diff = AssetMipBlocks::CompareBytes(Small.GetData(), Changed.GetData(), Small.Num(), 10, 6, Dxt1);
+		TestTrue(TEXT("It is compared"), Diff.bComparable && Diff.DifferingBlocks == 1);
+		TestEqual(TEXT("The box ends at the edge of the image in x"), Diff.MaxX, 9);
+		TestEqual(TEXT("And in y"), Diff.MaxY, 5);
+	}
+
+	// Uncompressed pixels are blocks of one pixel.
+	{
+		TArray<uint8> Pixels;
+		Pixels.Init(0, 4 * 3 * 4);
+		TArray<uint8> Changed = Pixels;
+		Changed[(2 * 4 + 1) * 4 + 1] = 7; // the pixel at x 1, y 2
+		const FAssetMipBlockDiff Diff = AssetMipBlocks::CompareBytes(Pixels.GetData(), Changed.GetData(), Pixels.Num(), 4, 3, Bgra);
+		TestTrue(TEXT("One pixel"), Diff.bComparable && Diff.DifferingBlocks == 1 && Diff.MinX == 1 && Diff.MaxX == 1 && Diff.MinY == 2 && Diff.MaxY == 2);
+	}
+
+	// The real thing: a BC5 texture cooked by the engine, with some mips streamed from its sidecar file. Each mip is the blocks of its format.
+	FAssetBulkDataExport Texture;
+	if (CookedTextureTestUtils::ReadFixture(*this, TEXT("T_Default_Material_Grid_N.uasset"), Texture) && Texture.bComplete && !Texture.PlatformData.IsEmpty())
+	{
+		const FAssetTexturePlatformData& Platform = Texture.PlatformData[0];
+		FAssetBlockFormat Bc5;
+		if (TestTrue(TEXT("Its format is known"), AssetMipBlocks::FindBlockFormat(Platform.PixelFormat, Bc5)))
+		{
+			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+			FText Error;
+			const TSharedPtr<FAssetPackageDocument> Document =
+				FAssetPackageReader::LoadFromFile(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("CookedTestFixtures"), TEXT("T_Default_Material_Grid_N.uasset")), Error);
+			if (TestTrue(TEXT("The package loads"), Document.IsValid()))
+			{
+				int32 Streamed = 0;
+				for (int32 Index = 0; Index < Platform.Mips.Num(); ++Index)
+				{
+					const FAssetTextureMip& Mip = Platform.Mips[Index];
+					Streamed += Mip.IsInline() ? 0 : 1;
+
+					TArray64<uint8> Bytes;
+					if (!TestTrue(FString::Printf(TEXT("Mip %d can be read"), Index), AssetCookedBulkData::LoadBytes(*Document, Mip.BulkFlags, Mip.DataOffset, Mip.StoredSize, Bytes)))
+					{
+						continue;
+					}
+
+					TestEqual(TEXT("It has as many bytes as the mip says"), static_cast<int64>(Bytes.Num()), Mip.PayloadSize);
+					const FAssetMipBlockDiff Same = AssetMipBlocks::CompareBytes(Bytes.GetData(), Bytes.GetData(), Bytes.Num(), Mip.SizeX, Mip.SizeY, Bc5);
+					TestTrue(FString::Printf(TEXT("Mip %d is the blocks of its format"), Index), Same.bComparable && Same.DifferingBlocks == 0);
+
+					// One block changed in the middle of the mip.
+					TArray64<uint8> Changed = Bytes;
+					const int64 BlocksX = (Mip.SizeX + 3) / 4;
+					const int64 BlockY = ((Mip.SizeY + 3) / 4) / 2;
+					const int64 BlockX = BlocksX / 2;
+					Changed[(BlockY * BlocksX + BlockX) * Bc5.BytesPerBlock] ^= 0xFF;
+					const FAssetMipBlockDiff One = AssetMipBlocks::CompareBytes(Bytes.GetData(), Changed.GetData(), Bytes.Num(), Mip.SizeX, Mip.SizeY, Bc5);
+					TestTrue(TEXT("One block differs"), One.DifferingBlocks == 1);
+					TestEqual(TEXT("At the place of the block in x"), One.MinX, static_cast<int32>(BlockX * 4));
+					TestEqual(TEXT("And in y"), One.MinY, static_cast<int32>(BlockY * 4));
+				}
+				TestTrue(TEXT("Some of the mips stream from the sidecar file"), Streamed > 0);
+			}
+		}
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ShowsTheBlocksThatChangedInACookedTexture,
+	"AssetSerializationInspector.Serialization.AssetBulkDataExport.ShowsTheBlocksThatChangedInACookedTexture", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_ShowsTheBlocksThatChangedInACookedTexture::RunTest(const FString& Parameters)
+{
+	using namespace BulkDataTestUtils;
+
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	// A copy of the cooked texture next to the original, in which one block of an inline mip is changed.
+	const FString Fixtures = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("CookedTestFixtures"));
+	const FString Folder = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("__AssetSerializationInspectorTests"), TEXT("CookedBlocks"));
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
+	IFileManager::Get().MakeDirectory(*Folder, true);
+	for (const TCHAR* Extension : { TEXT("uasset"), TEXT("uexp"), TEXT("ubulk") })
+	{
+		IFileManager::Get().Copy(
+			*FPaths::Combine(Folder, FString::Printf(TEXT("T_Changed.%s"), Extension)), *FPaths::Combine(Fixtures, FString::Printf(TEXT("T_Default_Material_Grid_N.%s"), Extension)));
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> OldDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(Fixtures, TEXT("T_Default_Material_Grid_N.uasset")), Error);
+	if (!TestTrue(TEXT("The original loads"), OldDocument.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> OldTraces = FAssetPackageFieldDecoder::Decode(*OldDocument);
+	FAssetBulkDataExport OldData;
+	for (const FAssetPackageExportEntry& Export : OldDocument->ExportMap)
+	{
+		if (DecodeData(*OldDocument, *OldTraces, Export, OldData))
+		{
+			break;
+		}
+	}
+	if (!TestTrue(TEXT("Its texture is read"), OldData.bComplete && !OldData.PlatformData.IsEmpty()))
+	{
+		return false;
+	}
+
+	// The last inline mip: the position of its bytes in the document is the size of the .uasset plus a position in the .uexp.
+	const FAssetTexturePlatformData& Platform = OldData.PlatformData[0];
+	int32 InlineMip = INDEX_NONE;
+	for (int32 Index = 0; Index < Platform.Mips.Num(); ++Index)
+	{
+		InlineMip = Platform.Mips[Index].IsInline() && Platform.Mips[Index].PayloadSize >= 32 ? Index : InlineMip;
+	}
+	if (!TestTrue(TEXT("It has an inline mip with at least two blocks"), InlineMip != INDEX_NONE))
+	{
+		return false;
+	}
+
+	const FAssetTextureMip& Mip = Platform.Mips[InlineMip];
+	const int64 HeaderSize = IFileManager::Get().FileSize(*FPaths::Combine(Fixtures, TEXT("T_Default_Material_Grid_N.uasset")));
+	TArray<uint8> Exports;
+	FFileHelper::LoadFileToArray(Exports, *FPaths::Combine(Folder, TEXT("T_Changed.uexp")));
+	const int64 Position = Mip.DataOffset - HeaderSize + 16; // the second block of the mip (BC5 blocks are 16 bytes)
+	if (!TestTrue(TEXT("The block is in the .uexp"), Position >= 0 && Position < Exports.Num()))
+	{
+		return false;
+	}
+	Exports[Position] ^= 0xFF;
+	FFileHelper::SaveArrayToFile(Exports, *FPaths::Combine(Folder, TEXT("T_Changed.uexp")));
+
+	const TSharedPtr<FAssetPackageDocument> NewDocument = FAssetPackageReader::LoadFromFile(FPaths::Combine(Folder, TEXT("T_Changed.uasset")), Error);
+	if (TestTrue(TEXT("The changed copy loads"), NewDocument.IsValid()))
+	{
+		const TSharedPtr<FAssetPackageTraceCollection> NewTraces = FAssetPackageFieldDecoder::Decode(*NewDocument);
+		const FAssetPackageDiffResult Diff = AssetPackageDiff::Compare(*OldDocument, *NewDocument, OldTraces.Get(), NewTraces.Get());
+		if (const FAssetPackageDiffEntry* Blocks = FindByKey(Diff, FString::Printf(TEXT("Platform/0/Mip/%d/Blocks"), InlineMip)))
+		{
+			const FString Title = Blocks->DisplayName.ToString();
+			AddInfo(Title);
+			TestTrue(TEXT("One block differs"), Title.Contains(TEXT("1 of")));
+			TestTrue(TEXT("The second block of the first row: pixels x 4 to 7, y 0 to 3"), Title.Contains(TEXT("x 4 to 7")) && Title.Contains(TEXT("y 0 to 3")));
+		}
+		else
+		{
+			AddError(TEXT("The change of the block is not in the diff"));
+		}
+	}
+
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
 	return true;
 }
 

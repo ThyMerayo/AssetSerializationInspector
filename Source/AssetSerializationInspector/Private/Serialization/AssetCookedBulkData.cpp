@@ -106,6 +106,42 @@ namespace AssetCookedBulkData
 		return TEXT("ubulk");
 	}
 
+	bool LoadBytes(const FAssetPackageDocument& Document, const uint32 BulkFlags, const int64 DataOffset, const int64 StoredSize, TArray64<uint8>& Out)
+	{
+		if (DataOffset < 0 || StoredSize <= 0 || StoredSize > (1LL << 30))
+		{
+			return false;
+		}
+
+		if (const TCHAR* Sidecar = SidecarExtension(BulkFlags))
+		{
+			if (Document.Filename.IsEmpty())
+			{
+				return false;
+			}
+
+			const TUniquePtr<FArchive> File(IFileManager::Get().CreateFileReader(*FPaths::ChangeExtension(Document.Filename, Sidecar)));
+			if (!File.IsValid() || DataOffset + StoredSize > File->TotalSize())
+			{
+				return false;
+			}
+
+			Out.SetNumUninitialized(StoredSize);
+			File->Seek(DataOffset);
+			File->Serialize(Out.GetData(), StoredSize);
+			return !File->IsError();
+		}
+
+		if (!Document.IsValidRange(DataOffset, StoredSize))
+		{
+			return false;
+		}
+
+		Out.SetNumUninitialized(StoredSize);
+		FMemory::Memcpy(Out.GetData(), Document.FileData.GetData() + DataOffset, StoredSize);
+		return true;
+	}
+
 	/** Reads the index, and the payload when it follows inline (skipped and hashed); a payload in a sidecar file is hashed from there. */
 	bool ReadBulkReference(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const TCHAR* What, FBulkReference& Out)
 	{
@@ -125,14 +161,17 @@ namespace AssetCookedBulkData
 		Out.RawSize = Resource.RawSize;
 		Out.Offset = Resource.SerialOffset;
 
+		Out.StoredSize = Resource.SerialSize;
 		if (const TCHAR* Sidecar = SidecarExtension(Resource.BulkFlags))
 		{
+			Out.DataOffset = Resource.SerialOffset;
 			Out.PayloadHash = HashSidecarRange(Document, Sidecar, Resource.SerialOffset, Resource.SerialSize);
 		}
 		else
 		{
 			// Inline: the payload follows the index.
 			const int64 Start = Reader.Tell();
+			Out.DataOffset = Start;
 			Reader.Skip(Resource.SerialSize);
 			if (Reader.Ok())
 			{
