@@ -6,6 +6,7 @@
 
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
 #include "Model/AssetPackageDocument.h"
@@ -208,6 +209,26 @@ namespace CookedStaticMeshTestUtils
 	{
 		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
 	}
+	/** Reads the static mesh of a package at a path. */
+	static bool ReadFixtureAt(FAutomationTestBase& Test, const FString& Path, FAssetStaticMeshData& Out)
+	{
+		FText Error;
+		const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(Path, Error);
+		if (!Test.TestTrue(FString::Printf(TEXT("%s loads"), *Path), Document.IsValid()))
+		{
+			return false;
+		}
+
+		const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+		for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+		{
+			if (StaticMeshTestUtils::DecodeData(*Document, *Traces, Export, Out))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 } // namespace CookedStaticMeshTestUtils
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ReadsTheRenderDataOfACookedMesh, "AssetSerializationInspector.Serialization.AssetStaticMeshData.ReadsTheRenderDataOfACookedMesh",
@@ -325,6 +346,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Pa
 		FAssetStaticMeshData Other = Base;
 		Other.RenderData.Lods[0].Sections[0].MaterialIndex += 1;
 		Other.RenderData.OtherHash = TEXT("0000000000000000");
+		Other.RenderData.Middle.bDecoded = false; // not decoded: what lies between the LODs and the bounds is compared by its hash
 		Other.RenderData.ScreenSize[1] = 0.25f;
 		Other.RenderData.Lods.Add(Base.RenderData.Lods[0]);
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, Other);
@@ -443,6 +465,206 @@ bool FAssetStaticMeshData_ComparesTheSourceModels::RunTest(const FString& Parame
 	Renamed.SourceModels[0].MeshGuid = TEXT("99999999-2222-3333-4444-555555555555");
 	TestTrue(TEXT("A new identifier alone is no change"), AssetStaticMeshData::Compare(Base, Renamed).IsEmpty());
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ReadsWhatLiesBetweenTheLodsAndTheBounds, "AssetSerializationInspector.Serialization.AssetStaticMeshData.ReadsWhatLiesBetweenTheLodsAndTheBounds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetStaticMeshData_ReadsWhatLiesBetweenTheLodsAndTheBounds::RunTest(const FString& Parameters)
+{
+	using namespace CookedStaticMeshTestUtils;
+
+	// The parts add up to what lies between the LODs and the bounds, but for the strip flags in front of the cards and the distance fields.
+	const auto TestParts = [this](const TCHAR* Name, const FAssetStaticMeshRenderData& Render) {
+		const FAssetStaticMeshRenderMiddle& Middle = Render.Middle;
+		int64 Bytes = Middle.Nanite.Part.Bytes + Middle.RayTracing.Part.Bytes + 2 + 2;
+		for (const FAssetCardRepresentation& Cards : Middle.Cards)
+		{
+			Bytes += Cards.Part.Bytes;
+		}
+		for (const FAssetDistanceField& Field : Middle.DistanceFields)
+		{
+			Bytes += Field.Part.Bytes;
+		}
+		TestEqual(FString::Printf(TEXT("%s: the parts are all of it"), Name), Bytes, Render.OtherBytes);
+		TestEqual(FString::Printf(TEXT("%s: a card representation and a distance field for each LOD"), Name), Middle.Cards.Num() + Middle.DistanceFields.Num(), 2 * Render.Lods.Num());
+	};
+
+	// A cube and a plane of the engine, cooked for Windows: no Nanite data, a ray tracing proxy that shares the buffers of the LOD, cards and a distance field.
+	FAssetStaticMeshData Cube;
+	if (ReadFixture(*this, TEXT("Cube.uasset"), Cube) && TestTrue(TEXT("The cube's render data is read"), Cube.RenderData.bRead))
+	{
+		const FAssetStaticMeshRenderMiddle& Middle = Cube.RenderData.Middle;
+		if (TestTrue(FString::Printf(TEXT("The middle of the cube is decoded (%s)"), *Middle.Error), Middle.bDecoded))
+		{
+			TestEqual(TEXT("No Nanite clusters"), Middle.Nanite.Clusters, 0u);
+			TestTrue(TEXT("A ray tracing proxy of one LOD that shares the buffers"), Middle.RayTracing.bPresent && Middle.RayTracing.bUsingRenderingLods && Middle.RayTracing.Lods == 1);
+			if (TestEqual(TEXT("Cards for the LOD"), Middle.Cards.Num(), 1) && TestTrue(TEXT("That are valid"), Middle.Cards[0].bValid))
+			{
+				TestEqual(TEXT("Six cards, one for each side"), Middle.Cards[0].Cards, 6);
+				TestTrue(TEXT("In a box a little larger than the cube"), Middle.Cards[0].BoundsMin.Equals(FVector(-51, -51, -51), 1e-3) && Middle.Cards[0].BoundsMax.Equals(FVector(51, 51, 51), 1e-3));
+			}
+			if (TestEqual(TEXT("A distance field for the LOD"), Middle.DistanceFields.Num(), 1) && TestTrue(TEXT("That is valid"), Middle.DistanceFields[0].bValid))
+			{
+				const FAssetDistanceField& Field = Middle.DistanceFields[0];
+				TestTrue(TEXT("The bricks of its three mips"), Field.Mips[0].Bricks == 208 && Field.Mips[1].Bricks == 27 && Field.Mips[2].Bricks == 8);
+				TestTrue(TEXT("In the box of the cube"), Field.BoundsMin.Equals(FVector(-50, -50, -50), 1e-3) && Field.BoundsMax.Equals(FVector(50, 50, 50), 1e-3));
+				TestTrue(TEXT("With streamed mips hashed from the sidecar file"), Field.StreamableBytes > 0 && !Field.StreamableHash.IsEmpty());
+			}
+			TestParts(TEXT("Cube"), Cube.RenderData);
+		}
+	}
+
+	FAssetStaticMeshData Plane;
+	if (ReadFixture(*this, TEXT("Plane.uasset"), Plane) && Plane.RenderData.bRead && TestTrue(TEXT("The middle of the plane is decoded"), Plane.RenderData.Middle.bDecoded))
+	{
+		const FAssetStaticMeshRenderMiddle& Middle = Plane.RenderData.Middle;
+		TestTrue(TEXT("One card and fewer bricks"), Middle.Cards.Num() == 1 && Middle.Cards[0].Cards == 1 && Middle.DistanceFields.Num() == 1 && Middle.DistanceFields[0].Mips[0].Bricks == 9);
+		TestParts(TEXT("Plane"), Plane.RenderData);
+	}
+
+	// A sphere that has Nanite data and a ray tracing proxy with buffers of its own, from the engine's editor meshes.
+	FAssetStaticMeshData Sphere;
+	if (ReadFixture(*this, TEXT("SM_Dataflow_Sphere.uasset"), Sphere) && Sphere.RenderData.bRead
+		&& TestTrue(FString::Printf(TEXT("The middle of the Nanite sphere is decoded (%s)"), *Sphere.RenderData.Middle.Error), Sphere.RenderData.Middle.bDecoded))
+	{
+		const FAssetStaticMeshRenderMiddle& Middle = Sphere.RenderData.Middle;
+		TestTrue(TEXT("It has Nanite data"), Middle.Nanite.bPresent);
+		TestEqual(TEXT("Six clusters"), Middle.Nanite.Clusters, 6u);
+		TestEqual(TEXT("In one page, which is a root page"), Middle.Nanite.Pages, 1);
+		TestEqual(TEXT("That is a root page"), Middle.Nanite.RootPages, 1u);
+		TestEqual(TEXT("Of 320 triangles"), Middle.Nanite.InputTriangles, 320u);
+		TestEqual(TEXT("And 232 vertices"), Middle.Nanite.InputVertices, 232u);
+		TestTrue(TEXT("A ray tracing proxy of two LODs that are its own"), Middle.RayTracing.bPresent && !Middle.RayTracing.bUsingRenderingLods && Middle.RayTracing.Lods == 2);
+		TestParts(TEXT("Sphere"), Sphere.RenderData);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField,
+	"AssetSerializationInspector.Serialization.AssetStaticMeshData.ShowsAChangeOfTheCardsAndTheDistanceField", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(const FString& Parameters)
+{
+	using namespace CookedStaticMeshTestUtils;
+
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
+		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
+	};
+
+	FAssetStaticMeshData Cube;
+	FAssetStaticMeshData Plane;
+	FAssetStaticMeshData Sphere;
+	if (!ReadFixture(*this, TEXT("Cube.uasset"), Cube) || !ReadFixture(*this, TEXT("Plane.uasset"), Plane) || !ReadFixture(*this, TEXT("SM_Dataflow_Sphere.uasset"), Sphere)
+		|| !Cube.RenderData.Middle.bDecoded || !Plane.RenderData.Middle.bDecoded || !Sphere.RenderData.Middle.bDecoded)
+	{
+		AddError(TEXT("The fixtures are not read"));
+		return false;
+	}
+
+	TestTrue(TEXT("The same mesh is no change"), AssetStaticMeshData::Compare(Cube, Cube).IsEmpty());
+
+	// Two meshes: the cards and the distance field name the LOD; the hash of all of it is not reported when the parts are.
+	{
+		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Plane, Cube);
+		if (const FAssetNativeDataChange* Cards = Find(Changes, TEXT("Render/Lod/0/Cards")))
+		{
+			TestTrue(TEXT("From one card to six"), Cards->OldValue.StartsWith(TEXT("1 cards")) && Cards->NewValue.StartsWith(TEXT("6 cards")));
+		}
+		else
+		{
+			AddError(TEXT("The cards are not in the changes"));
+		}
+		if (const FAssetNativeDataChange* Field = Find(Changes, TEXT("Render/Lod/0/DistanceField")))
+		{
+			TestTrue(TEXT("From 9 bricks to 208"), Field->OldValue.StartsWith(TEXT("9, 4 and 1 bricks")) && Field->NewValue.StartsWith(TEXT("208, 27 and 8 bricks")));
+		}
+		else
+		{
+			AddError(TEXT("The distance field is not in the changes"));
+		}
+		TestNull(TEXT("What lies between the LODs and the bounds is not reported as a whole"), Find(Changes, TEXT("Render/Other")));
+		TestNull(TEXT("Neither has Nanite clusters"), Find(Changes, TEXT("Render/Nanite")));
+	}
+
+	// A mesh with Nanite data and a proxy of its own.
+	{
+		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, Sphere);
+		if (const FAssetNativeDataChange* Nanite = Find(Changes, TEXT("Render/Nanite")))
+		{
+			TestTrue(TEXT("To 6 clusters"), Nanite->OldValue.StartsWith(TEXT("0 clusters")) && Nanite->NewValue.StartsWith(TEXT("6 clusters")));
+		}
+		else
+		{
+			AddError(TEXT("The Nanite resources are not in the changes"));
+		}
+		TestNotNull(TEXT("The ray tracing proxy"), Find(Changes, TEXT("Render/RayTracing")));
+	}
+
+	// One byte of the distance field of a copy of the cube: nothing else is reported.
+	const FString Fixtures = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("CookedTestFixtures"));
+	const FString Folder = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("__AssetSerializationInspectorTests"), TEXT("CookedMiddle"));
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
+	IFileManager::Get().MakeDirectory(*Folder, true);
+	for (const TCHAR* Extension : { TEXT("uasset"), TEXT("uexp"), TEXT("ubulk") })
+	{
+		IFileManager::Get().Copy(*FPaths::Combine(Folder, FString::Printf(TEXT("Cube.%s"), Extension)), *FPaths::Combine(Fixtures, FString::Printf(TEXT("Cube.%s"), Extension)));
+	}
+
+	const int64 HeaderSize = IFileManager::Get().FileSize(*FPaths::Combine(Fixtures, TEXT("Cube.uasset")));
+	TArray<uint8> Exports;
+	if (!TestTrue(TEXT("The copy is there"), FFileHelper::LoadFileToArray(Exports, *FPaths::Combine(Folder, TEXT("Cube.uexp")))))
+	{
+		return false;
+	}
+
+	const auto Damaged = [&](const FAssetRenderPart& Part, const int64 Skip, FAssetStaticMeshData& Out) {
+		TArray<uint8> Copy = Exports;
+		const int64 Position = Part.Offset + Skip - HeaderSize;
+		if (Position < 0 || Position >= Copy.Num())
+		{
+			return false;
+		}
+		Copy[Position] ^= 0x55;
+		FFileHelper::SaveArrayToFile(Copy, *FPaths::Combine(Folder, TEXT("Cube.uexp")));
+		return ReadFixtureAt(*this, FPaths::Combine(Folder, TEXT("Cube.uasset")), Out);
+	};
+
+	// The first mip of the distance field: its indirection grid starts 33 bytes in (a flag, the box and a flag).
+	FAssetStaticMeshData WithField;
+	if (Damaged(Cube.RenderData.Middle.DistanceFields[0].Part, 33, WithField) && WithField.RenderData.Middle.bDecoded)
+	{
+		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, WithField);
+		TestEqual(TEXT("One byte of the distance field is one change"), Changes.Num(), 1);
+		TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/DistanceField")));
+	}
+	else
+	{
+		AddError(TEXT("The copy with a changed distance field is not read"));
+	}
+
+	// The same for the cards: the box of the first card starts 4 bytes in.
+	FAssetStaticMeshData WithCards;
+	if (Damaged(Cube.RenderData.Middle.Cards[0].Part, 8, WithCards) && WithCards.RenderData.Middle.bDecoded)
+	{
+		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, WithCards);
+		TestEqual(TEXT("One byte of the cards is one change"), Changes.Num(), 1);
+		TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/Cards")));
+	}
+	else
+	{
+		AddError(TEXT("The copy with changed cards is not read"));
+	}
+
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
 	return true;
 }
 

@@ -90,9 +90,111 @@ struct FAssetStaticMeshRenderLod
 	FString Describe() const;
 };
 
+/** A part of the render data that is kept as bytes: where it is in the document, and a hash of them. */
+struct FAssetRenderPart
+{
+	int64 Offset = 0;
+	int64 Bytes = 0;
+	FString Hash;
+};
+
+/** The Nanite resources of a mesh (Nanite::FResources), without the pages themselves. */
+struct FAssetNaniteResources
+{
+	/** The mesh has Nanite data; false when the cook stripped it or the mesh has none. */
+	bool bPresent = false;
+
+	uint32 ResourceFlags = 0;
+	int64 RootDataBytes = 0;
+	int32 Pages = 0;
+	int32 HierarchyNodes = 0;
+	uint32 RootPages = 0;
+	uint32 Clusters = 0;
+	uint32 InputTriangles = 0;
+	uint32 InputVertices = 0;
+	uint32 InputCurves = 0;
+
+	/** The pages that stream, in a sidecar file: their size and a hash of them when the file is there. */
+	int64 StreamableBytes = 0;
+	FString StreamableHash;
+
+	FAssetRenderPart Part;
+
+	FString Describe() const;
+};
+
+/** The ray tracing proxy of a mesh: whether it has one, and how many LODs it describes. */
+struct FAssetRayTracingProxy
+{
+	bool bPresent = false;
+	bool bUsingRenderingLods = false;
+	int32 Lods = 0;
+	FAssetRenderPart Part;
+
+	FString Describe() const;
+};
+
+/** The card representation Lumen uses for one LOD (FCardRepresentationData). */
+struct FAssetCardRepresentation
+{
+	bool bValid = false;
+	FVector BoundsMin = FVector::ZeroVector;
+	FVector BoundsMax = FVector::ZeroVector;
+	bool bMostlyTwoSided = false;
+	int32 Cards = 0;
+	FAssetRenderPart Part;
+
+	FString Describe() const;
+};
+
+/** The signed distance field of one LOD (FDistanceFieldVolumeData): its bounds, the bricks of each mip and the data that streams. */
+struct FAssetDistanceField
+{
+	bool bValid = false;
+	FVector BoundsMin = FVector::ZeroVector;
+	FVector BoundsMax = FVector::ZeroVector;
+	bool bMostlyTwoSided = false;
+
+	struct FMip
+	{
+		FIntVector Indirection = FIntVector::ZeroValue;
+		int32 Bricks = 0;
+		uint32 BulkSize = 0;
+	};
+	FMip Mips[3];
+
+	int32 AlwaysLoadedBytes = 0;
+	int64 StreamableBytes = 0;
+	FString StreamableHash;
+	FAssetRenderPart Part;
+
+	FString Describe() const;
+};
+
+/**
+ * What lies between the LODs of the render data and its bounds, decoded where the layout is known: the Nanite resources, the ray tracing
+ * proxy, then the card representation and the distance field of each LOD. When it cannot be decoded (a layout that is not read) bDecoded
+ * is false with the reason, and the render data keeps a hash of all of it.
+ */
+struct FAssetStaticMeshRenderMiddle
+{
+	bool bDecoded = false;
+	FString Error;
+
+	FAssetNaniteResources Nanite;
+	FAssetRayTracingProxy RayTracing;
+
+	/** The cook left the cards or the distance fields out; the arrays are empty then. */
+	bool bCardsStripped = false;
+	bool bDistanceFieldsStripped = false;
+	TArray<FAssetCardRepresentation> Cards;
+	TArray<FAssetDistanceField> DistanceFields;
+};
+
 /**
  * The render data of a cooked static mesh (FStaticMeshRenderData): its LODs, then what follows them (Nanite resources, the ray tracing
- * proxy, the card representation and the distance fields of each LOD), which is hashed and not decoded, and the bounds and screen sizes.
+ * proxy, the card representation and the distance fields of each LOD), which is decoded when its layout is known and hashed otherwise,
+ * and the bounds and screen sizes.
  */
 struct FAssetStaticMeshRenderData
 {
@@ -104,6 +206,9 @@ struct FAssetStaticMeshRenderData
 	/** What lies between the LODs and the bounds: how many bytes, and a hash of them. */
 	int64 OtherBytes = 0;
 	FString OtherHash;
+
+	/** The same bytes, decoded part by part. */
+	FAssetStaticMeshRenderMiddle Middle;
 
 	FBoxSphereBounds Bounds = FBoxSphereBounds(ForceInit);
 	bool bLodsShareStaticLighting = false;

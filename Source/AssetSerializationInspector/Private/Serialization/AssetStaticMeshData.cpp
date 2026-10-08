@@ -399,6 +399,275 @@ namespace
 		Out.ReversedIndexBytes = Reader.Read<uint32>();
 	}
 
+	FAssetRenderPart MakePart(const FAssetPackageDocument& Document, const int64 Start, const int64 End)
+	{
+		FAssetRenderPart Part;
+		Part.Offset = Start;
+		Part.Bytes = End - Start;
+		Part.Hash = HashBytes(Document.FileData.GetData() + Start, Part.Bytes);
+		return Part;
+	}
+
+	/** An array of elements of a fixed size that is skipped: its count must fit what is left. */
+	int32 SkipFixedArray(FNativeReader& Reader, const int64 ElementBytes, const TCHAR* What)
+	{
+		const int32 Count = Reader.Read<int32>();
+		if (Reader.Ok() && (Count < 0 || static_cast<int64>(Count) * ElementBytes > Reader.Remaining()))
+		{
+			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
+			return 0;
+		}
+		Reader.Skip(static_cast<int64>(Count) * ElementBytes);
+		return Count;
+	}
+
+	/** Nanite::FResources::Serialize of a cooked mesh. */
+	void ReadNaniteResources(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, FAssetNaniteResources& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+		const int64 Start = Reader.Tell();
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		if (Reader.Ok() && (GlobalStrip & AudioVisualStripped) == 0)
+		{
+			Out.bPresent = true;
+			Out.ResourceFlags = Reader.Read<uint32>();
+
+			FBulkReference Pages;
+			if (!ReadBulkReference(Reader, Document, Resources, TEXT("The streamable pages of Nanite"), Pages))
+			{
+				return;
+			}
+			Out.StreamableBytes = Pages.RawSize;
+			Out.StreamableHash = Pages.PayloadHash;
+
+			Out.RootDataBytes = SkipFixedArray(Reader, 1, TEXT("bytes of Nanite root data"));
+			Out.Pages = SkipFixedArray(Reader, 20, TEXT("Nanite page streaming states"));
+			Out.HierarchyNodes = SkipFixedArray(Reader, 240, TEXT("Nanite hierarchy nodes"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite hierarchy roots"));
+			SkipFixedArray(Reader, 2, TEXT("Nanite page dependencies"));
+			SkipFixedArray(Reader, 48, TEXT("Nanite assembly transforms"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite bone attachments"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite bone indices"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite page ranges"));
+			Reader.Skip(28); // the bounds of the mesh
+			Out.RootPages = Reader.Read<uint32>();
+			Reader.Skip(8); // the position and normal precision
+			Out.InputTriangles = Reader.Read<uint32>();
+			Out.InputVertices = Reader.Read<uint32>();
+			Out.Clusters = Reader.Read<uint32>();
+			Reader.Skip(8); // the mask of voxel materials
+			Out.InputCurves = Reader.Read<uint32>();
+		}
+
+		Out.Part = MakePart(Document, Start, Reader.Tell());
+	}
+
+	/** FStaticMeshRayTracingProxy::Serialize of a cooked mesh whose proxy shares the buffers of the render LODs. */
+	void ReadRayTracingProxy(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const bool bEditorOnlyStripped, FAssetRayTracingProxy& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+		const int64 Start = Reader.Tell();
+
+		Out.bPresent = Reader.ReadBool();
+		if (!Reader.Ok() || !Out.bPresent)
+		{
+			Out.Part = MakePart(Document, Start, Reader.Tell());
+			return;
+		}
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		Out.bUsingRenderingLods = Reader.ReadBool();
+		if (Reader.Ok() && (GlobalStrip & AudioVisualStripped) == 0)
+		{
+			Out.Lods = Reader.Read<int32>();
+			if (Reader.Ok() && (Out.Lods < 0 || Out.Lods > 8))
+			{
+				Reader.Fail(TEXT("The number of LODs of the ray tracing proxy does not make sense"));
+				return;
+			}
+
+			for (int32 Index = 0; Index < Out.Lods && Reader.Ok(); ++Index)
+			{
+				// A proxy that has buffers of its own (when the render LODs do not have them) lists its sections first.
+				const bool bOwnsBuffers = Reader.ReadBool();
+				if (bOwnsBuffers)
+				{
+					const int32 SectionCount = Reader.Read<int32>();
+					if (Reader.Ok() && (SectionCount < 0 || SectionCount > MaximumMeshEntries || SectionCount > Reader.Remaining() / 20))
+					{
+						Reader.Fail(TEXT("The number of sections of the ray tracing proxy does not fit the data"));
+						return;
+					}
+					FAssetStaticMeshRenderSection Section;
+					for (int32 SectionIndex = 0; SectionIndex < SectionCount && Reader.Ok(); ++SectionIndex)
+					{
+						ReadRenderSection(Reader, bEditorOnlyStripped, Section);
+					}
+				}
+
+				const bool bOwnsGeometry = Reader.ReadBool();
+				const bool bInlined = Reader.ReadBool();
+				if (bInlined)
+				{
+					Reader.Fail(TEXT("The ray tracing proxy is inline, which a cook does not write"));
+					return;
+				}
+
+				FBulkReference Streamable;
+				if (!ReadBulkReference(Reader, Document, Resources, TEXT("The data of a LOD of the ray tracing proxy"), Streamable))
+				{
+					return;
+				}
+				if (bOwnsBuffers)
+				{
+					// The size of the buffers, then the metadata of the positions, the tangents and UVs, the colors and the indices.
+					Reader.Skip(4 + 2 * 4 + (2 * 4 + 2 * 4) + 2 * 4 + (4 + 4));
+				}
+				if (bOwnsGeometry)
+				{
+					Reader.Skip(8 + 6 * 4); // where the acceleration structure is, how big, and its header
+				}
+			}
+		}
+
+		Out.Part = MakePart(Document, Start, Reader.Tell());
+	}
+
+	/** The cards of every LOD: FStaticMeshRenderData::SerializeInlineDataRepresentations. */
+	void ReadCardRepresentations(FNativeReader& Reader, const FAssetPackageDocument& Document, const int32 LodCount, FAssetStaticMeshRenderMiddle& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+		constexpr uint8 CardsStripped = 2;
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		const uint8 ClassStrip = Reader.Read<uint8>();
+		if (!Reader.Ok() || (GlobalStrip & AudioVisualStripped) != 0 || (ClassStrip & CardsStripped) != 0)
+		{
+			Out.bCardsStripped = true;
+			return;
+		}
+
+		for (int32 Lod = 0; Lod < LodCount && Reader.Ok(); ++Lod)
+		{
+			FAssetCardRepresentation& Cards = Out.Cards.AddDefaulted_GetRef();
+			const int64 Start = Reader.Tell();
+			Cards.bValid = Reader.ReadBool();
+			if (Cards.bValid)
+			{
+				const double MinX = Reader.Read<double>();
+				const double MinY = Reader.Read<double>();
+				const double MinZ = Reader.Read<double>();
+				const double MaxX = Reader.Read<double>();
+				const double MaxY = Reader.Read<double>();
+				const double MaxZ = Reader.Read<double>();
+				Reader.Read<uint8>(); // whether the box is valid
+				Cards.BoundsMin = FVector(MinX, MinY, MinZ);
+				Cards.BoundsMax = FVector(MaxX, MaxY, MaxZ);
+				Cards.bMostlyTwoSided = Reader.ReadBool();
+				Cards.Cards = SkipFixedArray(Reader, 5 * 12 + 1, TEXT("cards"));
+			}
+			Cards.Part = MakePart(Document, Start, Reader.Tell());
+		}
+	}
+
+	/** The distance field of every LOD: FDistanceFieldVolumeData::Serialize behind the strip flags of the render data. */
+	void ReadDistanceFields(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const int32 LodCount, FAssetStaticMeshRenderMiddle& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+		constexpr uint8 DistanceFieldStripped = 1;
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		const uint8 ClassStrip = Reader.Read<uint8>();
+		if (!Reader.Ok() || (GlobalStrip & AudioVisualStripped) != 0 || (ClassStrip & DistanceFieldStripped) != 0)
+		{
+			Out.bDistanceFieldsStripped = true;
+			return;
+		}
+
+		for (int32 Lod = 0; Lod < LodCount && Reader.Ok(); ++Lod)
+		{
+			FAssetDistanceField& Field = Out.DistanceFields.AddDefaulted_GetRef();
+			const int64 Start = Reader.Tell();
+			Field.bValid = Reader.ReadBool();
+			if (Field.bValid)
+			{
+				float Corner[6];
+				for (float& Value : Corner)
+				{
+					Value = Reader.Read<float>();
+				}
+				const FVector3f Min(Corner[0], Corner[1], Corner[2]);
+				const FVector3f Max(Corner[3], Corner[4], Corner[5]);
+				Reader.Read<uint8>(); // whether the box is valid
+				Field.BoundsMin = FVector(Min);
+				Field.BoundsMax = FVector(Max);
+				Field.bMostlyTwoSided = Reader.ReadBool();
+
+				for (FAssetDistanceField::FMip& Mip : Field.Mips)
+				{
+					const int32 IndirectionX = Reader.Read<int32>();
+					const int32 IndirectionY = Reader.Read<int32>();
+					const int32 IndirectionZ = Reader.Read<int32>();
+					Mip.Indirection = FIntVector(IndirectionX, IndirectionY, IndirectionZ);
+					Mip.Bricks = Reader.Read<int32>();
+					Reader.Skip(3 * 4 + 3 * 4 + 2 * 4); // the scale and offset of the volume and the scale and bias of the distances
+					Reader.Read<uint32>();				// where the mip is in the streamed data
+					Mip.BulkSize = Reader.Read<uint32>();
+				}
+
+				Field.AlwaysLoadedBytes = SkipFixedArray(Reader, 1, TEXT("bytes of the always loaded mip of a distance field"));
+
+				FBulkReference Streamable;
+				if (!ReadBulkReference(Reader, Document, Resources, TEXT("The streamed mips of a distance field"), Streamable))
+				{
+					return;
+				}
+				Field.StreamableBytes = Streamable.RawSize;
+				Field.StreamableHash = Streamable.PayloadHash;
+			}
+			Field.Part = MakePart(Document, Start, Reader.Tell());
+		}
+	}
+
+	/**
+	 * Decodes what lies between the LODs and the bounds. It never fails the render data: when the layout is not the one read here, or the
+	 * bytes do not end where the bounds start, the reason is kept and the caller falls back to the hash of all of it.
+	 */
+	void ReadRenderMiddle(const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, const bool bEditorOnlyStripped, const int64 Start, const int64 End, const int32 LodCount,
+		FAssetStaticMeshRenderMiddle& Out)
+	{
+		FNativeReader Reader(Document, Start, End - Start);
+		ReadNaniteResources(Reader, Document, Resources, Out.Nanite);
+		if (Reader.Ok())
+		{
+			ReadRayTracingProxy(Reader, Document, Resources, bEditorOnlyStripped, Out.RayTracing);
+		}
+		if (Reader.Ok())
+		{
+			ReadCardRepresentations(Reader, Document, LodCount, Out);
+		}
+		if (Reader.Ok())
+		{
+			ReadDistanceFields(Reader, Document, Resources, LodCount, Out);
+		}
+
+		if (!Reader.Ok())
+		{
+			Out.Error = Reader.GetError();
+		}
+		else if (Reader.Remaining() != 0)
+		{
+			Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		}
+		else
+		{
+			Out.bDecoded = true;
+		}
+	}
+
 	/**
 	 * FStaticMeshRenderData::Serialize for a cooked mesh. The LODs are read from the start. The end is found from the other side: what
 	 * follows the render data is the SpeedTree flag and the material slots, whose size is known, so the render data ends where a flag
@@ -484,6 +753,7 @@ namespace
 
 		Out.OtherBytes = TailStart - OtherStart;
 		Out.OtherHash = HashBytes(Document.FileData.GetData() + OtherStart, Out.OtherBytes);
+		ReadRenderMiddle(Document, Resources, bEditorOnlyStripped, OtherStart, TailStart, LodCount, Out.Middle);
 
 		Reader.Seek(TailStart);
 		Out.Bounds = ReadRenderBounds(Reader);
@@ -564,6 +834,38 @@ FString FAssetStaticMeshRenderLod::Describe() const
 		FString::Printf(TEXT("%d sections, %u vertices, %d indices (%s), %u UV channels"), Sections.Num(), NumVertices, NumIndices, b32BitIndices ? TEXT("32 bit") : TEXT("16 bit"), NumTexCoords);
 	Text += FString::Printf(TEXT(", %lld bytes of buffers %s, %s"), BufferBytes, bInlined ? TEXT("in the export") : TEXT("streamed"), BufferHash.IsEmpty() ? TEXT("not read") : *BufferHash);
 	return Text;
+}
+
+FString FAssetNaniteResources::Describe() const
+{
+	if (!bPresent)
+	{
+		return TEXT("none");
+	}
+	return FString::Printf(TEXT("%u clusters in %d pages (%u root), %u input triangles and %u vertices, %lld bytes streamed %s, %s"), Clusters, Pages, RootPages, InputTriangles, InputVertices,
+		StreamableBytes, StreamableHash.IsEmpty() ? TEXT("not read") : *StreamableHash.Left(16), *Part.Hash.Left(16));
+}
+
+FString FAssetRayTracingProxy::Describe() const
+{
+	return bPresent ? FString::Printf(TEXT("%d LODs%s, %s"), Lods, bUsingRenderingLods ? TEXT(" sharing the render buffers") : TEXT(""), *Part.Hash.Left(16)) : FString(TEXT("none"));
+}
+
+FString FAssetCardRepresentation::Describe() const
+{
+	return bValid ? FString::Printf(TEXT("%d cards in (%s) to (%s)%s, %s"), Cards, *BoundsMin.ToCompactString(), *BoundsMax.ToCompactString(), bMostlyTwoSided ? TEXT(", mostly two sided") : TEXT(""),
+						*Part.Hash.Left(16))
+				  : FString(TEXT("none"));
+}
+
+FString FAssetDistanceField::Describe() const
+{
+	if (!bValid)
+	{
+		return TEXT("none");
+	}
+	return FString::Printf(TEXT("%d, %d and %d bricks, %d bytes always loaded, %lld bytes streamed %s, bounds (%s) to (%s), %s"), Mips[0].Bricks, Mips[1].Bricks, Mips[2].Bricks, AlwaysLoadedBytes,
+		StreamableBytes, StreamableHash.IsEmpty() ? TEXT("not read") : *StreamableHash.Left(16), *BoundsMin.ToCompactString(), *BoundsMax.ToCompactString(), *Part.Hash.Left(16));
 }
 
 FString FAssetStaticMeshSourceModel::Describe() const
@@ -869,7 +1171,65 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 			Add(TEXT("Render/InlinedLods"), TEXT("LODs kept in the export"), FAssetNativeDataChange::EState::Modified, FString::FromInt(OldRender.NumInlinedLODs),
 				FString::FromInt(NewRender.NumInlinedLODs));
 		}
-		if (OldRender.OtherBytes != NewRender.OtherBytes || !OldRender.OtherHash.Equals(NewRender.OtherHash, ESearchCase::CaseSensitive))
+		if (OldRender.Middle.bDecoded && NewRender.Middle.bDecoded)
+		{
+			const FAssetStaticMeshRenderMiddle& OldMiddle = OldRender.Middle;
+			const FAssetStaticMeshRenderMiddle& NewMiddle = NewRender.Middle;
+			const auto Differs = [](const FAssetRenderPart& A, const FAssetRenderPart& B) { return A.Bytes != B.Bytes || !A.Hash.Equals(B.Hash, ESearchCase::CaseSensitive); };
+
+			if (Differs(OldMiddle.Nanite.Part, NewMiddle.Nanite.Part))
+			{
+				Add(TEXT("Render/Nanite"), TEXT("Nanite resources"), FAssetNativeDataChange::EState::Modified, OldMiddle.Nanite.Describe(), NewMiddle.Nanite.Describe());
+			}
+			if (Differs(OldMiddle.RayTracing.Part, NewMiddle.RayTracing.Part))
+			{
+				Add(TEXT("Render/RayTracing"), TEXT("Ray tracing proxy"), FAssetNativeDataChange::EState::Modified, OldMiddle.RayTracing.Describe(), NewMiddle.RayTracing.Describe());
+			}
+
+			const int32 CardLods = FMath::Max(OldMiddle.Cards.Num(), NewMiddle.Cards.Num());
+			for (int32 Lod = 0; Lod < CardLods; ++Lod)
+			{
+				const FAssetCardRepresentation Empty;
+				const FAssetCardRepresentation& OldCards = OldMiddle.Cards.IsValidIndex(Lod) ? OldMiddle.Cards[Lod] : Empty;
+				const FAssetCardRepresentation& NewCards = NewMiddle.Cards.IsValidIndex(Lod) ? NewMiddle.Cards[Lod] : Empty;
+				if (OldCards.bValid != NewCards.bValid || (OldCards.bValid && Differs(OldCards.Part, NewCards.Part)))
+				{
+					Add(FString::Printf(TEXT("Render/Lod/%d/Cards"), Lod), FString::Printf(TEXT("Render LOD %d: card representation"), Lod),
+						!OldCards.bValid	   ? FAssetNativeDataChange::EState::Added
+							: !NewCards.bValid ? FAssetNativeDataChange::EState::Removed
+											   : FAssetNativeDataChange::EState::Modified,
+						OldCards.Describe(), NewCards.Describe());
+				}
+			}
+			if (OldMiddle.bCardsStripped != NewMiddle.bCardsStripped)
+			{
+				Add(TEXT("Render/CardsStripped"), TEXT("Card representation kept by the cook"), FAssetNativeDataChange::EState::Modified, OldMiddle.bCardsStripped ? TEXT("left out") : TEXT("kept"),
+					NewMiddle.bCardsStripped ? TEXT("left out") : TEXT("kept"));
+			}
+
+			const int32 FieldLods = FMath::Max(OldMiddle.DistanceFields.Num(), NewMiddle.DistanceFields.Num());
+			for (int32 Lod = 0; Lod < FieldLods; ++Lod)
+			{
+				const FAssetDistanceField Empty;
+				const FAssetDistanceField& OldField = OldMiddle.DistanceFields.IsValidIndex(Lod) ? OldMiddle.DistanceFields[Lod] : Empty;
+				const FAssetDistanceField& NewField = NewMiddle.DistanceFields.IsValidIndex(Lod) ? NewMiddle.DistanceFields[Lod] : Empty;
+				const bool bSameStream = OldField.StreamableHash.IsEmpty() || NewField.StreamableHash.IsEmpty() || OldField.StreamableHash.Equals(NewField.StreamableHash, ESearchCase::CaseSensitive);
+				if (OldField.bValid != NewField.bValid || (OldField.bValid && (Differs(OldField.Part, NewField.Part) || !bSameStream)))
+				{
+					Add(FString::Printf(TEXT("Render/Lod/%d/DistanceField"), Lod), FString::Printf(TEXT("Render LOD %d: distance field"), Lod),
+						!OldField.bValid	   ? FAssetNativeDataChange::EState::Added
+							: !NewField.bValid ? FAssetNativeDataChange::EState::Removed
+											   : FAssetNativeDataChange::EState::Modified,
+						OldField.Describe(), NewField.Describe());
+				}
+			}
+			if (OldMiddle.bDistanceFieldsStripped != NewMiddle.bDistanceFieldsStripped)
+			{
+				Add(TEXT("Render/DistanceFieldsStripped"), TEXT("Distance fields kept by the cook"), FAssetNativeDataChange::EState::Modified,
+					OldMiddle.bDistanceFieldsStripped ? TEXT("left out") : TEXT("kept"), NewMiddle.bDistanceFieldsStripped ? TEXT("left out") : TEXT("kept"));
+			}
+		}
+		else if (OldRender.OtherBytes != NewRender.OtherBytes || !OldRender.OtherHash.Equals(NewRender.OtherHash, ESearchCase::CaseSensitive))
 		{
 			Add(TEXT("Render/Other"), TEXT("Nanite, ray tracing and distance field data"), FAssetNativeDataChange::EState::Modified,
 				FString::Printf(TEXT("%lld bytes, %s"), OldRender.OtherBytes, *OldRender.OtherHash), FString::Printf(TEXT("%lld bytes, %s"), NewRender.OtherBytes, *NewRender.OtherHash));
