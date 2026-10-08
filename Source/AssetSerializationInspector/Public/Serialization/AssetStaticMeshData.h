@@ -134,6 +134,22 @@ struct FAssetRayTracingProxy
 	FString Describe() const;
 };
 
+/** One card of a card representation: an oriented box that Lumen captures the surface of the mesh into (FLumenCardBuildData). */
+struct FAssetCard
+{
+	FVector Origin = FVector::ZeroVector;
+	FVector Extent = FVector::ZeroVector;
+	FVector AxisX = FVector::ZeroVector;
+	FVector AxisY = FVector::ZeroVector;
+	FVector AxisZ = FVector::ZeroVector;
+
+	/** The direction of the box when it is aligned to an axis of the mesh (0 to 5). */
+	uint8 DirectionIndex = 0;
+
+	bool Equals(const FAssetCard& Other) const;
+	FString Describe() const;
+};
+
 /** The card representation Lumen uses for one LOD (FCardRepresentationData). */
 struct FAssetCardRepresentation
 {
@@ -142,6 +158,7 @@ struct FAssetCardRepresentation
 	FVector BoundsMax = FVector::ZeroVector;
 	bool bMostlyTwoSided = false;
 	int32 Cards = 0;
+	TArray<FAssetCard> CardList;
 	FAssetRenderPart Part;
 
 	FString Describe() const;

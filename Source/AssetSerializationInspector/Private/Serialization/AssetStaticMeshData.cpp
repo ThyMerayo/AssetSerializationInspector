@@ -567,7 +567,31 @@ namespace
 				Cards.BoundsMin = FVector(MinX, MinY, MinZ);
 				Cards.BoundsMax = FVector(MaxX, MaxY, MaxZ);
 				Cards.bMostlyTwoSided = Reader.ReadBool();
-				Cards.Cards = SkipFixedArray(Reader, 5 * 12 + 1, TEXT("cards"));
+
+				// Each card: three axes, the origin and the extent of its box, and the direction it faces.
+				constexpr int64 CardBytes = 5 * 12 + 1;
+				const int32 CardCount = Reader.Read<int32>();
+				if (Reader.Ok() && (CardCount < 0 || static_cast<int64>(CardCount) * CardBytes > Reader.Remaining()))
+				{
+					Reader.Fail(TEXT("The number of cards does not fit the data"));
+					return;
+				}
+				for (int32 CardIndex = 0; CardIndex < CardCount && Reader.Ok(); ++CardIndex)
+				{
+					float Values[15];
+					for (float& Value : Values)
+					{
+						Value = Reader.Read<float>();
+					}
+					FAssetCard& Card = Cards.CardList.AddDefaulted_GetRef();
+					Card.AxisX = FVector(Values[0], Values[1], Values[2]);
+					Card.AxisY = FVector(Values[3], Values[4], Values[5]);
+					Card.AxisZ = FVector(Values[6], Values[7], Values[8]);
+					Card.Origin = FVector(Values[9], Values[10], Values[11]);
+					Card.Extent = FVector(Values[12], Values[13], Values[14]);
+					Card.DirectionIndex = Reader.Read<uint8>();
+				}
+				Cards.Cards = Cards.CardList.Num();
 			}
 			Cards.Part = MakePart(Document, Start, Reader.Tell());
 		}
@@ -849,6 +873,19 @@ FString FAssetNaniteResources::Describe() const
 FString FAssetRayTracingProxy::Describe() const
 {
 	return bPresent ? FString::Printf(TEXT("%d LODs%s, %s"), Lods, bUsingRenderingLods ? TEXT(" sharing the render buffers") : TEXT(""), *Part.Hash.Left(16)) : FString(TEXT("none"));
+}
+
+bool FAssetCard::Equals(const FAssetCard& Other) const
+{
+	return DirectionIndex == Other.DirectionIndex && Origin.Equals(Other.Origin, 1e-4) && Extent.Equals(Other.Extent, 1e-4) && AxisX.Equals(Other.AxisX, 1e-5) && AxisY.Equals(Other.AxisY, 1e-5)
+		&& AxisZ.Equals(Other.AxisZ, 1e-5);
+}
+
+FString FAssetCard::Describe() const
+{
+	// The directions are the six sides of the box of the mesh, in the order -X, +X, -Y, +Y, -Z, +Z.
+	static const TCHAR* const Directions[6] = { TEXT("-X"), TEXT("+X"), TEXT("-Y"), TEXT("+Y"), TEXT("-Z"), TEXT("+Z") };
+	return FString::Printf(TEXT("faces %s, origin (%s), extent (%s)"), DirectionIndex < 6 ? Directions[DirectionIndex] : TEXT("no side"), *Origin.ToCompactString(), *Extent.ToCompactString());
 }
 
 FString FAssetCardRepresentation::Describe() const
@@ -1199,6 +1236,29 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 							: !NewCards.bValid ? FAssetNativeDataChange::EState::Removed
 											   : FAssetNativeDataChange::EState::Modified,
 						OldCards.Describe(), NewCards.Describe());
+
+					// The cards that changed, were added or were removed, by their place in the list.
+					if (OldCards.bValid && NewCards.bValid)
+					{
+						const int32 CardCount = FMath::Max(OldCards.CardList.Num(), NewCards.CardList.Num());
+						for (int32 CardIndex = 0; CardIndex < CardCount; ++CardIndex)
+						{
+							const FString CardKey = FString::Printf(TEXT("Render/Lod/%d/Card/%d"), Lod, CardIndex);
+							const FString CardTitle = FString::Printf(TEXT("Render LOD %d: card %d"), Lod, CardIndex);
+							if (!OldCards.CardList.IsValidIndex(CardIndex))
+							{
+								Add(CardKey, CardTitle, FAssetNativeDataChange::EState::Added, FString(), NewCards.CardList[CardIndex].Describe());
+							}
+							else if (!NewCards.CardList.IsValidIndex(CardIndex))
+							{
+								Add(CardKey, CardTitle, FAssetNativeDataChange::EState::Removed, OldCards.CardList[CardIndex].Describe(), FString());
+							}
+							else if (!OldCards.CardList[CardIndex].Equals(NewCards.CardList[CardIndex]))
+							{
+								Add(CardKey, CardTitle, FAssetNativeDataChange::EState::Modified, OldCards.CardList[CardIndex].Describe(), NewCards.CardList[CardIndex].Describe());
+							}
+						}
+					}
 				}
 			}
 			if (OldMiddle.bCardsStripped != NewMiddle.bCardsStripped)
