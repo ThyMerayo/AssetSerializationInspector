@@ -17,7 +17,8 @@ enum class EAssetBlockCodec : uint8
 	BC2,
 	BC3,
 	BC4,
-	BC5
+	BC5,
+	BC7
 };
 
 /** How a pixel format stores a mip: in blocks of Width by Height pixels, each BytesPerBlock bytes (an uncompressed format has blocks of one pixel). */

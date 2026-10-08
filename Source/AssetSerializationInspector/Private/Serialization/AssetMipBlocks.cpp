@@ -24,7 +24,7 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 		{ TEXT("PF_BC4"), 4, 4, 8, EAssetBlockCodec::BC4 },
 		{ TEXT("PF_BC5"), 4, 4, 16, EAssetBlockCodec::BC5 },
 		{ TEXT("PF_BC6H"), 4, 4, 16 },
-		{ TEXT("PF_BC7"), 4, 4, 16 },
+		{ TEXT("PF_BC7"), 4, 4, 16, EAssetBlockCodec::BC7 },
 		{ TEXT("PF_ASTC_4x4"), 4, 4, 16 },
 		{ TEXT("PF_ASTC_4x4_HDR"), 4, 4, 16 },
 		{ TEXT("PF_ASTC_6x6"), 6, 6, 16 },
