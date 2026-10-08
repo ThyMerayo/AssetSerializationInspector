@@ -235,11 +235,14 @@ struct FAssetStaticMeshRenderData
 
 /**
  * A source model of a mesh saved by an editor from before the mesh description was an object of its own: the mesh description is
- * written inline, in the source model's slot of the static mesh.
+ * written inline, in the source model's slot of the static mesh. An editor from before that wrote a raw mesh in its place.
  */
 struct FAssetStaticMeshSourceModel
 {
 	bool bHasMeshDescription = false;
+
+	/** The model is a raw mesh (the older of the two layouts), not a mesh description. */
+	bool bRawMesh = false;
 
 	/** The size of the mesh description, and a hash of the bytes as stored (comparable between two saves in the same format). */
 	int64 PayloadSize = 0;

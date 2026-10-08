@@ -87,8 +87,7 @@ Open items, in order:
 - [x] Decode the vertices of a mesh description (counts, bounds, the position of each vertex) and say what moved
 - [x] Compare the other attributes of a mesh description: normals, tangents, UV channels, material slots and which triangles use them
 - [x] Read the render data of a cooked static mesh: LODs with their sections and bounds, the inline vertex and index buffers (counted and hashed), the screen sizes and bounds; 85 of 85 meshes of a cook of the engine's meshes
-- [x] Read the source models that an older editor wrote inline in a static mesh (a mesh description each, in the older bulk data format) and compare their content; 69 of the 70 meshes of the engine's plugins that were not read (the last one stores a raw mesh)
-- [ ] Read the source models of a static mesh saved with a raw mesh (before editor version 28), of which the engine's plugins have one sample whose layout did not match what the engine code writes
+- [x] Read the source models that an older editor wrote inline in a static mesh (a mesh description each, or a raw mesh before editor version 28, in the older bulk data format) and compare their content; all 70 meshes of the engine's plugins that were not read, so 1,374 of 1,374
 - [x] Decode what lies between the LODs and the bounds of the render data of a cooked static mesh into the Nanite resources, the ray tracing proxy, and the card representation and distance field of each LOD, each hashed and named in the diff; 117 of 117 cooked engine meshes, including a Nanite mesh
 - [x] Read the cards of a card representation (origin, extent, axes and facing direction) and report the ones that changed
 - [ ] Decode the contents of the other parts: the Nanite pages and clusters, the buffers of the ray tracing proxy and the volume of a distance field

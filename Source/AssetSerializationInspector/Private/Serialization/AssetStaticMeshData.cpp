@@ -54,17 +54,19 @@ namespace
 
 	/**
 	 * FStaticMeshSourceModel::SerializeBulkData of an editor from before the mesh description was an object: whether there is a mesh
-	 * description, and then FMeshDescriptionBulkData, which is the bulk data, an identifier and whether the identifier is a hash.
+	 * description, and then FMeshDescriptionBulkData, which is the bulk data, an identifier and whether the identifier is a hash. An editor
+	 * from before the raw mesh went away wrote FRawMeshBulkData instead: the same three, always, and without the flag in front.
 	 */
-	void ReadLegacySourceModel(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetStaticMeshSourceModel& Out)
+	void ReadLegacySourceModel(FNativeReader& Reader, const FAssetPackageDocument& Document, const bool bRawMesh, FAssetStaticMeshSourceModel& Out)
 	{
-		Out.bHasMeshDescription = Reader.ReadBool();
+		Out.bRawMesh = bRawMesh;
+		Out.bHasMeshDescription = bRawMesh || Reader.ReadBool();
 		if (!Reader.Ok() || !Out.bHasMeshDescription)
 		{
 			return;
 		}
 
-		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::MeshDescriptionVirtualization)
+		if (!bRawMesh && Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::MeshDescriptionVirtualization)
 		{
 			Reader.Fail(TEXT("The source models hold a mesh description in a layout that is not read"));
 			return;
@@ -74,11 +76,11 @@ namespace
 		Out.PayloadSize = Bulk.ElementCount;
 		Out.PayloadHash = Bulk.PayloadHash;
 
-		if (Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::MeshDescriptionBulkDataGuid)
+		if (bRawMesh || Reader.CustomVer(FEditorObjectVersion::GUID) >= FEditorObjectVersion::MeshDescriptionBulkDataGuid)
 		{
 			Out.MeshGuid = Reader.ReadGuid().ToString(EGuidFormats::DigitsWithHyphens);
 		}
-		if (Reader.CustomVer(FEnterpriseObjectVersion::GUID) >= FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash)
+		if (bRawMesh || Reader.CustomVer(FEnterpriseObjectVersion::GUID) >= FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash)
 		{
 			Reader.ReadBool();
 		}
@@ -974,15 +976,15 @@ bool AssetStaticMeshData::Decode(
 	}
 
 	// The source models write nothing here once the mesh description is an object of its own. Before that each wrote its mesh description
-	// inline, and before the raw mesh went away a raw mesh instead; the latter and the section info map of the oldest packages are not read.
+	// inline, and before the raw mesh went away a raw mesh instead; the section info map of the oldest packages is not read.
 	if (!bEditorDataStripped)
 	{
-		if (Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::StaticMeshDeprecatedRawMesh
-			|| Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::UPropertryForMeshSection)
+		const bool bRawMesh = Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::StaticMeshDeprecatedRawMesh;
+		if (Reader.CustomVer(FEditorObjectVersion::GUID) < FEditorObjectVersion::UPropertryForMeshSection)
 		{
 			Reader.Fail(TEXT("The source models are stored in an older format"));
 		}
-		else if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::SerializeMeshDescriptionBase)
+		else if (bRawMesh || Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::SerializeMeshDescriptionBase)
 		{
 			const int32 SourceModelCount = CountSourceModels(Document, Export, Trace);
 			if (SourceModelCount == INDEX_NONE || SourceModelCount > MaximumMeshEntries)
@@ -991,7 +993,7 @@ bool AssetStaticMeshData::Decode(
 			}
 			for (int32 Index = 0; Index < SourceModelCount && Reader.Ok(); ++Index)
 			{
-				ReadLegacySourceModel(Reader, Document, Out.SourceModels.AddDefaulted_GetRef());
+				ReadLegacySourceModel(Reader, Document, bRawMesh, Out.SourceModels.AddDefaulted_GetRef());
 			}
 		}
 	}
@@ -1094,7 +1096,8 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 	for (int32 Index = 0; Index < SourceModelCount; ++Index)
 	{
 		const FString Key = FString::Printf(TEXT("SourceModel/%d"), Index);
-		const FString Title = FString::Printf(TEXT("Source model %d mesh description"), Index);
+		const bool bRawMesh = (Old.SourceModels.IsValidIndex(Index) && Old.SourceModels[Index].bRawMesh) || (New.SourceModels.IsValidIndex(Index) && New.SourceModels[Index].bRawMesh);
+		const FString Title = FString::Printf(TEXT("Source model %d %s"), Index, bRawMesh ? TEXT("raw mesh") : TEXT("mesh description"));
 		const FAssetStaticMeshSourceModel* Before = Old.SourceModels.IsValidIndex(Index) && Old.SourceModels[Index].bHasMeshDescription ? &Old.SourceModels[Index] : nullptr;
 		const FAssetStaticMeshSourceModel* After = New.SourceModels.IsValidIndex(Index) && New.SourceModels[Index].bHasMeshDescription ? &New.SourceModels[Index] : nullptr;
 		if (Before == nullptr && After != nullptr)
