@@ -1041,13 +1041,13 @@ namespace
 	 * The collision, sockets and material slots of a static mesh, read on both sides. The geometry is not in the export: it is the
 	 * mesh description the source model refers to.
 	 */
-	bool AppendStaticMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendStaticMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace,
+		const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetStaticMeshData OldData;
 		FAssetStaticMeshData NewData;
-		if (!AssetStaticMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetStaticMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		if (!AssetStaticMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData, OldTrace)
+			|| !AssetStaticMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData, NewTrace))
 		{
 			return false;
 		}
@@ -1210,8 +1210,8 @@ namespace
 		FAssetPackageDiffEntry& RangeEntry)
 	{
 		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
-			&& !AppendStaticMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry)
-			&& !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+			&& !AppendStaticMeshChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry)
+			&& !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
 		{
 			AppendBulkDataChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry);
 		}
