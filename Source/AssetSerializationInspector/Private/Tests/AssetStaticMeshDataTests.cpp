@@ -503,6 +503,21 @@ bool FAssetStaticMeshData_ReadsWhatLiesBetweenTheLodsAndTheBounds::RunTest(const
 			if (TestEqual(TEXT("Cards for the LOD"), Middle.Cards.Num(), 1) && TestTrue(TEXT("That are valid"), Middle.Cards[0].bValid))
 			{
 				TestEqual(TEXT("Six cards, one for each side"), Middle.Cards[0].Cards, 6);
+				// Each side of the cube has a card that faces it and sits at the distance of the side from the center.
+				if (TestEqual(TEXT("The list has the six cards"), Middle.Cards[0].CardList.Num(), 6))
+				{
+					TSet<int32> Directions;
+					for (const FAssetCard& Card : Middle.Cards[0].CardList)
+					{
+						Directions.Add(Card.DirectionIndex);
+						TestTrue(TEXT("Its axes are unit vectors"),
+							FMath::IsNearlyEqual(Card.AxisX.Size(), 1.0, 1e-3) && FMath::IsNearlyEqual(Card.AxisY.Size(), 1.0, 1e-3) && FMath::IsNearlyEqual(Card.AxisZ.Size(), 1.0, 1e-3));
+						TestTrue(TEXT("Its origin is 45 units from the center, in the direction it faces"),
+							FMath::IsNearlyEqual(Card.Origin.GetAbsMax(), 45.0, 1e-3) && (Card.Origin.GetSafeNormal() | Card.AxisZ) > 0.99);
+						TestTrue(TEXT("It is a slab of 100 by 100 by 20 units"), Card.Extent.Equals(FVector(50, 50, 10), 1e-3));
+					}
+					TestEqual(TEXT("The six cards face six directions"), Directions.Num(), 6);
+				}
 				TestTrue(TEXT("In a box a little larger than the cube"), Middle.Cards[0].BoundsMin.Equals(FVector(-51, -51, -51), 1e-3) && Middle.Cards[0].BoundsMax.Equals(FVector(51, 51, 51), 1e-3));
 			}
 			if (TestEqual(TEXT("A distance field for the LOD"), Middle.DistanceFields.Num(), 1) && TestTrue(TEXT("That is valid"), Middle.DistanceFields[0].bValid))
@@ -593,6 +608,39 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		}
 		TestNull(TEXT("What lies between the LODs and the bounds is not reported as a whole"), Find(Changes, TEXT("Render/Other")));
 		TestNull(TEXT("Neither has Nanite clusters"), Find(Changes, TEXT("Render/Nanite")));
+	}
+
+	// The cards of a LOD: the cards that changed are named, and the others are not.
+	{
+		FAssetStaticMeshData Moved = Cube;
+		Moved.RenderData.Middle.Cards[0].CardList[2].Origin += FVector(0, 0, 5);
+		Moved.RenderData.Middle.Cards[0].Part.Hash = TEXT("changed");
+		FAssetStaticMeshData Fewer = Cube;
+		Fewer.RenderData.Middle.Cards[0].CardList.Pop();
+		Fewer.RenderData.Middle.Cards[0].Cards = 5;
+		Fewer.RenderData.Middle.Cards[0].Part.Hash = TEXT("fewer");
+
+		const TArray<FAssetNativeDataChange> MovedChanges = AssetStaticMeshData::Compare(Cube, Moved);
+		TestNotNull(TEXT("The cards of the LOD changed"), Find(MovedChanges, TEXT("Render/Lod/0/Cards")));
+		if (const FAssetNativeDataChange* Card = Find(MovedChanges, TEXT("Render/Lod/0/Card/2")))
+		{
+			TestTrue(TEXT("The third card moved 5 units up"), Card->State == FAssetNativeDataChange::EState::Modified && Card->OldValue != Card->NewValue);
+		}
+		else
+		{
+			AddError(TEXT("The card that moved is not in the changes"));
+		}
+		TestNull(TEXT("The others did not"), Find(MovedChanges, TEXT("Render/Lod/0/Card/1")));
+
+		const TArray<FAssetNativeDataChange> FewerChanges = AssetStaticMeshData::Compare(Cube, Fewer);
+		if (const FAssetNativeDataChange* Removed = Find(FewerChanges, TEXT("Render/Lod/0/Card/5")))
+		{
+			TestTrue(TEXT("The sixth card was removed"), Removed->State == FAssetNativeDataChange::EState::Removed);
+		}
+		else
+		{
+			AddError(TEXT("The removed card is not in the changes"));
+		}
 	}
 
 	// A mesh with Nanite data and a proxy of its own.

@@ -90,7 +90,8 @@ Open items, in order:
 - [x] Read the source models that an older editor wrote inline in a static mesh (a mesh description each, in the older bulk data format) and compare their content; 69 of the 70 meshes of the engine's plugins that were not read (the last one stores a raw mesh)
 - [ ] Read the source models of a static mesh saved with a raw mesh (before editor version 28), of which the engine's plugins have one sample whose layout did not match what the engine code writes
 - [x] Decode what lies between the LODs and the bounds of the render data of a cooked static mesh into the Nanite resources, the ray tracing proxy, and the card representation and distance field of each LOD, each hashed and named in the diff; 117 of 117 cooked engine meshes, including a Nanite mesh
-- [ ] Decode the contents of those parts: the Nanite pages and clusters, the buffers of the ray tracing proxy, the volume of a distance field, and the cards themselves (their boxes and directions)
+- [x] Read the cards of a card representation (origin, extent, axes and facing direction) and report the ones that changed
+- [ ] Decode the contents of the other parts: the Nanite pages and clusters, the buffers of the ray tracing proxy and the volume of a distance field
 - [x] Compare the vertex colors, binormal signs, edge hardness and polygon object names of a mesh description (it has no smoothing groups: they exist at import, and become hard edges)
 - [x] Compare the pixels of cooked mips block by block (BC, ASTC and uncompressed formats): how many blocks changed, how much of the mip, and where
 - [x] Compare the pixels of source images compressed as PNG or JPEG (decoded with the engine's image reader)
