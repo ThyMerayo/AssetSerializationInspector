@@ -2,7 +2,8 @@
 
 Unreal Engine 5.8 editor plugin (C++) that parses and diffs binary `.uasset` / `.umap` package files, explains what
 changed on save, tracks repeated-save patterns, and checks that saving an asset changes nothing. See `README.md` for the
-user-facing overview and `docs/Roadmap.md` for what has landed and what is still open.
+short overview, the pages in `docs/` for the details (`Features.md`, `NativeData.md`, `Usage.md`, `Concepts.md`,
+`Architecture.md`, `Development.md`) and `docs/Roadmap.md` for what has landed and what is still open.
 
 ## Working rules (mandatory)
 
@@ -20,7 +21,9 @@ user-facing overview and `docs/Roadmap.md` for what has landed and what is still
 - PR descriptions state: the root cause (or why), what changed, how it was verified, what was **not** verified, and known
   follow-ups left out of scope. Say plainly when something was only checked by constructed data or not run in the editor.
 - Fix tightly around the identified root cause. Track follow-ups explicitly rather than fixing things speculatively.
-- Update `README.md` in the same PR as a feature or behavior change, and tick `docs/Roadmap.md` as items land.
+- Update the docs page that describes a feature in the same PR as the feature or behavior change (`docs/Features.md`,
+  `docs/NativeData.md` for the decoders of native data, `docs/Usage.md` for menus and the commandlet), and tick
+  `docs/Roadmap.md` as items land. Keep `README.md` short: it only gets a line when a whole new capability appears.
 - **Format before every commit**: run `clang-format` (the `.clang-format` at the plugin root; tabs, 200 columns, Allman
   braces) on the C++ files you changed. clang-format keeps each file's line endings; files written by scripts come out
   unformatted.
