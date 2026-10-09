@@ -641,6 +641,168 @@ TSharedRef<FAssetPackageTreeNode> SAssetSerializationInspector::MakePackageIndex
 	return Node;
 }
 
+// The entries of the name map under its node, or why they could not be decoded.
+void SAssetSerializationInspector::PopulateNameMap(const TSharedRef<FAssetPackageTreeNode>& NameMapNode)
+{
+	if (Document->bHasDecodedNameMap)
+	{
+		for (const FAssetPackageNameEntry& Entry : Document->NameMap)
+		{
+			TSharedRef<FAssetPackageTreeNode> EntryNode = MakeRegionNode(FText::Format(LOCTEXT("NameEntryLabel", "[{0}] {1}"), FText::AsNumber(Entry.Index), FText::FromString(Entry.Name)),
+				LOCTEXT("NameEntryType", "Serialized package name"), Entry.Offset, Entry.Size, EAssetPackageNodeKind::NameEntry);
+
+			EntryNode->ValueText = FText::FromString(Entry.Name);
+
+			EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameIndexField", "Index"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Entry.Index)));
+
+			EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameStringField", "String"), LOCTEXT("FStringType", "FString"), FText::FromString(Entry.Name)));
+
+			EntryNode->Children.Add(MakeFieldNode(
+				LOCTEXT("NonCaseHashField", "Non-case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.NonCasePreservingHash))));
+
+			EntryNode->Children.Add(
+				MakeFieldNode(LOCTEXT("CaseHashField", "Case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.CasePreservingHash))));
+
+			NameMapNode->Children.Add(EntryNode);
+		}
+	}
+	else
+	{
+		TSharedRef<FAssetPackageTreeNode> ErrorNode = MakeFieldNode(LOCTEXT("NameMapDecodeErrorNode", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->NameMapError);
+
+		NameMapNode->Children.Add(ErrorNode);
+	}
+}
+
+// The entries of the import map under its node, or why they could not be decoded.
+void SAssetSerializationInspector::PopulateImportMap(const TSharedRef<FAssetPackageTreeNode>& ImportMapNode)
+{
+	if (Document->bHasDecodedImportMap)
+	{
+		for (const FAssetPackageImportEntry& Import : Document->ImportMap)
+		{
+			const FString ObjectName = Document->ResolveNameReference(Import.ObjectName);
+			const FString ResolvedPath = Document->ResolveImportPath(Import.Index);
+			const FString ClassPackage = Document->ResolveNameReference(Import.ClassPackage);
+			const FString ClassName = Document->ResolveNameReference(Import.ClassName);
+
+			TSharedRef<FAssetPackageTreeNode> ImportNode = MakeRegionNode(FText::Format(LOCTEXT("ImportEntryLabel", "[{0}] {1}"), FText::AsNumber(Import.Index), FText::FromString(ResolvedPath)),
+				LOCTEXT("ImportEntryType", "FObjectImport"), Import.Offset, Import.Size, EAssetPackageNodeKind::Import);
+
+			ImportNodesByIndex.Add(Import.Index, ImportNode);
+
+			ImportNode->ValueText = FText::FromString(ResolvedPath);
+			ImportNode->Children.Insert(MakeFieldNode(LOCTEXT("ImportResolvedPathField", "Resolved path"), LOCTEXT("ObjectPathType", "Object path"), FText::FromString(ResolvedPath)), 0);
+
+			int64 FieldOffset = Import.Offset;
+
+			AddChild(ImportNode,
+				MakeValueRegionNode(LOCTEXT("ImportClassPackageField", "Class package"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassPackage), FieldOffset, 8));
+
+			FieldOffset += 8;
+
+			AddChild(
+				ImportNode, MakeValueRegionNode(LOCTEXT("ImportClassNameField", "Class name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassName), FieldOffset, 8));
+
+			FieldOffset += 8;
+
+			AddChild(ImportNode, MakePackageIndexNode(LOCTEXT("ImportOuterIndexField", "Outer index"), Import.OuterIndex, FieldOffset, 4));
+
+			FieldOffset += 4;
+
+			AddChild(
+				ImportNode, MakeValueRegionNode(LOCTEXT("ImportObjectNameField", "Object name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ObjectName), FieldOffset, 8));
+
+			if (Import.UndecodedTailSize > 0)
+			{
+				AddChild(ImportNode,
+					MakeRegionNode(
+						LOCTEXT("ImportEntryTail", "Version-dependent tail"), LOCTEXT("ImportEntryTailType", "Undecoded FObjectImport data"), Import.UndecodedTailOffset, Import.UndecodedTailSize));
+			}
+
+			AddChild(ImportMapNode, ImportNode);
+		}
+	}
+	else
+	{
+		AddChild(ImportMapNode, MakeFieldNode(LOCTEXT("ImportMapDecodeError", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->ImportMapError));
+	}
+}
+
+// The entries of the export map under its node, or why they could not be decoded.
+void SAssetSerializationInspector::PopulateExportMap(const TSharedRef<FAssetPackageTreeNode>& ExportMapNode)
+{
+	if (Document->bHasDecodedExportMap)
+	{
+		for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+		{
+			const FString ResolvedPath = Document->ResolveExportPath(Export.Index);
+
+			const FString ClassIndex = Document->DescribePackageIndexDetailed(Export.ClassIndex);
+			const FString SuperIndex = Document->DescribePackageIndexDetailed(Export.SuperIndex);
+			const FString TemplateIndex = Document->DescribePackageIndexDetailed(Export.TemplateIndex);
+			const FString OuterIndex = Document->DescribePackageIndexDetailed(Export.OuterIndex);
+
+			TSharedRef<FAssetPackageTreeNode> ExportNode = MakeRegionNode(FText::Format(LOCTEXT("ExportEntryLabel", "[{0}] {1}"), FText::AsNumber(Export.Index), FText::FromString(ResolvedPath)),
+				LOCTEXT("ExportEntryType", "FObjectExport"), Export.Offset, Export.Size, EAssetPackageNodeKind::Export);
+			ExportNode->ValueText = FText::FromString(ResolvedPath);
+
+			ExportNodesByIndex.Add(Export.Index, ExportNode);
+
+			int64 FieldOffset = Export.Offset;
+			AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportClassIndexField", "Class index"), Export.ClassIndex, FieldOffset, 4));
+			FieldOffset += 4;
+			AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportSuperIndexField", "Super index"), Export.SuperIndex, FieldOffset, 4));
+			FieldOffset += 4;
+			AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportTemplateIndexField", "Template index"), Export.TemplateIndex, FieldOffset, 4));
+			FieldOffset += 4;
+			AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportOuterIndexField", "Outer index"), Export.OuterIndex, FieldOffset, 4));
+			FieldOffset += 4;
+			AddChild(ExportNode,
+				MakeValueRegionNode(LOCTEXT("ExportObjectNameField", "Object name"), LOCTEXT("PackageFNameType", "Package FName"), FText::FromString(Document->ResolveNameReference(Export.ObjectName)),
+					FieldOffset, 8));
+			FieldOffset += 8;
+			AddChild(ExportNode,
+				MakeValueRegionNode(LOCTEXT("ExportObjectFlagsField", "Object flags"), LOCTEXT("EObjectFlagsType", "EObjectFlags"),
+					FText::FromString(FString::Printf(TEXT("0x%08X"), Export.ObjectFlags)), FieldOffset, 4));
+			FieldOffset += 4;
+			AddChild(ExportNode, MakeValueRegionNode(LOCTEXT("ExportSerialSizeField", "Serial size"), LOCTEXT("Int64Type", "int64"), FText::AsNumber(Export.SerialSize), FieldOffset, 8));
+			FieldOffset += 8;
+			AddChild(ExportNode,
+				MakeValueRegionNode(
+					LOCTEXT("ExportSerialOffsetField", "Serial offset"), LOCTEXT("Int64Type", "int64"), FText::FromString(FString::Printf(TEXT("0x%llX"), Export.SerialOffset)), FieldOffset, 8));
+
+			if (Export.SerialSize > 0)
+			{
+				if (Document->IsValidExportPayload(Export))
+				{
+					AddChild(ExportNode,
+						MakeRegionNode(LOCTEXT("ExportSerializedPayloadField", "Serialized Payload"), LOCTEXT("SerializedUObjectPayload", "Serialized UObject data"), Export.SerialOffset,
+							Export.SerialSize, EAssetPackageNodeKind::ByteRange));
+				}
+				else
+				{
+					AddChild(ExportNode,
+						MakeFieldNode(LOCTEXT("InvalidExportPayload", "Payload error"), LOCTEXT("ErrorType", "Error"), LOCTEXT("InvalidExportPayloadValue", "Serial offset/size is outside the file")));
+				}
+			}
+
+			if (Export.UndecodedTailSize > 0)
+			{
+				AddChild(ExportNode,
+					MakeRegionNode(LOCTEXT("ExportVersionTail", "Version-dependent tail"), LOCTEXT("ExportVersionTailType", "Undecoded FObjectExport data"), Export.UndecodedTailOffset,
+						Export.UndecodedTailSize, EAssetPackageNodeKind::ByteRange));
+			}
+
+			AddChild(ExportMapNode, ExportNode);
+		}
+	}
+	else
+	{
+		AddChild(ExportMapNode, MakeFieldNode(LOCTEXT("ExportDecodeError", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->ExportMapError));
+	}
+}
+
 void SAssetSerializationInspector::BuildPackageTree()
 {
 	RootNodes.Reset();
@@ -767,162 +929,17 @@ void SAssetSerializationInspector::BuildPackageTree()
 
 	if (NameMapNode.IsValid())
 	{
-		if (Document->bHasDecodedNameMap)
-		{
-			for (const FAssetPackageNameEntry& Entry : Document->NameMap)
-			{
-				TSharedRef<FAssetPackageTreeNode> EntryNode = MakeRegionNode(FText::Format(LOCTEXT("NameEntryLabel", "[{0}] {1}"), FText::AsNumber(Entry.Index), FText::FromString(Entry.Name)),
-					LOCTEXT("NameEntryType", "Serialized package name"), Entry.Offset, Entry.Size, EAssetPackageNodeKind::NameEntry);
-
-				EntryNode->ValueText = FText::FromString(Entry.Name);
-
-				EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameIndexField", "Index"), LOCTEXT("Int32Type", "int32"), FText::AsNumber(Entry.Index)));
-
-				EntryNode->Children.Add(MakeFieldNode(LOCTEXT("NameStringField", "String"), LOCTEXT("FStringType", "FString"), FText::FromString(Entry.Name)));
-
-				EntryNode->Children.Add(MakeFieldNode(
-					LOCTEXT("NonCaseHashField", "Non-case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.NonCasePreservingHash))));
-
-				EntryNode->Children.Add(
-					MakeFieldNode(LOCTEXT("CaseHashField", "Case-preserving hash"), LOCTEXT("Uint16Type", "uint16"), FText::FromString(FString::Printf(TEXT("0x%04X"), Entry.CasePreservingHash))));
-
-				NameMapNode->Children.Add(EntryNode);
-			}
-		}
-		else
-		{
-			TSharedRef<FAssetPackageTreeNode> ErrorNode = MakeFieldNode(LOCTEXT("NameMapDecodeErrorNode", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->NameMapError);
-
-			NameMapNode->Children.Add(ErrorNode);
-		}
+		PopulateNameMap(NameMapNode.ToSharedRef());
 	}
 
 	if (ImportMapNode.IsValid())
 	{
-		if (Document->bHasDecodedImportMap)
-		{
-			for (const FAssetPackageImportEntry& Import : Document->ImportMap)
-			{
-				const FString ObjectName = Document->ResolveNameReference(Import.ObjectName);
-				const FString ResolvedPath = Document->ResolveImportPath(Import.Index);
-				const FString ClassPackage = Document->ResolveNameReference(Import.ClassPackage);
-				const FString ClassName = Document->ResolveNameReference(Import.ClassName);
-
-				TSharedRef<FAssetPackageTreeNode> ImportNode = MakeRegionNode(FText::Format(LOCTEXT("ImportEntryLabel", "[{0}] {1}"), FText::AsNumber(Import.Index), FText::FromString(ResolvedPath)),
-					LOCTEXT("ImportEntryType", "FObjectImport"), Import.Offset, Import.Size, EAssetPackageNodeKind::Import);
-
-				ImportNodesByIndex.Add(Import.Index, ImportNode);
-
-				ImportNode->ValueText = FText::FromString(ResolvedPath);
-				ImportNode->Children.Insert(MakeFieldNode(LOCTEXT("ImportResolvedPathField", "Resolved path"), LOCTEXT("ObjectPathType", "Object path"), FText::FromString(ResolvedPath)), 0);
-
-				int64 FieldOffset = Import.Offset;
-
-				AddChild(ImportNode,
-					MakeValueRegionNode(LOCTEXT("ImportClassPackageField", "Class package"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassPackage), FieldOffset, 8));
-
-				FieldOffset += 8;
-
-				AddChild(
-					ImportNode, MakeValueRegionNode(LOCTEXT("ImportClassNameField", "Class name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ClassName), FieldOffset, 8));
-
-				FieldOffset += 8;
-
-				AddChild(ImportNode, MakePackageIndexNode(LOCTEXT("ImportOuterIndexField", "Outer index"), Import.OuterIndex, FieldOffset, 4));
-
-				FieldOffset += 4;
-
-				AddChild(ImportNode,
-					MakeValueRegionNode(LOCTEXT("ImportObjectNameField", "Object name"), LOCTEXT("PackageNameReferenceType", "Package FName"), FText::FromString(ObjectName), FieldOffset, 8));
-
-				if (Import.UndecodedTailSize > 0)
-				{
-					AddChild(ImportNode,
-						MakeRegionNode(LOCTEXT("ImportEntryTail", "Version-dependent tail"), LOCTEXT("ImportEntryTailType", "Undecoded FObjectImport data"), Import.UndecodedTailOffset,
-							Import.UndecodedTailSize));
-				}
-
-				AddChild(ImportMapNode.ToSharedRef(), ImportNode);
-			}
-		}
-		else
-		{
-			AddChild(ImportMapNode.ToSharedRef(), MakeFieldNode(LOCTEXT("ImportMapDecodeError", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->ImportMapError));
-		}
+		PopulateImportMap(ImportMapNode.ToSharedRef());
 	}
 
 	if (ExportMapNode.IsValid())
 	{
-		if (Document->bHasDecodedExportMap)
-		{
-			for (const FAssetPackageExportEntry& Export : Document->ExportMap)
-			{
-				const FString ResolvedPath = Document->ResolveExportPath(Export.Index);
-
-				const FString ClassIndex = Document->DescribePackageIndexDetailed(Export.ClassIndex);
-				const FString SuperIndex = Document->DescribePackageIndexDetailed(Export.SuperIndex);
-				const FString TemplateIndex = Document->DescribePackageIndexDetailed(Export.TemplateIndex);
-				const FString OuterIndex = Document->DescribePackageIndexDetailed(Export.OuterIndex);
-
-				TSharedRef<FAssetPackageTreeNode> ExportNode = MakeRegionNode(FText::Format(LOCTEXT("ExportEntryLabel", "[{0}] {1}"), FText::AsNumber(Export.Index), FText::FromString(ResolvedPath)),
-					LOCTEXT("ExportEntryType", "FObjectExport"), Export.Offset, Export.Size, EAssetPackageNodeKind::Export);
-				ExportNode->ValueText = FText::FromString(ResolvedPath);
-
-				ExportNodesByIndex.Add(Export.Index, ExportNode);
-
-				int64 FieldOffset = Export.Offset;
-				AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportClassIndexField", "Class index"), Export.ClassIndex, FieldOffset, 4));
-				FieldOffset += 4;
-				AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportSuperIndexField", "Super index"), Export.SuperIndex, FieldOffset, 4));
-				FieldOffset += 4;
-				AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportTemplateIndexField", "Template index"), Export.TemplateIndex, FieldOffset, 4));
-				FieldOffset += 4;
-				AddChild(ExportNode, MakePackageIndexNode(LOCTEXT("ExportOuterIndexField", "Outer index"), Export.OuterIndex, FieldOffset, 4));
-				FieldOffset += 4;
-				AddChild(ExportNode,
-					MakeValueRegionNode(LOCTEXT("ExportObjectNameField", "Object name"), LOCTEXT("PackageFNameType", "Package FName"),
-						FText::FromString(Document->ResolveNameReference(Export.ObjectName)), FieldOffset, 8));
-				FieldOffset += 8;
-				AddChild(ExportNode,
-					MakeValueRegionNode(LOCTEXT("ExportObjectFlagsField", "Object flags"), LOCTEXT("EObjectFlagsType", "EObjectFlags"),
-						FText::FromString(FString::Printf(TEXT("0x%08X"), Export.ObjectFlags)), FieldOffset, 4));
-				FieldOffset += 4;
-				AddChild(ExportNode, MakeValueRegionNode(LOCTEXT("ExportSerialSizeField", "Serial size"), LOCTEXT("Int64Type", "int64"), FText::AsNumber(Export.SerialSize), FieldOffset, 8));
-				FieldOffset += 8;
-				AddChild(ExportNode,
-					MakeValueRegionNode(
-						LOCTEXT("ExportSerialOffsetField", "Serial offset"), LOCTEXT("Int64Type", "int64"), FText::FromString(FString::Printf(TEXT("0x%llX"), Export.SerialOffset)), FieldOffset, 8));
-
-				if (Export.SerialSize > 0)
-				{
-					if (Document->IsValidExportPayload(Export))
-					{
-						AddChild(ExportNode,
-							MakeRegionNode(LOCTEXT("ExportSerializedPayloadField", "Serialized Payload"), LOCTEXT("SerializedUObjectPayload", "Serialized UObject data"), Export.SerialOffset,
-								Export.SerialSize, EAssetPackageNodeKind::ByteRange));
-					}
-					else
-					{
-						AddChild(ExportNode,
-							MakeFieldNode(
-								LOCTEXT("InvalidExportPayload", "Payload error"), LOCTEXT("ErrorType", "Error"), LOCTEXT("InvalidExportPayloadValue", "Serial offset/size is outside the file")));
-					}
-				}
-
-				if (Export.UndecodedTailSize > 0)
-				{
-					AddChild(ExportNode,
-						MakeRegionNode(LOCTEXT("ExportVersionTail", "Version-dependent tail"), LOCTEXT("ExportVersionTailType", "Undecoded FObjectExport data"), Export.UndecodedTailOffset,
-							Export.UndecodedTailSize, EAssetPackageNodeKind::ByteRange));
-				}
-
-				AddChild(ExportMapNode.ToSharedRef(), ExportNode);
-			}
-		}
-		else
-		{
-			AddChild(ExportMapNode.ToSharedRef(), MakeFieldNode(LOCTEXT("ExportDecodeError", "Decode error"), LOCTEXT("ErrorType", "Error"), Document->ExportMapError));
-		}
+		PopulateExportMap(ExportMapNode.ToSharedRef());
 	}
 
 	if (Summary.TotalHeaderSize > 0 && Summary.TotalHeaderSize < Document->GetFileSize())

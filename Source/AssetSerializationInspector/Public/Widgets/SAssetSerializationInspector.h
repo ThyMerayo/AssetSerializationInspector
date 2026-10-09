@@ -115,6 +115,9 @@ private:
 
 	TSharedRef<FAssetPackageTreeNode> MakePackageIndexNode(const FText& Name, const FAssetPackageIndexReference& Reference, const int64 Offset, const int64 Size) const;
 	void BuildPackageTree();
+	void PopulateNameMap(const TSharedRef<FAssetPackageTreeNode>& NameMapNode);
+	void PopulateImportMap(const TSharedRef<FAssetPackageTreeNode>& ImportMapNode);
+	void PopulateExportMap(const TSharedRef<FAssetPackageTreeNode>& ExportMapNode);
 
 	TSharedRef<FAssetPackageTreeNode> MakeRegionNode(const FText& Name, const FText& Type, int64 Offset, int64 Size, EAssetPackageNodeKind Kind = EAssetPackageNodeKind::ByteRange) const;
 	TSharedRef<FAssetPackageTreeNode> MakeFieldNode(const FText& Name, const FText& Type, const FText& Value) const;
@@ -140,7 +143,6 @@ private:
 
 	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ImportNodesByIndex;
 	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ExportNodesByIndex;
-
 
 	FText StatusText;
 };
