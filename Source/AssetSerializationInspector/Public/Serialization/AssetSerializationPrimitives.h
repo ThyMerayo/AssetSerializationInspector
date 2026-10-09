@@ -13,4 +13,7 @@ namespace AssetSerializationPrimitives
 	 * ReadSerializedString the terminator is optional, and trailing NULs are dropped, as the engine does for soft object path sub paths.
 	 */
 	bool ReadUtf8SerializedString(FAssetPackageMemoryReader& Reader, FString& OutString, FText& OutError);
+
+	/** What follows the last Delimiter of Text ("/Script/Engine.Actor" and '.' give "Actor"); Text itself when it has none. */
+	FString TailAfterLast(const FString& Text, TCHAR Delimiter);
 } // namespace AssetSerializationPrimitives

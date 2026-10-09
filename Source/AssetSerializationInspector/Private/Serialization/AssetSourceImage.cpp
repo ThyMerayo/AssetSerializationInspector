@@ -12,6 +12,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetEditorPayload.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
@@ -89,42 +90,32 @@ namespace
 	/** A decoded property of the Source struct of the texture ("SizeX", "Format"...), as text. */
 	bool ReadSourceField(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const FAssetSerializationTrace& Trace, const TCHAR* Field, FString& Out)
 	{
-		if (!Trace.Root.IsValid())
+		const FAssetSerializationTraceNode* Node = Trace.FindProperty(TEXT("Source"));
+		if (Node == nullptr)
 		{
 			return false;
 		}
 
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace.Root->Children)
+		const FAssetDecodedPropertyValue Value = FAssetPropertyValueDecoder::Decode(Document, *Node, Export.SerialOffset);
+		if (!Value.IsSuccess())
 		{
-			if (!Node.IsValid() || Node->Kind != EAssetSerializationTraceKind::Property || Node->Name != TEXT("Source"))
-			{
-				continue;
-			}
-
-			const FAssetDecodedPropertyValue Value = FAssetPropertyValueDecoder::Decode(Document, *Node, Export.SerialOffset);
-			if (!Value.IsSuccess())
-			{
-				return false;
-			}
-
-			const FAssetDecodedPropertyValue* Child = Value.Children.FindByPredicate([Field](const FAssetDecodedPropertyValue& Candidate) { return Candidate.Name == Field; });
-			if (Child == nullptr || !Child->IsSuccess())
-			{
-				return false;
-			}
-
-			Out = Child->Kind == EAssetDecodedValueKind::Scalar ? Child->Value : FAssetPropertyValueDecoder::FormatForDisplay(*Child);
-			return true;
+			return false;
 		}
 
-		return false;
+		const FAssetDecodedPropertyValue* Child = Value.Children.FindByPredicate([Field](const FAssetDecodedPropertyValue& Candidate) { return Candidate.Name == Field; });
+		if (Child == nullptr || !Child->IsSuccess())
+		{
+			return false;
+		}
+
+		Out = Child->Kind == EAssetDecodedValueKind::Scalar ? Child->Value : FAssetPropertyValueDecoder::FormatForDisplay(*Child);
+		return true;
 	}
 
 	/** An enum value as its short name: "ETextureSourceFormat::TSF_BGRA8" and "TSF_BGRA8" are both "TSF_BGRA8". */
 	FString SourceEnumName(const FString& Value)
 	{
-		int32 Index = INDEX_NONE;
-		return Value.FindLastChar(TEXT(':'), Index) ? Value.Mid(Index + 1) : Value;
+		return AssetSerializationPrimitives::TailAfterLast(Value, TEXT(':'));
 	}
 } // namespace
 

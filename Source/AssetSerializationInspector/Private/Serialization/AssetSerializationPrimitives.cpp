@@ -173,3 +173,9 @@ bool AssetSerializationPrimitives::ReadUtf8SerializedString(FAssetPackageMemoryR
 
 	return true;
 }
+
+FString AssetSerializationPrimitives::TailAfterLast(const FString& Text, const TCHAR Delimiter)
+{
+	int32 Index = INDEX_NONE;
+	return Text.FindLastChar(Delimiter, Index) ? Text.Mid(Index + 1) : Text;
+}

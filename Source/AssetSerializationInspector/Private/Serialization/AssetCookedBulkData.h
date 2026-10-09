@@ -40,6 +40,9 @@ namespace AssetCookedBulkData
 	/** A hash of bytes, short enough to read: what tells that they changed without saying what they hold. */
 	FString HashBytes(const uint8* Data, int64 Size);
 
+	/** A hash of a range of the document; empty when the range is empty or is not in the document. */
+	FString HashDocumentRange(const FAssetPackageDocument& Document, int64 Offset, int64 Size);
+
 	/** A hash of a range of the sidecar file of the package (Extension), when the file is next to the package; empty when it is not. */
 	FString HashSidecarRange(const FAssetPackageDocument& Document, const TCHAR* Extension, int64 Offset, int64 Size);
 

@@ -549,7 +549,7 @@ bool AssetBulkDataExport::Decode(const FAssetPackageDocument& Document, const FA
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

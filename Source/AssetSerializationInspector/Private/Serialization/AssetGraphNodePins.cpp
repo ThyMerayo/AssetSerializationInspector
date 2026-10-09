@@ -13,6 +13,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
@@ -406,9 +407,7 @@ FString FAssetGraphPinNames::Find(const FGuid& PinId) const
 			}
 
 			const FString Node = Document.ResolveExportPath(Export.Index);
-			int32 Slash = INDEX_NONE;
-			Node.FindLastChar(TEXT('.'), Slash);
-			const FString NodeName = Slash == INDEX_NONE ? Node : Node.Mid(Slash + 1);
+			const FString NodeName = AssetSerializationPrimitives::TailAfterLast(Node, TEXT('.'));
 			for (const FAssetGraphPin& Pin : Data.Pins)
 			{
 				Names.Add(Pin.PinId, FString::Printf(TEXT("%s.%s"), *NodeName, *Pin.Name));
@@ -480,7 +479,7 @@ bool AssetGraphNodePins::Decode(const FAssetPackageDocument& Document, const FAs
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

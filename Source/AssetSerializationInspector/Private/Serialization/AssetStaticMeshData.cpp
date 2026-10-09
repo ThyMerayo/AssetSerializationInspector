@@ -34,24 +34,17 @@ namespace
 			return INDEX_NONE;
 		}
 
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		// A mesh without the property has no source model.
+		const FAssetSerializationTraceNode* Node = Trace->FindProperty(TEXT("SourceModels"));
+		if (Node == nullptr || Node->bIsZeroValue)
 		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Property && Node->Name == TEXT("SourceModels"))
-			{
-				// The elements are structs whose layout is the engine's own, so only their count is read: the first value of the array.
-				if (Node->bIsZeroValue)
-				{
-					return 0;
-				}
-
-				FNativeReader Reader(Document, Export.SerialOffset + Node->Offset, Node->Size);
-				const int32 Count = Reader.Read<int32>();
-				return Reader.Ok() && Count >= 0 ? Count : INDEX_NONE;
-			}
+			return 0;
 		}
 
-		// A mesh without the property has no source model.
-		return 0;
+		// The elements are structs whose layout is the engine's own, so only their count is read: the first value of the array.
+		FNativeReader Reader(Document, Export.SerialOffset + Node->Offset, Node->Size);
+		const int32 Count = Reader.Read<int32>();
+		return Reader.Ok() && Count >= 0 ? Count : INDEX_NONE;
 	}
 
 	/**
@@ -623,7 +616,7 @@ namespace
 		}
 		else if (Reader.Remaining() != 0)
 		{
-			Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+			Out.Error = Reader.TrailingBytesError();
 		}
 		else
 		{
@@ -967,7 +960,7 @@ bool AssetStaticMeshData::Decode(
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

@@ -47,7 +47,6 @@ struct FAssetSerializationTraceNode
 
 	int64 EndOffset() const { return Offset + Size; }
 
-
 	bool Overlaps(const int64 InOffset, const int64 InSize) const
 	{
 		if (InSize <= 0 || Size <= 0)
@@ -70,6 +69,25 @@ struct FAssetSerializationTrace
 	int64 PayloadSize = 0;
 
 	TSharedPtr<FAssetSerializationTraceNode> Root;
+
+	/** The tagged property of the export with this name (and this index, for a fixed array), or null when it has none. */
+	const FAssetSerializationTraceNode* FindProperty(const FString& PropertyName, const int32 ArrayIndex = 0) const
+	{
+		if (!Root.IsValid())
+		{
+			return nullptr;
+		}
+
+		for (const TSharedPtr<FAssetSerializationTraceNode>& Child : Root->Children)
+		{
+			if (Child.IsValid() && Child->Kind == EAssetSerializationTraceKind::Property && Child->ArrayIndex == ArrayIndex && Child->Name == PropertyName)
+			{
+				return Child.Get();
+			}
+		}
+
+		return nullptr;
+	}
 };
 
 struct FAssetPackageTraceCollection
