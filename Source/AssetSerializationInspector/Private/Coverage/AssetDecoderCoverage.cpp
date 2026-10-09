@@ -54,6 +54,40 @@ namespace
 	{
 		return A + TEXT("\n") + B;
 	}
+	/** Counts one native range that a reader could not read to its last byte, under its export class and the reason (with the digits taken out). */
+	FAssetDecoderCoverageIssue& RecordIssue(TMap<FString, FAssetDecoderCoverageIssue>& Issues, const FString& ExportClass, const FString& Error, const int64 Bytes, const FString& RelativePath)
+	{
+		const FString Message = AssetDecoderCoverage::NormalizeMessage(Error);
+		FAssetDecoderCoverageIssue& Issue = Issues.FindOrAdd(CoverageKey(ExportClass, Message));
+		Issue.TypeName = ExportClass;
+		Issue.Message = Message;
+		++Issue.Occurrences;
+		Issue.Bytes += Bytes;
+		AddExample(Issue.Examples, RelativePath);
+		return Issue;
+	}
+
+	/** The issues of a reader as a list, the most widespread first. */
+	void SortIssues(const TMap<FString, FAssetDecoderCoverageIssue>& Issues, TArray<FAssetDecoderCoverageIssue>& Out)
+	{
+		Issues.GenerateValueArray(Out);
+		Out.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	}
+
+	/** A section of the text report: a heading, then each kind of issue with its reason and examples. */
+	void AddIssueSection(TArray<FString>& Lines, const FString& Heading, const TCHAR* Noun, const TArray<FAssetDecoderCoverageIssue>& Issues, const int32 MaximumRows)
+	{
+		Lines.Add(FString());
+		Lines.Add(Heading);
+
+		for (int32 Index = 0; Index < Issues.Num() && Index < MaximumRows; ++Index)
+		{
+			const FAssetDecoderCoverageIssue& Issue = Issues[Index];
+			Lines.Add(FString::Printf(TEXT("  %d %s, %lld bytes: %s"), Issue.Occurrences, Noun, Issue.Bytes, *Issue.TypeName));
+			Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
+			Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
+		}
+	}
 } // namespace
 
 FString AssetDecoderCoverage::NormalizeMessage(const FString& Message)
@@ -259,24 +293,12 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 					else
 					{
 						// The start was read but not the imported model: say why, so the layouts that are not read can be found.
-						const FString Message = NormalizeMessage(SkeletalMeshData.ModelError);
-						FAssetDecoderCoverageIssue& Issue = SkeletalMeshIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-						Issue.TypeName = ExportClass;
-						Issue.Message = Message;
-						++Issue.Occurrences;
-						Issue.Bytes += LastNative->Size;
-						AddExample(Issue.Examples, RelativePath);
+						RecordIssue(SkeletalMeshIssues, ExportClass, SkeletalMeshData.ModelError, LastNative->Size, RelativePath);
 					}
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(SkeletalMeshData.Error);
-					FAssetDecoderCoverageIssue& Issue = SkeletalMeshIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(SkeletalMeshIssues, ExportClass, SkeletalMeshData.Error, LastNative->Size, RelativePath);
 				}
 			}
 
@@ -291,13 +313,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(MorphTargetData.Error);
-					FAssetDecoderCoverageIssue& Issue = MorphTargetIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(MorphTargetIssues, ExportClass, MorphTargetData.Error, LastNative->Size, RelativePath);
 				}
 			}
 
@@ -312,13 +328,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(DataTableData.Error);
-					FAssetDecoderCoverageIssue& Issue = DataTableIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(DataTableIssues, ExportClass, DataTableData.Error, LastNative->Size, RelativePath);
 				}
 			}
 
@@ -333,13 +343,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(StaticMeshData.Error);
-					FAssetDecoderCoverageIssue& Issue = StaticMeshIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(StaticMeshIssues, ExportClass, StaticMeshData.Error, LastNative->Size, RelativePath);
 				}
 			}
 
@@ -354,13 +358,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(BulkData.Error);
-					FAssetDecoderCoverageIssue& Issue = BulkDataIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(BulkDataIssues, ExportClass, BulkData.Error, LastNative->Size, RelativePath);
 				}
 			}
 
@@ -377,13 +375,7 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(FunctionData.Bytecode.Error);
-					FAssetDecoderCoverageIssue& Issue = BytecodeIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += FunctionData.BytecodeStorageSize;
-					AddExample(Issue.Examples, RelativePath);
+					RecordIssue(BytecodeIssues, ExportClass, FunctionData.Bytecode.Error, FunctionData.BytecodeStorageSize, RelativePath);
 				}
 			}
 
@@ -399,15 +391,9 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 				}
 				else
 				{
-					const FString Message = NormalizeMessage(NodePins.Error);
-					FAssetDecoderCoverageIssue& Issue = GraphNodeIssues.FindOrAdd(CoverageKey(ExportClass, Message));
-					Issue.TypeName = ExportClass;
-					Issue.Message = Message;
-					++Issue.Occurrences;
-					Issue.Bytes += LastNative->Size;
-					AddExample(Issue.Examples, RelativePath);
+					FAssetDecoderCoverageIssue& Issue = RecordIssue(GraphNodeIssues, ExportClass, NodePins.Error, LastNative->Size, RelativePath);
 
-					const FString NodeKey = CoverageKey(ExportClass, Message);
+					const FString NodeKey = CoverageKey(Issue.TypeName, Issue.Message);
 					if (!GraphNodesInAsset.Contains(NodeKey))
 					{
 						GraphNodesInAsset.Add(NodeKey);
@@ -418,24 +404,17 @@ FAssetDecoderCoverageResult AssetDecoderCoverage::Run(const FString& Folder, TFu
 		}
 	}
 
-	MorphTargetIssues.GenerateValueArray(Result.MorphTargetIssues);
-	Result.MorphTargetIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
-	DataTableIssues.GenerateValueArray(Result.DataTableIssues);
-	Result.DataTableIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
-	SkeletalMeshIssues.GenerateValueArray(Result.SkeletalMeshIssues);
-	Result.SkeletalMeshIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	SortIssues(MorphTargetIssues, Result.MorphTargetIssues);
+	SortIssues(DataTableIssues, Result.DataTableIssues);
+	SortIssues(SkeletalMeshIssues, Result.SkeletalMeshIssues);
 
-	StaticMeshIssues.GenerateValueArray(Result.StaticMeshIssues);
-	Result.StaticMeshIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	SortIssues(StaticMeshIssues, Result.StaticMeshIssues);
 
-	BulkDataIssues.GenerateValueArray(Result.BulkDataIssues);
-	Result.BulkDataIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	SortIssues(BulkDataIssues, Result.BulkDataIssues);
 
-	BytecodeIssues.GenerateValueArray(Result.BytecodeIssues);
-	Result.BytecodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	SortIssues(BytecodeIssues, Result.BytecodeIssues);
 
-	GraphNodeIssues.GenerateValueArray(Result.GraphNodeIssues);
-	Result.GraphNodeIssues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) { return Left.Occurrences > Right.Occurrences; });
+	SortIssues(GraphNodeIssues, Result.GraphNodeIssues);
 
 	Issues.GenerateValueArray(Result.Issues);
 	Result.Issues.Sort([](const FAssetDecoderCoverageIssue& Left, const FAssetDecoderCoverageIssue& Right) {
@@ -499,74 +478,32 @@ FString AssetDecoderCoverage::ToText(const FAssetDecoderCoverageResult& Result, 
 		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
 	}
 
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Skeletal meshes: %d found, the start of their data read for %d, the whole of it (imported model included) for %d; %d kinds that did not"),
-		Result.SkeletalMeshesScanned, Result.SkeletalMeshesRead, Result.SkeletalMeshesWholeRead, Result.SkeletalMeshIssues.Num()));
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Skeletal meshes: %d found, the start of their data read for %d, the whole of it (imported model included) for %d; %d kinds that did not"), Result.SkeletalMeshesScanned,
+			Result.SkeletalMeshesRead, Result.SkeletalMeshesWholeRead, Result.SkeletalMeshIssues.Num()),
+		TEXT("meshes"), Result.SkeletalMeshIssues, MaximumRows);
 
-	for (int32 Index = 0; Index < Result.SkeletalMeshIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.SkeletalMeshIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d meshes, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Morph targets: %d found, %d read to their last byte; %d kinds that did not"), Result.MorphTargetsScanned, Result.MorphTargetsRead, Result.MorphTargetIssues.Num()),
+		TEXT("morph targets"), Result.MorphTargetIssues, MaximumRows);
 
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Morph targets: %d found, %d read to their last byte; %d kinds that did not"), Result.MorphTargetsScanned, Result.MorphTargetsRead, Result.MorphTargetIssues.Num()));
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Data tables: %d found, %d read to their last byte; %d kinds that did not"), Result.DataTablesScanned, Result.DataTablesRead, Result.DataTableIssues.Num()),
+		TEXT("data tables"), Result.DataTableIssues, MaximumRows);
 
-	for (int32 Index = 0; Index < Result.MorphTargetIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.MorphTargetIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d morph targets, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Static meshes: %d found, %d read to their last byte; %d kinds that did not"), Result.StaticMeshesScanned, Result.StaticMeshesRead, Result.StaticMeshIssues.Num()),
+		TEXT("meshes"), Result.StaticMeshIssues, MaximumRows);
 
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Data tables: %d found, %d read to their last byte; %d kinds that did not"), Result.DataTablesScanned, Result.DataTablesRead, Result.DataTableIssues.Num()));
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Textures and mesh descriptions: %d found, %d read to their last byte; %d kinds that did not"), Result.BulkDataExportsScanned, Result.BulkDataExportsRead,
+			Result.BulkDataIssues.Num()),
+		TEXT("exports"), Result.BulkDataIssues, MaximumRows);
 
-	for (int32 Index = 0; Index < Result.DataTableIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.DataTableIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d data tables, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
-
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Static meshes: %d found, %d read to their last byte; %d kinds that did not"), Result.StaticMeshesScanned, Result.StaticMeshesRead, Result.StaticMeshIssues.Num()));
-
-	for (int32 Index = 0; Index < Result.StaticMeshIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.StaticMeshIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d meshes, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
-
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(
-		TEXT("Textures and mesh descriptions: %d found, %d read to their last byte; %d kinds that did not"), Result.BulkDataExportsScanned, Result.BulkDataExportsRead, Result.BulkDataIssues.Num()));
-
-	for (int32 Index = 0; Index < Result.BulkDataIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.BulkDataIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d exports, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
-
-	Lines.Add(FString());
-	Lines.Add(FString::Printf(TEXT("Bytecode: %d functions found, %d disassembled completely (%lld statements); %d kinds that did not"), Result.BytecodeFunctionsScanned, Result.BytecodeFunctionsRead,
-		Result.BytecodeStatementsRead, Result.BytecodeIssues.Num()));
-
-	for (int32 Index = 0; Index < Result.BytecodeIssues.Num() && Index < MaximumRows; ++Index)
-	{
-		const FAssetDecoderCoverageIssue& Issue = Result.BytecodeIssues[Index];
-		Lines.Add(FString::Printf(TEXT("  %d functions, %lld bytes: %s"), Issue.Occurrences, Issue.Bytes, *Issue.TypeName));
-		Lines.Add(FString::Printf(TEXT("      %s"), *Issue.Message));
-		Lines.Add(FString::Printf(TEXT("      e.g. %s"), *FString::Join(Issue.Examples, TEXT(", "))));
-	}
+	AddIssueSection(Lines,
+		FString::Printf(TEXT("Bytecode: %d functions found, %d disassembled completely (%lld statements); %d kinds that did not"), Result.BytecodeFunctionsScanned, Result.BytecodeFunctionsRead,
+			Result.BytecodeStatementsRead, Result.BytecodeIssues.Num()),
+		TEXT("functions"), Result.BytecodeIssues, MaximumRows);
 
 	Lines.Add(FString());
 	Lines.Add(FString::Printf(TEXT("Graph nodes: %d found, %d read to their last byte (%lld pins); %d kinds that did not"), Result.GraphNodesScanned, Result.GraphNodesRead, Result.GraphPinsRead,
@@ -605,6 +542,22 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 		for (const FString& Example : Examples)
 		{
 			Writer->WriteValue(Example);
+		}
+		Writer->WriteArrayEnd();
+	};
+
+	// The reasons a reader did not read its native ranges to the last byte.
+	const auto WriteIssues = [&Writer, &WriteExamples](const TArray<FAssetDecoderCoverageIssue>& Issues) {
+		Writer->WriteArrayStart(TEXT("issues"));
+		for (const FAssetDecoderCoverageIssue& Issue : Issues)
+		{
+			Writer->WriteObjectStart();
+			Writer->WriteValue(TEXT("class"), Issue.TypeName);
+			Writer->WriteValue(TEXT("message"), Issue.Message);
+			Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
+			Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
+			WriteExamples(Issue.Examples);
+			Writer->WriteObjectEnd();
 		}
 		Writer->WriteArrayEnd();
 	};
@@ -655,104 +608,38 @@ FString AssetDecoderCoverage::ToJson(const FAssetDecoderCoverageResult& Result)
 	Writer->WriteObjectStart(TEXT("skeletalMeshes"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.SkeletalMeshesScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.SkeletalMeshesRead));
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.SkeletalMeshIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.SkeletalMeshIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("morphTargets"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.MorphTargetsScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.MorphTargetsRead));
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.MorphTargetIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.MorphTargetIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("dataTables"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.DataTablesScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.DataTablesRead));
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.DataTableIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.DataTableIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("staticMeshes"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.StaticMeshesScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.StaticMeshesRead));
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.StaticMeshIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.StaticMeshIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("bulkDataExports"));
 	Writer->WriteValue(TEXT("scanned"), static_cast<int64>(Result.BulkDataExportsScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.BulkDataExportsRead));
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.BulkDataIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.BulkDataIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("bytecode"));
 	Writer->WriteValue(TEXT("functions"), static_cast<int64>(Result.BytecodeFunctionsScanned));
 	Writer->WriteValue(TEXT("read"), static_cast<int64>(Result.BytecodeFunctionsRead));
 	Writer->WriteValue(TEXT("statementsRead"), Result.BytecodeStatementsRead);
-	Writer->WriteArrayStart(TEXT("issues"));
-	for (const FAssetDecoderCoverageIssue& Issue : Result.BytecodeIssues)
-	{
-		Writer->WriteObjectStart();
-		Writer->WriteValue(TEXT("class"), Issue.TypeName);
-		Writer->WriteValue(TEXT("message"), Issue.Message);
-		Writer->WriteValue(TEXT("occurrences"), static_cast<int64>(Issue.Occurrences));
-		Writer->WriteValue(TEXT("bytes"), Issue.Bytes);
-		WriteExamples(Issue.Examples);
-		Writer->WriteObjectEnd();
-	}
-	Writer->WriteArrayEnd();
+	WriteIssues(Result.BytecodeIssues);
 	Writer->WriteObjectEnd();
 
 	Writer->WriteObjectStart(TEXT("graphNodes"));
