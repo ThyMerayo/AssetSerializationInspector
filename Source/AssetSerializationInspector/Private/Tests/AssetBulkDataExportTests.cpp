@@ -772,13 +772,13 @@ bool FAssetBulkDataExport_DecodesTheBlocksOfTheBcFormats::RunTest(const FString&
 
 		// A format without a codec is still compared by blocks.
 		FAssetBlockFormat Bc7;
-		AssetMipBlocks::FindBlockFormat(TEXT("PF_BC6H"), Bc7);
+		AssetMipBlocks::FindBlockFormat(TEXT("PF_ASTC_4x4"), Bc7);
 		TArray<uint8> Seven;
 		Seven.Init(1, 16);
 		TArray<uint8> Changed = Seven;
 		Changed[3] = 2;
 		const FAssetMipBlockDiff SevenDiff = AssetMipBlocks::CompareBytes(Seven.GetData(), Changed.GetData(), 16, 4, 4, Bc7);
-		TestTrue(TEXT("BC6H is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
+		TestTrue(TEXT("ASTC is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
 	}
 
 	return true;
@@ -823,6 +823,35 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 		TestTrue(TEXT("A block with no mode is transparent black"), Pixels[7].Equals(FVector4f(0, 0, 0, 0)));
 	}
 
+	// BC6H: a block of mode 11 (5 mode bits, six endpoint values of 10 bits and 4 bit indices) with both endpoints the same is a flat color.
+	{
+		uint8 Block[16] = {};
+		int32 Position = 0;
+		const auto Put = [&Block, &Position](const uint32 Value, const int32 Count) {
+			for (int32 Bit = 0; Bit < Count; ++Bit, ++Position)
+			{
+				Block[Position >> 3] |= ((Value >> Bit) & 1) << (Position & 7);
+			}
+		};
+		Put(3, 5);		// mode 11
+		Put(0x200, 10); // red of the first endpoint
+		Put(0x100, 10); // green
+		Put(0x080, 10); // blue
+		Put(0x200, 10); // the same three for the second endpoint
+		Put(0x100, 10);
+		Put(0x080, 10);
+		Put(0, 63); // all the indices 0
+
+		FVector4f Pixels[16];
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC6H, Block, Pixels);
+		// 0x200 of 10 bits is stretched to 0x8020, scaled by 31/64 to 15887 and read as the half float 1.5146; 0x100 and 0x80 likewise give 0.006893 and 0.000462.
+		TestTrue(TEXT("A flat HDR color, above 1"), Pixels[0].Equals(FVector4f(1.51465f, 0.0068935f, 0.00046158f, 1.0f), 1e-4f) && Pixels[15].Equals(Pixels[0], 1e-6f));
+
+		uint8 Reserved[16] = { 0x13 }; // the reserved mode 10011
+		AssetBlockDecoder::DecodeBlock(EAssetBlockCodec::BC6H, Reserved, Pixels);
+		TestTrue(TEXT("A reserved mode is opaque black"), Pixels[3].Equals(FVector4f(0, 0, 0, 1)));
+	}
+
 	// The real thing: textures compressed by the engine's own encoder from a smooth image, decoded and compared with the image. The engine
 	// only builds the data of a texture when it can render, which a run without a renderer cannot.
 	if (!FApp::CanEverRender())
@@ -842,6 +871,9 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 		/** 0: gradients. 1: two colors in diagonal stripes, 2: three colors, 4: a ramp of sixteen steps in the four channels, 5: two halves of every block that each have a ramp. The last ones have
 		 * blocks that BC7 stores with its subsets or its larger modes. */
 		int32 Pattern = 0;
+
+		/** The image is half floats with values above 1 (HDR), compared by relative error. */
+		bool bHdr = false;
 	};
 	const FCase Cases[] = {
 		{ TEXT("BC7 with alpha"), TC_BC7, true, TEXT("PF_BC7"), 0.02 },
@@ -854,6 +886,10 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 		{ TEXT("BC7 ramp in four channels"), TC_BC7, true, TEXT("PF_BC7"), 0.02, 4 },
 		{ TEXT("BC7 two regions with ramps"), TC_BC7, true, TEXT("PF_BC7"), 0.03, 5 },
 		{ TEXT("BC7 two regions with ramps, opaque"), TC_BC7, false, TEXT("PF_BC7"), 0.03, 5 },
+		{ TEXT("BC6H gradients"), TC_HDR_Compressed, false, TEXT("PF_BC6H"), 0.06, 0, true },
+		{ TEXT("BC6H stripes"), TC_HDR_Compressed, false, TEXT("PF_BC6H"), 0.03, 1, true },
+		{ TEXT("BC6H two halves"), TC_HDR_Compressed, false, TEXT("PF_BC6H"), 0.15, 2, true },
+		{ TEXT("BC6H wide range"), TC_HDR_Compressed, false, TEXT("PF_BC6H"), 0.06, 3, true },
 	};
 
 	constexpr int32 Size = 64;
@@ -908,8 +944,53 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 			}
 		}
 
+		// An HDR case has its own image: half floats, and the values the decoder should give back.
+		TArray<FFloat16> HalfSource;
+		TArray<FVector4f> WantHdr;
+		if (Case.bHdr)
+		{
+			HalfSource.SetNumUninitialized(Size * Size * 4);
+			WantHdr.SetNumUninitialized(Size * Size);
+			for (int32 Y = 0; Y < Size; ++Y)
+			{
+				for (int32 X = 0; X < Size; ++X)
+				{
+					FVector3f Color(X * 0.1f, Y * 0.05f, 0.2f + (X + Y) * 0.02f);
+					if (Case.Pattern == 1)
+					{
+						Color = ((X * 3 + Y * 2) / 5) % 2 == 0 ? FVector3f(6.0f, 0.2f, 0.05f) : FVector3f(0.1f, 3.0f, 0.5f);
+					}
+					else if (Case.Pattern == 2)
+					{
+						// The left and the right half of every block have a color of their own (a ramp down the block), which a block of two regions can hold.
+						const float T = (Y & 3) * 0.25f;
+						Color = (X & 3) < 2 ? FVector3f(6.0f * (1.0f - T) + 1.0f, 0.2f + T, 0.05f) : FVector3f(0.1f + T, 3.0f, 0.5f * (1.0f + T));
+					}
+					else if (Case.Pattern == 3)
+					{
+						// Brightness that grows by a factor of 2 every 7 pixels, over more than three decades.
+						const float Level = FMath::Pow(2.0f, (X + 2 * Y) * 0.15f - 4.0f);
+						Color = FVector3f(Level, Level * 0.5f, Level * 0.25f);
+					}
+					FFloat16* Texel = HalfSource.GetData() + (Y * Size + X) * 4;
+					Texel[0] = FFloat16(Color.X);
+					Texel[1] = FFloat16(Color.Y);
+					Texel[2] = FFloat16(Color.Z);
+					Texel[3] = FFloat16(1.0f);
+					WantHdr[Y * Size + X] = FVector4f(Texel[0].GetFloat(), Texel[1].GetFloat(), Texel[2].GetFloat(), 1.0f);
+				}
+			}
+		}
+
 		UTexture2D* Texture = NewObject<UTexture2D>(GetTransientPackage(), NAME_None, RF_Transient);
-		Texture->Source.Init(Size, Size, 1, 1, TSF_BGRA8, Source.GetData());
+		if (Case.bHdr)
+		{
+			Texture->Source.Init(Size, Size, 1, 1, TSF_RGBA16F, reinterpret_cast<const uint8*>(HalfSource.GetData()));
+		}
+		else
+		{
+			Texture->Source.Init(Size, Size, 1, 1, TSF_BGRA8, Source.GetData());
+		}
 		Texture->CompressionSettings = Case.Compression;
 		Texture->MipGenSettings = TMGS_NoMipmaps;
 		Texture->SRGB = false;
@@ -951,28 +1032,48 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 		double Total = 0.0;
 		double Largest = 0.0;
 		int32 ModeCounts[9] = {};
+		TMap<int32, TPair<double, int32>> Bc6hModes; // the mode values of BC6H (2 bits, 0 and 1, or 5 bits) with the error of their pixels and how many there are
 		for (int32 BlockIndex = 0; BlockIndex < (Size / 4) * (Size / 4); ++BlockIndex)
 		{
 			FVector4f Pixels[16];
 			AssetBlockDecoder::DecodeBlock(BlockFormat.Codec, Bytes + BlockIndex * BlockFormat.BytesPerBlock, Pixels);
 			const uint8 First = Bytes[BlockIndex * BlockFormat.BytesPerBlock];
 			++ModeCounts[First == 0 ? 8 : FMath::CountTrailingZeros(static_cast<uint32>(First))];
+			TPair<double, int32>& ModeError = Bc6hModes.FindOrAdd((First & 3) < 2 ? (First & 3) : (First & 31));
+			double BlockError = 0.0;
 			for (int32 Pixel = 0; Pixel < 16; ++Pixel)
 			{
 				const int32 X = (BlockIndex % (Size / 4)) * 4 + (Pixel & 3);
 				const int32 Y = (BlockIndex / (Size / 4)) * 4 + (Pixel >> 2);
 				const uint8* Expected = Source.GetData() + (Y * Size + X) * 4;
-				const FVector4f Want(Expected[2] / 255.0f, Expected[1] / 255.0f, Expected[0] / 255.0f, Expected[3] / 255.0f);
-				const FVector4f Delta = Pixels[Pixel] - Want;
+				const FVector4f Want = Case.bHdr ? WantHdr[Y * Size + X] : FVector4f(Expected[2] / 255.0f, Expected[1] / 255.0f, Expected[0] / 255.0f, Expected[3] / 255.0f);
+				FVector4f Delta = Pixels[Pixel] - Want;
+				if (Case.bHdr)
+				{
+					// Relative to the value (and to a floor, so that a value near zero does not count for more than it is worth).
+					Delta = FVector4f(Delta.X / FMath::Max(FMath::Abs(Want.X), 0.2f), Delta.Y / FMath::Max(FMath::Abs(Want.Y), 0.2f), Delta.Z / FMath::Max(FMath::Abs(Want.Z), 0.2f), 0.0f);
+				}
 				const double Error = FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)));
 				Total += Error;
+				BlockError += Error;
 				Largest = FMath::Max(Largest, Error);
 			}
+			ModeError.Key += BlockError;
+			ModeError.Value += 16;
 		}
 		Bulk.Unlock();
 
 		const double Mean = Total / (Size * Size);
 		AddInfo(FString::Printf(TEXT("%s: mean error %.4f, largest %.4f"), Case.Name, Mean, Largest));
+		if (BlockFormat.Codec == EAssetBlockCodec::BC6H)
+		{
+			FString Used;
+			for (const TPair<int32, TPair<double, int32>>& Mode : Bc6hModes)
+			{
+				Used += FString::Printf(TEXT("0x%02x (%.4f over %d pixels) "), Mode.Key, Mode.Value.Key / FMath::Max(Mode.Value.Value, 1), Mode.Value.Value);
+			}
+			AddInfo(FString::Printf(TEXT("%s: BC6H mode values used: %s"), Case.Name, *Used));
+		}
 		if (BlockFormat.Codec == EAssetBlockCodec::BC7)
 		{
 			AddInfo(FString::Printf(TEXT("%s: blocks by BC7 mode 0 to 7: %d %d %d %d %d %d %d %d"), Case.Name, ModeCounts[0], ModeCounts[1], ModeCounts[2], ModeCounts[3], ModeCounts[4], ModeCounts[5],

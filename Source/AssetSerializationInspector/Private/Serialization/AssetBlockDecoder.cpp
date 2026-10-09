@@ -2,6 +2,9 @@
 
 #include "Serialization/AssetBlockDecoder.h"
 
+#include "Math/Float16.h"
+
+#include "Serialization/AssetBc6hTables.h"
 #include "Serialization/AssetBc7Tables.h"
 
 namespace
@@ -292,6 +295,145 @@ namespace
 			OutPixels[Pixel] = FVector4f(Channels[0] / 255.0f, Channels[1] / 255.0f, Channels[2] / 255.0f, Channels[3] / 255.0f);
 		}
 	}
+
+	int32 SignExtend(const int32 Value, const int32 Bits)
+	{
+		return (Value & (1 << (Bits - 1))) != 0 ? Value - (1 << Bits) : Value;
+	}
+
+	/** The 16 bit value of a BC6H endpoint channel stretched from its precision (unsigned format). */
+	int32 Bc6hUnquantize(const int32 Value, const int32 Bits)
+	{
+		if (Bits >= 15)
+		{
+			return Value;
+		}
+		if (Value == 0)
+		{
+			return 0;
+		}
+		if (Value == (1 << Bits) - 1)
+		{
+			return 0xFFFF;
+		}
+		return ((Value << 16) + 0x8000) >> Bits;
+	}
+
+	/**
+	 * One BC6H block (the unsigned format, as UE uses for HDR): a mode of 2 or 5 bits picks one of 14 layouts that say where each bit of
+	 * the endpoints is, one region or two, whether the other endpoints are differences from the first, and how wide the indices are.
+	 * The result is half floats. A reserved or invalid mode is opaque black.
+	 */
+	void DecodeBc6h(const uint8* Block, FVector4f OutPixels[16])
+	{
+		using namespace AssetBc6hTables;
+
+		const auto Bit = [Block](const int32 Position) -> int32 { return (Block[Position >> 3] >> (Position & 7)) & 1; };
+		int32 Position = 0;
+		const auto Read = [&](const int32 Count) {
+			int32 Value = 0;
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				Value |= Bit(Position++) << Index;
+			}
+			return Value;
+		};
+
+		int32 ModeValue = Read(2);
+		if (ModeValue > 1)
+		{
+			ModeValue = (Read(3) << 2) | ModeValue;
+		}
+
+		const int32 ModeIndex = ModeOfValue[ModeValue];
+		if (ModeIndex < 0)
+		{
+			for (int32 Pixel = 0; Pixel < 16; ++Pixel)
+			{
+				OutPixels[Pixel] = FVector4f(0.0f, 0.0f, 0.0f, 1.0f);
+			}
+			return;
+		}
+		const FModeInfo& Mode = Modes[ModeIndex];
+
+		// The header: every bit goes to the field the mode says. Endpoints are End[region][endpoint][channel]; the endpoint 0 of a region is
+		// W (or Y) and the endpoint 1 is X (or Z), which a transformed mode stores as the difference from W.
+		int32 End[2][2][3] = {};
+		int32 ShapeValue = 0;
+		const int32 HeaderBits = Mode.Partitions > 0 ? 82 : 65;
+		while (Position < HeaderBits)
+		{
+			const int32 Current = Position++;
+			if (Bit(Current) == 0)
+			{
+				continue;
+			}
+
+			const int32 Field = FieldOfHeaderBit[ModeIndex][Current];
+			const int32 FieldBit = 1 << BitOfHeaderBit[ModeIndex][Current];
+			if (Field == Shape)
+			{
+				ShapeValue |= FieldBit;
+			}
+			else if (Field >= RW)
+			{
+				const int32 Channel = (Field - RW) / 4;
+				const int32 Slot = (Field - RW) % 4;
+				End[Slot / 2][Slot % 2][Channel] |= FieldBit;
+			}
+		}
+
+		// A transformed mode stores the other endpoints as signed differences, which are then added to the first one.
+		if (Mode.bTransformed)
+		{
+			for (int32 Region = 0; Region <= Mode.Partitions; ++Region)
+			{
+				for (int32 Channel = 0; Channel < 3; ++Channel)
+				{
+					if (Region != 0)
+					{
+						End[Region][0][Channel] = SignExtend(End[Region][0][Channel], Mode.Precision[Region][0][Channel]);
+					}
+					End[Region][1][Channel] = SignExtend(End[Region][1][Channel], Mode.Precision[Region][1][Channel]);
+				}
+			}
+			for (int32 Channel = 0; Channel < 3; ++Channel)
+			{
+				const int32 Mask = (1 << Mode.Precision[0][0][Channel]) - 1;
+				End[0][1][Channel] = (End[0][1][Channel] + End[0][0][Channel]) & Mask;
+				End[1][0][Channel] = (End[1][0][Channel] + End[0][0][Channel]) & Mask;
+				End[1][1][Channel] = (End[1][1][Channel] + End[0][0][Channel]) & Mask;
+			}
+		}
+
+		// The indices (the anchor of each region has one bit less), and the interpolation between the endpoints of the pixel's region.
+		for (int32 Pixel = 0; Pixel < 16; ++Pixel)
+		{
+			const bool bAnchor = Pixel == 0 || (Mode.Partitions > 0 && Pixel == AssetBc7Tables::TwoSubsetsAnchor[ShapeValue]);
+			const int32 IndexBits = Mode.IndexBits - (bAnchor ? 1 : 0);
+			if (Position + IndexBits > 128)
+			{
+				OutPixels[Pixel] = FVector4f(0.0f, 0.0f, 0.0f, 1.0f);
+				continue;
+			}
+			const int32 Index = Read(IndexBits);
+			const int32 Region = Mode.Partitions > 0 ? AssetBc7Tables::TwoSubsets[ShapeValue * 16 + Pixel] : 0;
+			const int32 Weight = Bc7Weight(Mode.IndexBits, static_cast<uint32>(Index));
+
+			float Channels[3];
+			for (int32 Channel = 0; Channel < 3; ++Channel)
+			{
+				const int32 Bits = Mode.Precision[0][0][Channel];
+				const int32 From = Bc6hUnquantize(End[Region][0][Channel], Bits);
+				const int32 To = Bc6hUnquantize(End[Region][1][Channel], Bits);
+				const int32 Mixed = (From * (64 - Weight) + To * Weight + 32) >> 6;
+				FFloat16 Half;
+				Half.Encoded = static_cast<uint16>((Mixed * 31) >> 6);
+				Channels[Channel] = Half.GetFloat();
+			}
+			OutPixels[Pixel] = FVector4f(Channels[0], Channels[1], Channels[2], 1.0f);
+		}
+	}
 } // namespace
 
 void AssetBlockDecoder::DecodeBlock(const EAssetBlockCodec Codec, const uint8* Block, FVector4f OutPixels[16])
@@ -348,6 +490,10 @@ void AssetBlockDecoder::DecodeBlock(const EAssetBlockCodec Codec, const uint8* B
 			}
 			break;
 		}
+
+		case EAssetBlockCodec::BC6H:
+			DecodeBc6h(Block, OutPixels);
+			break;
 
 		case EAssetBlockCodec::BC7:
 			DecodeBc7(Block, OutPixels);
