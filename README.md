@@ -63,7 +63,7 @@ All the menus, windows and commandlet options are in [Usage](docs/Usage.md).
 | [Native data](docs/NativeData.md) | What the plugin reads inside the binary parts of an export (classes, bytecode, graphs, textures, meshes) |
 | [Usage](docs/Usage.md) | Windows, menus, the commandlet and build machine checks |
 | [Concepts](docs/Concepts.md) | Serialized defaults, undecoded data, a worked example |
-| [Architecture](docs/Architecture.md) | How the pieces fit together and why no engine changes are needed |
+| [Architecture](docs/Architecture.md) | How the pieces fit together (with diagrams) and why no engine changes are needed |
 | [Development](docs/Development.md) | Running the tests, contributing |
 | [Roadmap](docs/Roadmap.md) | What is done and what is next |
 

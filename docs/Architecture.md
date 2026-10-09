@@ -31,6 +31,115 @@ Everything the plugin knows comes from the **bytes of the package files**. It re
 5. **Remember.** Observed saves of monitored assets are kept, so the same property can be followed across saves.
 6. **Show.** The same results feed the diff window, the text, JSON and HTML reports, and the headless commandlet.
 
+## Diagrams
+
+### Components
+
+Layers, top to bottom. An arrow means "uses": a layer only uses the ones below it. The UI and the commandlet are thin, and start the same workflows.
+
+```mermaid
+flowchart TB
+    Entry["<b>Entry points</b><br/>Editor module: menus, windows, console commands<br/>Commandlet: headless runs"]
+    Workflows["<b>Workflows</b><br/>Save observer and monitoring · Save history and repeated-save analysis<br/>No-op resave test and batch runner · Folder comparison and engine version inference<br/>Source control revision fetch · Coverage and blind spot scans"]
+    Output["<b>Output</b><br/>Slate windows: diff, results, monitored assets<br/>Report model and writers: text, JSON, HTML"]
+    Compare["<b>Comparison and explanation</b><br/>Package diff: structure, values, header, native data<br/>Save analyzer · Native range summaries"]
+    Decode["<b>Decoding</b><br/>Field decoder (serialized field map) · Property tag and value decoders<br/>Archetype resolver and container final values<br/>Native data readers: classes, bytecode, pins, textures, meshes"]
+    Foundation["<b>Foundation</b><br/>Package reader · Package document"]
+
+    Entry --> Workflows
+    Entry --> Output
+    Workflows --> Output
+    Workflows --> Compare
+    Output --> Compare
+    Compare --> Decode
+    Decode --> Foundation
+```
+
+### An observed save
+
+What happens when a monitored asset is saved in the editor.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Editor as Unreal Editor
+    participant Observer as Save observer
+    participant Reader as Package reader
+    participant Fields as Field decoder
+    participant Diff as Package diff
+    participant Analyzer as Save analyzer
+    participant History as Save history
+    participant UI as Diff window
+
+    User->>Editor: Save asset
+    Editor->>Observer: pre-save notification
+    Observer->>Observer: copy the file on disk to a snapshot (only if monitored)
+    Editor->>Editor: write the new .uasset
+    Editor->>Observer: post-save notification
+    Observer->>Reader: load snapshot and new file
+    Reader-->>Observer: two documents
+    Observer->>Fields: decode both documents
+    Fields-->>Observer: serialized field maps
+    Observer->>Diff: compare documents and field maps
+    Diff-->>Observer: diff result
+    Observer->>Analyzer: analyze diff
+    Analyzer-->>Observer: save analysis
+    Observer->>History: record save
+    Observer-->>UI: observed save event
+    User->>UI: open the diff
+```
+
+### Main data types
+
+```mermaid
+classDiagram
+    class FAssetPackageDocument {
+        raw bytes
+        package summary
+        name, import, export maps
+        offsets and ranges
+    }
+    class FAssetPackageTraceCollection {
+        one trace per export
+    }
+    class FAssetPackageDiffResult {
+        entries: added, removed, modified, moved
+        file hashes
+    }
+    class FAssetSaveAnalysis {
+        meaningful, layout and header changes
+        relocations
+        explained and unexplained bytes
+    }
+    class FObservedAssetSave {
+        SaveId
+        timestamp
+    }
+    class FAssetSaveHistory {
+        entries per package
+        property states
+    }
+    class FAssetSerializationDiffSession {
+        old and new side
+    }
+    class FAssetAnalysisReport {
+        schemaVersion
+        differences
+    }
+
+    FObservedAssetSave o-- "2" FAssetPackageDocument : before, after
+    FObservedAssetSave o-- "2" FAssetPackageTraceCollection : before, after fields
+    FObservedAssetSave *-- FAssetPackageDiffResult
+    FObservedAssetSave *-- FAssetSaveAnalysis
+    FAssetSaveHistory o-- FObservedAssetSave : entries refer to saves by id
+    FAssetSerializationDiffSession o-- "2" FAssetPackageDocument
+    FAssetSerializationDiffSession o-- "2" FAssetPackageTraceCollection
+    FAssetSerializationDiffSession *-- FAssetPackageDiffResult
+    FAssetSerializationDiffSession *-- FAssetSaveAnalysis
+    FAssetAnalysisReport ..> FAssetPackageDiffResult : lists
+    FAssetAnalysisReport ..> FAssetSaveAnalysis : includes
+```
+
 ## Where the code is
 
 `Source/AssetSerializationInspector/` has a `Public` and a `Private` folder with the same layout:
