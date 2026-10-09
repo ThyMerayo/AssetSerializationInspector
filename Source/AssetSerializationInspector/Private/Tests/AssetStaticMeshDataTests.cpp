@@ -12,30 +12,19 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetStaticMeshData.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+
+using AssetTestUtils::FindChange;
 
 namespace StaticMeshTestUtils
 {
 	/** The data a static mesh writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetStaticMeshData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetStaticMeshData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out, Trace);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace* Trace) { return AssetStaticMeshData::Decode(Document, Export, Offset, Size, Out, Trace); });
 	}
 
 	static FAssetMeshMaterialSlot MakeSlot(const TCHAR* SlotName, const TCHAR* Material)
@@ -124,10 +113,6 @@ bool FAssetStaticMeshData_ComparesTheMaterialSlotsAndSockets::RunTest(const FStr
 	const FAssetStaticMeshData Base = MakeMesh({ MakeSlot(TEXT("Body"), TEXT("/Game/M_Body")), MakeSlot(TEXT("Glass"), TEXT("/Game/M_Glass")) });
 	TestTrue(TEXT("The same mesh is no change"), AssetStaticMeshData::Compare(Base, Base).IsEmpty());
 
-	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	};
-
 	// A material assigned to a slot another: the slot is modified, with both materials.
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, MakeMesh({ MakeSlot(TEXT("Body"), TEXT("/Game/M_Body")), MakeSlot(TEXT("Glass"), TEXT("/Game/M_Tinted")) }));
@@ -165,9 +150,9 @@ bool FAssetStaticMeshData_ComparesTheMaterialSlotsAndSockets::RunTest(const FStr
 		Changed.BodySetup = TEXT("/Game/Mesh.BodySetup_2");
 
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, Changed);
-		TestNotNull(TEXT("The new socket is reported"), Find(Changes, TEXT("Socket//Game/Mesh.Socket_Hand")));
-		TestNotNull(TEXT("The lighting GUID is reported"), Find(Changes, TEXT("LightingGuid")));
-		TestNotNull(TEXT("The collision is reported"), Find(Changes, TEXT("BodySetup")));
+		TestNotNull(TEXT("The new socket is reported"), FindChange(Changes, TEXT("Socket//Game/Mesh.Socket_Hand")));
+		TestNotNull(TEXT("The lighting GUID is reported"), FindChange(Changes, TEXT("LightingGuid")));
+		TestNotNull(TEXT("The collision is reported"), FindChange(Changes, TEXT("BodySetup")));
 		TestEqual(TEXT("And nothing else"), Changes.Num(), 3);
 	}
 
@@ -205,10 +190,6 @@ namespace CookedStaticMeshTestUtils
 		return false;
 	}
 
-	static const FAssetNativeDataChange* Find(const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key)
-	{
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	}
 	/** Reads the static mesh of a package at a path. */
 	static bool ReadFixtureAt(FAutomationTestBase& Test, const FString& Path, FAssetStaticMeshData& Out)
 	{
@@ -318,9 +299,9 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Pa
 	if (ReadFixture(*this, TEXT("Plane.uasset"), Plane) && ReadFixture(*this, TEXT("Cube.uasset"), Cube) && Plane.RenderData.bRead && Cube.RenderData.bRead)
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Plane, Cube);
-		TestNotNull(TEXT("The buffers of the LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
-		TestNotNull(TEXT("The section of the LOD"), Find(Changes, TEXT("Render/Lod/0/Section/0")));
-		TestNotNull(TEXT("The bounds"), Find(Changes, TEXT("Render/Bounds")));
+		TestNotNull(TEXT("The buffers of the LOD"), FindChange(Changes, TEXT("Render/Lod/0/Buffers")));
+		TestNotNull(TEXT("The section of the LOD"), FindChange(Changes, TEXT("Render/Lod/0/Section/0")));
+		TestNotNull(TEXT("The bounds"), FindChange(Changes, TEXT("Render/Bounds")));
 	}
 
 	// One thing at a time, on a copy of the cube.
@@ -335,7 +316,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Pa
 		Repainted.RenderData.Lods[0].BufferHash = TEXT("zzzzzzzzzzzzzzzz");
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, Repainted);
 		TestEqual(TEXT("Other buffers are one change"), Changes.Num(), 1);
-		TestNotNull(TEXT("Named by its LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
+		TestNotNull(TEXT("Named by its LOD"), FindChange(Changes, TEXT("Render/Lod/0/Buffers")));
 	}
 	{
 		FAssetStaticMeshData Hidden = Base;
@@ -350,10 +331,10 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Pa
 		Other.RenderData.ScreenSize[1] = 0.25f;
 		Other.RenderData.Lods.Add(Base.RenderData.Lods[0]);
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Base, Other);
-		TestNotNull(TEXT("A section"), Find(Changes, TEXT("Render/Lod/0/Section/0")));
-		TestNotNull(TEXT("What lies between the LODs and the bounds"), Find(Changes, TEXT("Render/Other")));
-		TestNotNull(TEXT("The screen size"), Find(Changes, TEXT("Render/ScreenSize")));
-		if (const FAssetNativeDataChange* Added = Find(Changes, TEXT("Render/Lod/1")))
+		TestNotNull(TEXT("A section"), FindChange(Changes, TEXT("Render/Lod/0/Section/0")));
+		TestNotNull(TEXT("What lies between the LODs and the bounds"), FindChange(Changes, TEXT("Render/Other")));
+		TestNotNull(TEXT("The screen size"), FindChange(Changes, TEXT("Render/ScreenSize")));
+		if (const FAssetNativeDataChange* Added = FindChange(Changes, TEXT("Render/Lod/1")))
 		{
 			TestEqual(TEXT("A LOD added"), static_cast<uint8>(Added->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 		}
@@ -411,12 +392,9 @@ bool FAssetStaticMeshData_ReadsTheSourceModelsOfAnOlderEditor::RunTest(const FSt
 
 		// Without the properties the number of source models is not known, so the mesh is not read rather than guessed.
 		FAssetStaticMeshData Guessed;
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Traces->FindExportTrace(Export.Index)->Root->Children)
-		{
-			Native = Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native ? Node.Get() : Native;
-		}
-		if (Native != nullptr && AssetStaticMeshData::Decode(*Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Guessed))
+		const bool bDecoded = AssetTestUtils::DecodeLastNative(
+			*Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetStaticMeshData::Decode(*Document, Export, Offset, Size, Guessed); });
+		if (bDecoded)
 		{
 			TestFalse(TEXT("Not read without the properties"), Guessed.bComplete);
 		}
@@ -571,10 +549,6 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		return false;
 	}
 
-	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	};
-
 	FAssetStaticMeshData Cube;
 	FAssetStaticMeshData Plane;
 	FAssetStaticMeshData Sphere;
@@ -590,7 +564,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 	// Two meshes: the cards and the distance field name the LOD; the hash of all of it is not reported when the parts are.
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Plane, Cube);
-		if (const FAssetNativeDataChange* Cards = Find(Changes, TEXT("Render/Lod/0/Cards")))
+		if (const FAssetNativeDataChange* Cards = FindChange(Changes, TEXT("Render/Lod/0/Cards")))
 		{
 			TestTrue(TEXT("From one card to six"), Cards->OldValue.StartsWith(TEXT("1 cards")) && Cards->NewValue.StartsWith(TEXT("6 cards")));
 		}
@@ -598,7 +572,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		{
 			AddError(TEXT("The cards are not in the changes"));
 		}
-		if (const FAssetNativeDataChange* Field = Find(Changes, TEXT("Render/Lod/0/DistanceField")))
+		if (const FAssetNativeDataChange* Field = FindChange(Changes, TEXT("Render/Lod/0/DistanceField")))
 		{
 			TestTrue(TEXT("From 9 bricks to 208"), Field->OldValue.StartsWith(TEXT("9, 4 and 1 bricks")) && Field->NewValue.StartsWith(TEXT("208, 27 and 8 bricks")));
 		}
@@ -606,8 +580,8 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		{
 			AddError(TEXT("The distance field is not in the changes"));
 		}
-		TestNull(TEXT("What lies between the LODs and the bounds is not reported as a whole"), Find(Changes, TEXT("Render/Other")));
-		TestNull(TEXT("Neither has Nanite clusters"), Find(Changes, TEXT("Render/Nanite")));
+		TestNull(TEXT("What lies between the LODs and the bounds is not reported as a whole"), FindChange(Changes, TEXT("Render/Other")));
+		TestNull(TEXT("Neither has Nanite clusters"), FindChange(Changes, TEXT("Render/Nanite")));
 	}
 
 	// The cards of a LOD: the cards that changed are named, and the others are not.
@@ -621,8 +595,8 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		Fewer.RenderData.Middle.Cards[0].Part.Hash = TEXT("fewer");
 
 		const TArray<FAssetNativeDataChange> MovedChanges = AssetStaticMeshData::Compare(Cube, Moved);
-		TestNotNull(TEXT("The cards of the LOD changed"), Find(MovedChanges, TEXT("Render/Lod/0/Cards")));
-		if (const FAssetNativeDataChange* Card = Find(MovedChanges, TEXT("Render/Lod/0/Card/2")))
+		TestNotNull(TEXT("The cards of the LOD changed"), FindChange(MovedChanges, TEXT("Render/Lod/0/Cards")));
+		if (const FAssetNativeDataChange* Card = FindChange(MovedChanges, TEXT("Render/Lod/0/Card/2")))
 		{
 			TestTrue(TEXT("The third card moved 5 units up"), Card->State == FAssetNativeDataChange::EState::Modified && Card->OldValue != Card->NewValue);
 		}
@@ -630,10 +604,10 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		{
 			AddError(TEXT("The card that moved is not in the changes"));
 		}
-		TestNull(TEXT("The others did not"), Find(MovedChanges, TEXT("Render/Lod/0/Card/1")));
+		TestNull(TEXT("The others did not"), FindChange(MovedChanges, TEXT("Render/Lod/0/Card/1")));
 
 		const TArray<FAssetNativeDataChange> FewerChanges = AssetStaticMeshData::Compare(Cube, Fewer);
-		if (const FAssetNativeDataChange* Removed = Find(FewerChanges, TEXT("Render/Lod/0/Card/5")))
+		if (const FAssetNativeDataChange* Removed = FindChange(FewerChanges, TEXT("Render/Lod/0/Card/5")))
 		{
 			TestTrue(TEXT("The sixth card was removed"), Removed->State == FAssetNativeDataChange::EState::Removed);
 		}
@@ -646,7 +620,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 	// A mesh with Nanite data and a proxy of its own.
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, Sphere);
-		if (const FAssetNativeDataChange* Nanite = Find(Changes, TEXT("Render/Nanite")))
+		if (const FAssetNativeDataChange* Nanite = FindChange(Changes, TEXT("Render/Nanite")))
 		{
 			TestTrue(TEXT("To 6 clusters"), Nanite->OldValue.StartsWith(TEXT("0 clusters")) && Nanite->NewValue.StartsWith(TEXT("6 clusters")));
 		}
@@ -654,7 +628,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 		{
 			AddError(TEXT("The Nanite resources are not in the changes"));
 		}
-		TestNotNull(TEXT("The ray tracing proxy"), Find(Changes, TEXT("Render/RayTracing")));
+		TestNotNull(TEXT("The ray tracing proxy"), FindChange(Changes, TEXT("Render/RayTracing")));
 	}
 
 	// One byte of the distance field of a copy of the cube: nothing else is reported.
@@ -692,7 +666,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, WithField);
 		TestEqual(TEXT("One byte of the distance field is one change"), Changes.Num(), 1);
-		TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/DistanceField")));
+		TestNotNull(TEXT("Named by the LOD"), FindChange(Changes, TEXT("Render/Lod/0/DistanceField")));
 	}
 	else
 	{
@@ -705,7 +679,7 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetStaticMeshData::Compare(Cube, WithCards);
 		TestEqual(TEXT("One byte of the cards is one change"), Changes.Num(), 1);
-		TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/Cards")));
+		TestNotNull(TEXT("Named by the LOD"), FindChange(Changes, TEXT("Render/Lod/0/Cards")));
 	}
 	else
 	{

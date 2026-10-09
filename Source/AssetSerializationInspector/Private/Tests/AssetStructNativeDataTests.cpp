@@ -24,6 +24,7 @@
 #include "Serialization/AssetStructNativeData.h"
 #include "Summary/AssetExportSummary.h"
 #include "Tests/AssetTestPackageNames.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -39,22 +40,8 @@ namespace StructNativeDataTestUtils
 	/** Decodes the native data after the tagged properties of an export: the last range of its trace that no property accounts for. */
 	static bool DecodeExport(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetStructNativeData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetStructNativeData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetStructNativeData::Decode(Document, Export, Offset, Size, Out); });
 	}
 } // namespace StructNativeDataTestUtils
 

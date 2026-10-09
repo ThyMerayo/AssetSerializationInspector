@@ -12,30 +12,19 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetDataTableData.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+
+using AssetTestUtils::FindChange;
 
 namespace DataTableTestUtils
 {
 	/** The data a data table writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetDataTableData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetDataTableData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out, Trace);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace* Trace) { return AssetDataTableData::Decode(Document, Export, Offset, Size, Out, Trace); });
 	}
 
 	/** Reads the first data table of a package. */
@@ -81,10 +70,6 @@ namespace DataTableTestUtils
 		return Data;
 	}
 
-	static const FAssetNativeDataChange* Find(const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key)
-	{
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	}
 } // namespace DataTableTestUtils
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDataTableData_ReadsTheRowsOfADataTable, "AssetSerializationInspector.Serialization.AssetDataTableData.ReadsTheRowsOfADataTable",
@@ -201,7 +186,7 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 		const FAssetDataTableRow Bow = MakeRow(TEXT("Bow"), { { TEXT("Range_16_") + Guid, TEXT("X=4.000 Y=0.5 Z=6.000") }, { TEXT("Speed"), TEXT("30") } });
 		const TArray<FAssetNativeDataChange> Changes = AssetDataTableData::Compare(Base, MakeData({ Sword, Bow }));
 		TestEqual(TEXT("One change for the property of the removed row, two for the added row"), Changes.Num(), 3);
-		if (const FAssetNativeDataChange* Removed = Find(Changes, TEXT("Row/Shield/Armor")))
+		if (const FAssetNativeDataChange* Removed = FindChange(Changes, TEXT("Row/Shield/Armor")))
 		{
 			TestEqual(TEXT("A property of the removed row"), Removed->State, FAssetNativeDataChange::EState::Removed);
 			TestEqual(TEXT("With its value"), Removed->OldValue, FString(TEXT("5")));
@@ -211,7 +196,7 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 		{
 			AddError(TEXT("The removed row is listed by property"));
 		}
-		if (const FAssetNativeDataChange* Added = Find(Changes, *(TEXT("Row/Bow/Range_16_") + Guid)))
+		if (const FAssetNativeDataChange* Added = FindChange(Changes, *(TEXT("Row/Bow/Range_16_") + Guid)))
 		{
 			TestEqual(TEXT("A property of the added row"), Added->State, FAssetNativeDataChange::EState::Added);
 			TestEqual(TEXT("With its value alone"), Added->NewValue, FString(TEXT("X=4.000 Y=0.5 Z=6.000")));
@@ -221,8 +206,8 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 		{
 			AddError(TEXT("The added row is listed by property"));
 		}
-		TestNotNull(TEXT("Every property has its own entry"), Find(Changes, TEXT("Row/Bow/Speed")));
-		TestNull(TEXT("There is no entry for the whole row"), Find(Changes, TEXT("Row/Bow")));
+		TestNotNull(TEXT("Every property has its own entry"), FindChange(Changes, TEXT("Row/Bow/Speed")));
+		TestNull(TEXT("There is no entry for the whole row"), FindChange(Changes, TEXT("Row/Bow")));
 	}
 
 	// A value of a row, a property that went away and one that came.
@@ -230,7 +215,7 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 		const FAssetDataTableRow Changed = MakeRow(TEXT("Sword"), { { TEXT("Damage"), TEXT("12") }, { TEXT("Weight"), TEXT("3") } });
 		const TArray<FAssetNativeDataChange> Changes = AssetDataTableData::Compare(Base, MakeData({ Changed, Shield }));
 		TestEqual(TEXT("Three changes"), Changes.Num(), 3);
-		if (const FAssetNativeDataChange* Damage = Find(Changes, TEXT("Row/Sword/Damage")))
+		if (const FAssetNativeDataChange* Damage = FindChange(Changes, TEXT("Row/Sword/Damage")))
 		{
 			TestEqual(TEXT("A value changed"), Damage->State, FAssetNativeDataChange::EState::Modified);
 			TestTrue(TEXT("From 10 to 12"), Damage->OldValue == TEXT("10") && Damage->NewValue == TEXT("12"));
@@ -239,9 +224,9 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 		{
 			AddError(TEXT("The value is a change"));
 		}
-		const FAssetNativeDataChange* Name = Find(Changes, TEXT("Row/Sword/Name"));
+		const FAssetNativeDataChange* Name = FindChange(Changes, TEXT("Row/Sword/Name"));
 		TestTrue(TEXT("A property was removed"), Name != nullptr && Name->State == FAssetNativeDataChange::EState::Removed);
-		const FAssetNativeDataChange* Weight = Find(Changes, TEXT("Row/Sword/Weight"));
+		const FAssetNativeDataChange* Weight = FindChange(Changes, TEXT("Row/Sword/Weight"));
 		TestTrue(TEXT("A property was added"), Weight != nullptr && Weight->State == FAssetNativeDataChange::EState::Added);
 	}
 
@@ -249,7 +234,7 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 	{
 		FAssetDataTableData Other = Base;
 		Other.RowStruct = TEXT("/Game/FWeapon.FWeapon");
-		TestNotNull(TEXT("The row struct"), Find(AssetDataTableData::Compare(Base, Other), TEXT("RowStruct")));
+		TestNotNull(TEXT("The row struct"), FindChange(AssetDataTableData::Compare(Base, Other), TEXT("RowStruct")));
 
 		FAssetDataTableData Unread = Base;
 		Unread.bComplete = false;

@@ -12,6 +12,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetBytecode.h"
 #include "Serialization/AssetStructNativeData.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -20,22 +21,8 @@ namespace BytecodeTestUtils
 	/** The data a function or class writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetStructNativeData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetStructNativeData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetStructNativeData::Decode(Document, Export, Offset, Size, Out); });
 	}
 
 	/** A bytecode of the given statements, as the texts a function would have (a jump is written as the statement it goes to). */
