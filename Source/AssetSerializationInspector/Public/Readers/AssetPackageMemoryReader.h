@@ -29,7 +29,6 @@ public:
 	 */
 	void ApplyPackageSummary(const FPackageFileSummary& Summary);
 
-	int64 GetRegionStart() const { return RegionStart; }
 
 	int64 GetRegionEnd() const { return RegionEnd; }
 

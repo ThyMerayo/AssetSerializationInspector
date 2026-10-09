@@ -247,33 +247,6 @@ static bool DecodeGuidFromReader(const FAssetPropertyDecodeContext& Context, FAs
 	return true;
 }
 
-// Currently not used, left in case there are scenarios in which using the DecodeTagStruct does not work for FTransform
-static bool DecodeTransformFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
-{
-	const int64 Start = Reader.Tell();
-
-	if (Start + static_cast<int64>(sizeof(FQuat) + 2 * sizeof(FVector)) > ValueEnd)
-	{
-		OutValue.Status = EAssetPropertyDecodeStatus::InvalidData;
-		OutValue.Error = TEXT("Not enough space in reader for decoding FTransform");
-		return false;
-	}
-
-	FQuat Rotation;
-	Reader << Rotation;
-	FVector Translation;
-	Reader << Translation;
-	FVector Scale3D;
-	Reader << Scale3D;
-
-	OutValue.Status = EAssetPropertyDecodeStatus::Success;
-	OutValue.Kind = EAssetDecodedValueKind::Struct;
-	OutValue.Value = FString::Printf(TEXT("Rotation: %s\nTranslation: %s\nScale3D: %s"), *AssetNumberText::Text(Rotation), *AssetNumberText::Text(Translation), *AssetNumberText::Text(Scale3D));
-	OutValue.AbsoluteOffset = Start;
-	OutValue.Size = Reader.Tell() - Start;
-	return true;
-}
-
 static bool DecodeColorFromReader(const FAssetPropertyDecodeContext& Context, FAssetPackagePayloadReader& Reader, const int64 ValueEnd, FAssetDecodedPropertyValue& OutValue)
 {
 	const int64 Start = Reader.Tell();
@@ -2728,23 +2701,6 @@ static bool DecodeValueFromReader(const FAssetPropertyDecodeContext& Context, FA
 	OutValue.Error = FString::Printf(TEXT("Unsupported property type: %s"), *Type.ToString());
 
 	return false;
-}
-
-static FString MakeSetElementDisplayName(const FAssetDecodedPropertyValue& Element)
-{
-	const FString Value = !Element.Value.IsEmpty() ? Element.Value : Element.SemanticKey;
-
-	switch (Element.ContainerOperation)
-	{
-		case EAssetDecodedContainerOperation::Add:
-			return FString::Printf(TEXT("+ %s"), *Value);
-
-		case EAssetDecodedContainerOperation::Remove:
-			return FString::Printf(TEXT("- %s"), *Value);
-
-		default:
-			return Value;
-	}
 }
 
 FAssetDecodedPropertyValue FAssetPropertyValueDecoder::Decode(const FAssetPackageDocument& Document, const FAssetSerializationTraceNode& Node, const int64 ExportSerialOffset)

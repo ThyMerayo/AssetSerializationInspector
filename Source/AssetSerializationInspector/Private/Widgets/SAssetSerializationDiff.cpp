@@ -1101,28 +1101,8 @@ bool SAssetSerializationDiff::LoadDocument(const FString& Filename, TSharedPtr<F
 	return OutDocument.IsValid();
 }
 
-// Test for Tracing the serialization of UTexture2D
-// #include "Serialization/BufferArchive.h"
-// #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
-
 FReply SAssetSerializationDiff::HandleCompareClicked()
 {
-	// 	{
-	// 		if (auto Object = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/AICON-Red.AICON-Red")))
-	// 		{
-	// 			FBufferArchive Buffer;
-	// 			FObjectAndNameAsStringProxyArchive UObjectArchive(Buffer, false);
-	// 			FAssetSerializationTraceArchive TraceArchive(UObjectArchive, 0);
-	// 			Object->Serialize(TraceArchive);
-	// 			FAssetSerializationTrace Trace = AssetSerializationTrace::BuildSerializationTrace(Object, Buffer.Num(), TraceArchive.GetEvents());
-	//
-	// 			for (const FAssetSerializationTraceEvent& Event : TraceArchive.GetEvents())
-	// 			{
-	// 				UE_LOG(LogTemp, Log, TEXT("%08llX  %8lld  %-50s  %s"), Event.Offset, Event.Size, *Event.PropertyPath, *Event.PropertyType);
-	// 			}
-	// 		}
-	// 	}
-
 	const FString OldFilename = OldFilenameTextBox.IsValid() ? OldFilenameTextBox->GetText().ToString().TrimStartAndEnd() : FString();
 	const FString NewFilename = NewFilenameTextBox.IsValid() ? NewFilenameTextBox->GetText().ToString().TrimStartAndEnd() : FString();
 
@@ -1489,35 +1469,6 @@ bool SAssetSerializationDiff::BuildTracesForSide(FAssetSerializationDiffSide& Si
 
 	Side.Traces = FAssetPackageFieldDecoder::Decode(*Side.Document.Get());
 
-	// 	Side.Traces = MakeShared<FAssetPackageTraceCollection>();
-	//
-	// 	for (const FAssetPackageExportEntry& Export : Side.Document->ExportMap)
-	// 	{
-	// 		const int32 ExportIndex = Export.Index;
-	//
-	// 		// For our current TEST tracing approach, we need to resolve
-	// 		// this export to an actual loaded UObject.
-	// 		UObject* Object = FindObjectForExport(*Side.Document, Export);
-	//
-	// 		if (Object == nullptr)
-	// 		{
-	// 			continue;
-	// 		}
-	//
-	// 		FBufferArchive Buffer;
-	//
-	// 		FObjectAndNameAsStringProxyArchive UObjectArchive(Buffer, false);
-	//
-	// 		FAssetSerializationTraceArchive TraceArchive(UObjectArchive, 0);
-	//
-	// 		Object->Serialize(TraceArchive);
-	//
-	// 		FAssetSerializationTrace Trace = BuildSerializationTrace(Object, Buffer.Num(), TraceArchive.GetEvents());
-	//
-	// 		// HERE:
-	// 		Side.Traces->ExportTraces.Add(ExportIndex, MoveTemp(Trace));
-	// 	}
-
 	return true;
 }
 
@@ -1681,102 +1632,6 @@ int64 SAssetSerializationDiff::GetSelectedChangedByteCount() const
 	}
 
 	return Result;
-}
-
-FText SAssetSerializationDiff::GetComparisonTitle() const
-{
-	if (!DiffSession.IsValid() || !DiffSession->New.Document.IsValid())
-	{
-		return LOCTEXT("ManualComparison", "Asset Comparison");
-	}
-
-	return FText::FromString(FPaths::GetBaseFilename(DiffSession->New.Document->Filename));
-}
-
-FText SAssetSerializationDiff::BuildHexPreview(const FAssetPackageDocument* Document, const int64 Offset, const int64 Size, bool bRelativeOffsets) const
-{
-	if (Document == nullptr)
-	{
-		return LOCTEXT("NoHexDocument", "No document loaded.");
-	}
-
-	if (Offset == INDEX_NONE)
-	{
-		return LOCTEXT("NoHexRange", "No byte range is available.");
-	}
-
-	if (Size < 0 || !Document->IsValidRange(Offset, Size))
-	{
-		return LOCTEXT("InvalidHexRange", "The selected byte range is invalid.");
-	}
-
-	if (Size == 0)
-	{
-		return LOCTEXT("EmptyHexRange", "The selected byte range is empty.");
-	}
-
-	constexpr int64 MaximumPreviewBytes = 4096;
-	constexpr int32 BytesPerRow = 16;
-
-	const int64 PreviewSize = FMath::Min<int64>(Size, MaximumPreviewBytes);
-
-	FString Result;
-
-	for (int64 RelativeOffset = 0; RelativeOffset < PreviewSize; RelativeOffset += BytesPerRow)
-	{
-		const int64 AbsoluteOffset = Offset + RelativeOffset;
-		const int64 DisplayOffset = bRelativeOffsets ? RelativeOffset : AbsoluteOffset;
-
-		Result += FString::Printf(TEXT("%08llX  "), DisplayOffset);
-
-		for (int32 Column = 0; Column < BytesPerRow; ++Column)
-		{
-			const int64 ByteIndex = RelativeOffset + Column;
-
-			if (ByteIndex < PreviewSize)
-			{
-				const uint8 Byte = Document->FileData[Offset + ByteIndex];
-
-				Result += FString::Printf(TEXT("%02X "), Byte);
-			}
-			else
-			{
-				Result += TEXT("   ");
-			}
-
-			if (Column == 7)
-			{
-				Result += TEXT(" ");
-			}
-		}
-
-		Result += TEXT(" |");
-
-		for (int32 Column = 0; Column < BytesPerRow; ++Column)
-		{
-			const int64 ByteIndex = RelativeOffset + Column;
-
-			if (ByteIndex >= PreviewSize)
-			{
-				break;
-			}
-
-			const uint8 Byte = Document->FileData[Offset + ByteIndex];
-
-			Result.AppendChar(Byte >= 32 && Byte <= 126 ? static_cast<TCHAR>(Byte) : TEXT('.'));
-		}
-
-		Result += TEXT("|");
-		Result += LINE_TERMINATOR;
-	}
-
-	if (Size > PreviewSize)
-	{
-		Result += LINE_TERMINATOR;
-		Result += FString::Printf(TEXT("Preview limited to %lld of %lld bytes."), PreviewSize, Size);
-	}
-
-	return FText::FromString(MoveTemp(Result));
 }
 
 FText SAssetSerializationDiff::GetSelectedOldHexRichText() const

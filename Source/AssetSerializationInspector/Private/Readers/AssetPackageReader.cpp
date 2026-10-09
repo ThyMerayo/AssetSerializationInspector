@@ -203,7 +203,6 @@ namespace
 		Document.NameMapError = FText::GetEmpty();
 		Document.bHasDecodedNameMap = false;
 
-		Document.NameMapRegionStart = 0;
 		Document.NameMapRegionEnd = 0;
 		Document.DecodedNameMapEnd = 0;
 
@@ -230,7 +229,6 @@ namespace
 		const int64 NameMapStart = Summary.NameOffset;
 		const int64 NameMapEnd = FindNameMapEnd(Document);
 
-		Document.NameMapRegionStart = NameMapStart;
 		Document.NameMapRegionEnd = NameMapEnd;
 
 		if (NameMapStart <= 0 || NameMapEnd <= NameMapStart || !Document.IsValidRange(NameMapStart, NameMapEnd - NameMapStart))
@@ -341,8 +339,6 @@ namespace
 	{
 		Document.ImportMap.Reset();
 
-		Document.ImportMapRegionStart = 0;
-		Document.ImportMapRegionEnd = 0;
 		Document.DecodedImportMapEnd = 0;
 		Document.ImportEntryStride = 0;
 
@@ -378,8 +374,6 @@ namespace
 		const int64 ImportMapStart = Summary.ImportOffset;
 		const int64 ImportMapEnd = FindImportMapEnd(Document);
 
-		Document.ImportMapRegionStart = ImportMapStart;
-		Document.ImportMapRegionEnd = ImportMapEnd;
 
 		if (ImportMapStart <= 0 || ImportMapEnd <= ImportMapStart || !Document.IsValidRange(ImportMapStart, ImportMapEnd - ImportMapStart))
 		{
@@ -510,8 +504,6 @@ namespace
 	{
 		Document.ExportMap.Reset();
 
-		Document.ExportMapRegionStart = 0;
-		Document.ExportMapRegionEnd = 0;
 		Document.DecodedExportMapEnd = 0;
 		Document.ExportEntryStride = 0;
 
@@ -547,8 +539,6 @@ namespace
 		const int64 ExportMapStart = Summary.ExportOffset;
 		const int64 ExportMapEnd = FindExportMapEnd(Document);
 
-		Document.ExportMapRegionStart = ExportMapStart;
-		Document.ExportMapRegionEnd = ExportMapEnd;
 
 		if (ExportMapStart <= 0 || ExportMapEnd <= ExportMapStart || !Document.IsValidRange(ExportMapStart, ExportMapEnd - ExportMapStart))
 		{

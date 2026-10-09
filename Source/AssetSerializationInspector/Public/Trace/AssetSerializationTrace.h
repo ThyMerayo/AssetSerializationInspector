@@ -47,7 +47,6 @@ struct FAssetSerializationTraceNode
 
 	int64 EndOffset() const { return Offset + Size; }
 
-	bool ContainsOffset(const int64 InOffset) const { return InOffset >= Offset && InOffset < EndOffset(); }
 
 	bool Overlaps(const int64 InOffset, const int64 InSize) const
 	{

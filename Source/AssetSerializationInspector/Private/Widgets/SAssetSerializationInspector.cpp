@@ -441,11 +441,6 @@ void SAssetSerializationInspector::HandleTreeSelectionChanged(FTreeNodePtr Item,
 	SelectedNode = Item;
 }
 
-FText SAssetSerializationInspector::GetSelectedNodeName() const
-{
-	return SelectedNode.IsValid() ? SelectedNode->DisplayName : LOCTEXT("NoSelectionName", "None");
-}
-
 FText SAssetSerializationInspector::GetSelectedNodeType() const
 {
 	return SelectedNode.IsValid() ? SelectedNode->TypeName : LOCTEXT("NoSelectionType", "None");
@@ -459,16 +454,6 @@ FText SAssetSerializationInspector::GetSelectedNodeOffset() const
 	}
 
 	return FText::FromString(FString::Printf(TEXT("0x%llX"), SelectedNode->Offset));
-}
-
-FText SAssetSerializationInspector::GetSelectedNodeSize() const
-{
-	if (!SelectedNode.IsValid())
-	{
-		return LOCTEXT("NoSelectionSize", "-");
-	}
-
-	return FText::Format(LOCTEXT("ByteCountFormat", "{0} bytes"), FText::AsNumber(SelectedNode->Size));
 }
 
 FText SAssetSerializationInspector::GetHexPreviewText() const
@@ -1043,17 +1028,6 @@ void SAssetSerializationInspector::NavigateToNode(const TSharedPtr<FAssetPackage
 	if (!Node.IsValid() || !PackageTreeView.IsValid())
 	{
 		return;
-	}
-
-	if (!bIsApplyingNavigationHistory && SelectedNode.IsValid() && SelectedNode != Node)
-	{
-		if (NavigationHistoryIndex + 1 < NavigationHistory.Num())
-		{
-			NavigationHistory.SetNum(NavigationHistoryIndex + 1);
-		}
-
-		NavigationHistory.Add(SelectedNode);
-		NavigationHistoryIndex = NavigationHistory.Num() - 1;
 	}
 
 	ExpandAncestors(Node);

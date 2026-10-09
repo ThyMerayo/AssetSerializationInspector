@@ -17,7 +17,6 @@ public:
 
 	void EndNode();
 
-	TSharedPtr<FAssetSerializationTraceNode> GetRoot() const { return Root; }
 
 private:
 	FArchive& Archive;
