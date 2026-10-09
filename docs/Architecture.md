@@ -38,6 +38,7 @@ Everything the plugin knows comes from the **bytes of the package files**. It re
 Layers, top to bottom. An arrow means "uses": a layer only uses the ones below it. The UI and the commandlet are thin, and start the same workflows.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 700}}}%%
 flowchart TB
     Entry["<b>Entry points</b><br/>Editor module: menus, windows, console commands<br/>Commandlet: headless runs"]
     Workflows["<b>Workflows</b><br/>Save observer and monitoring · Save history and repeated-save analysis<br/>No-op resave test and batch runner · Folder comparison and engine version inference<br/>Source control revision fetch · Coverage and blind spot scans"]
