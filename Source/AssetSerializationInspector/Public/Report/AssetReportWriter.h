@@ -59,4 +59,10 @@ namespace AssetReportWriter
 
 	/** Writes the report to disk as UTF-8, in the format implied by the filename's extension. */
 	bool SaveToFile(const FAssetAnalysisReport& Report, const FString& Filename, FText& OutError);
+
+	/** The text on one line: each line break replaced by " | ". */
+	FString OneLine(const FString& Value);
+
+	/** Writes report text to a file as UTF-8, making the folder; Content is called once the filename is known to be there. */
+	bool SaveTextToFile(const FString& Filename, TFunctionRef<FString()> Content, FText& OutError);
 } // namespace AssetReportWriter

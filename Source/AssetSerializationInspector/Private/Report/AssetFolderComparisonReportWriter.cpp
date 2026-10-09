@@ -2,8 +2,6 @@
 
 #include "Report/AssetFolderComparisonReportWriter.h"
 
-#include "HAL/FileManager.h"
-#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonWriter.h"
@@ -35,15 +33,6 @@ namespace
 		}
 
 		return TEXT("Unknown");
-	}
-
-	FString FlattenLines(const FString& Value)
-	{
-		FString Result = Value;
-		Result.ReplaceInline(TEXT("\r\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\r"), TEXT(" | "));
-		return Result;
 	}
 
 	FString VersionText(const FString& EngineVersion, const FString& FileVersion)
@@ -105,7 +94,7 @@ namespace
 
 			for (const FAssetBatchResaveChange& Change : Entry.Changes)
 			{
-				OutLines.Add(FString::Printf(TEXT("    - [%s] %s%s%s"), *Change.Category, *Change.Name, Change.Detail.IsEmpty() ? TEXT("") : TEXT(": "), *FlattenLines(Change.Detail)));
+				OutLines.Add(FString::Printf(TEXT("    - [%s] %s%s%s"), *Change.Category, *Change.Name, Change.Detail.IsEmpty() ? TEXT("") : TEXT(": "), *AssetReportWriter::OneLine(Change.Detail)));
 			}
 
 			if (Entry.ChangesOmitted > 0)
@@ -427,21 +416,7 @@ FString AssetFolderComparisonReportWriter::MakeDefaultFilename(const FString& Ol
 
 bool AssetFolderComparisonReportWriter::SaveToFile(const FAssetFolderComparisonResult& Result, const FString& Filename, FText& OutError)
 {
-	if (Filename.IsEmpty())
-	{
-		OutError = LOCTEXT("NoReportFilename", "No filename was provided for the report.");
-		return false;
-	}
-
-	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
-
-	if (!FFileHelper::SaveStringToFile(Write(Result, AssetReportWriter::GetFormatForFilename(Filename)), *Filename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-	{
-		OutError = FText::Format(LOCTEXT("ReportWriteFailed", "The report could not be written to:\n{0}"), FText::FromString(Filename));
-		return false;
-	}
-
-	return true;
+	return AssetReportWriter::SaveTextToFile(Filename, [&] { return Write(Result, AssetReportWriter::GetFormatForFilename(Filename)); }, OutError);
 }
 
 #undef LOCTEXT_NAMESPACE

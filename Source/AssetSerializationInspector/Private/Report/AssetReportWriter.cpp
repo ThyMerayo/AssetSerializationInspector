@@ -13,6 +13,8 @@
 
 #define LOCTEXT_NAMESPACE "AssetReportWriter"
 
+using AssetReportWriter::OneLine;
+
 namespace
 {
 	using FJsonWriter = TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>;
@@ -62,37 +64,6 @@ namespace
 				return TEXT("Modified");
 			case EAssetPackageDiffState::Moved:
 				return TEXT("Moved");
-		}
-
-		return TEXT("Unknown");
-	}
-
-	const TCHAR* NameOf(const EAssetSaveChangeClassification Classification)
-	{
-		switch (Classification)
-		{
-			case EAssetSaveChangeClassification::Unknown:
-				return TEXT("Unknown");
-			case EAssetSaveChangeClassification::PropertyValueChanged:
-				return TEXT("PropertyValueChanged");
-			case EAssetSaveChangeClassification::PropertyBecameSerialized:
-				return TEXT("PropertyBecameSerialized");
-			case EAssetSaveChangeClassification::PropertyBecameOmitted:
-				return TEXT("PropertyBecameOmitted");
-			case EAssetSaveChangeClassification::ContainerChanged:
-				return TEXT("ContainerChanged");
-			case EAssetSaveChangeClassification::ExportPayloadChanged:
-				return TEXT("ExportPayloadChanged");
-			case EAssetSaveChangeClassification::ExportRelocated:
-				return TEXT("ExportRelocated");
-			case EAssetSaveChangeClassification::PackageMetadataChanged:
-				return TEXT("PackageMetadataChanged");
-			case EAssetSaveChangeClassification::TableChanged:
-				return TEXT("TableChanged");
-			case EAssetSaveChangeClassification::NativeOrUndecodedChanged:
-				return TEXT("NativeOrUndecodedChanged");
-			case EAssetSaveChangeClassification::PropertyStoredDifferently:
-				return TEXT("PropertyStoredDifferently");
 		}
 
 		return TEXT("Unknown");
@@ -167,15 +138,6 @@ namespace
 	}
 
 	// ---- Text ----
-
-	FString OneLine(const FString& Value)
-	{
-		FString Result = Value;
-		Result.ReplaceInline(TEXT("\r\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\r"), TEXT(" | "));
-		return Result;
-	}
 
 	FString Indent(const int32 Depth)
 	{
@@ -481,7 +443,7 @@ namespace
 	void WriteExplanation(FJsonWriter& Writer, const FAssetSaveExplanationEntry& Entry)
 	{
 		Writer.WriteObjectStart();
-		Writer.WriteValue(TEXT("classification"), NameOf(Entry.Classification));
+		Writer.WriteValue(TEXT("classification"), LexToString(Entry.Classification));
 		Writer.WriteValue(TEXT("confidence"), NameOf(Entry.Confidence));
 		Writer.WriteValue(TEXT("causeConfidence"), NameOf(Entry.CauseConfidence));
 		Writer.WriteValue(TEXT("key"), Entry.Key);
@@ -738,7 +700,7 @@ FString AssetReportWriter::ToJson(const FAssetAnalysisReport& Report)
 			WriteOptionalString(*Writer, TEXT("oldValue"), Sample.OldValue, Sample.bHasOldValue);
 			WriteOptionalString(*Writer, TEXT("newValue"), Sample.NewValue, Sample.bHasNewValue);
 			Writer->WriteValue(TEXT("changedBytes"), Sample.ChangedByteCount);
-			Writer->WriteValue(TEXT("classification"), NameOf(Sample.Classification));
+			Writer->WriteValue(TEXT("classification"), LexToString(Sample.Classification));
 			Writer->WriteObjectEnd();
 		}
 		Writer->WriteArrayEnd();
@@ -804,6 +766,20 @@ EAssetReportFormat AssetReportWriter::GetFormatForFilename(const FString& Filena
 
 bool AssetReportWriter::SaveToFile(const FAssetAnalysisReport& Report, const FString& Filename, FText& OutError)
 {
+	return SaveTextToFile(Filename, [&] { return Write(Report, GetFormatForFilename(Filename)); }, OutError);
+}
+
+FString AssetReportWriter::OneLine(const FString& Value)
+{
+	FString Result = Value;
+	Result.ReplaceInline(TEXT("\r\n"), TEXT(" | "));
+	Result.ReplaceInline(TEXT("\n"), TEXT(" | "));
+	Result.ReplaceInline(TEXT("\r"), TEXT(" | "));
+	return Result;
+}
+
+bool AssetReportWriter::SaveTextToFile(const FString& Filename, const TFunctionRef<FString()> Content, FText& OutError)
+{
 	if (Filename.IsEmpty())
 	{
 		OutError = LOCTEXT("NoReportFilename", "No filename was provided for the report.");
@@ -812,7 +788,7 @@ bool AssetReportWriter::SaveToFile(const FAssetAnalysisReport& Report, const FSt
 
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
 
-	if (!FFileHelper::SaveStringToFile(Write(Report, GetFormatForFilename(Filename)), *Filename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	if (!FFileHelper::SaveStringToFile(Content(), *Filename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
 		OutError = FText::Format(LOCTEXT("ReportWriteFailed", "The report could not be written to:\n{0}"), FText::FromString(Filename));
 		return false;
