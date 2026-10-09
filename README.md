@@ -14,7 +14,7 @@ Targets **Unreal Engine 5.8.2** and works on **vanilla engine builds** (no engin
 - **Monitor** assets and spot values that change on every save. [Details](docs/Features.md#repeated-save-analysis)
 - **Test a no-op resave**: does Unreal rewrite this asset when nothing was edited, and does it do so every time? Works on one asset, a folder or a whole project. [Details](docs/Features.md#no-op-resave-test)
 - **Compare** two folders (for example before and after an engine upgrade), or an asset against a source control revision. [Details](docs/Features.md#folder-comparison-and-engine-versions)
-- **Read native data** instead of showing opaque bytes: Blueprint classes and bytecode, graph pins, textures (source and cooked), static and skeletal meshes, morph targets. [What is read](docs/NativeData.md)
+- **Read native data** instead of showing opaque bytes: Blueprint classes and bytecode, graph pins, textures (source and cooked), static and skeletal meshes, morph targets, data tables. [What is read](docs/NativeData.md)
 - **Report** to text, JSON or self-contained HTML, from the editor or a headless commandlet. [Details](docs/Usage.md#running-headless)
 
 ## Example

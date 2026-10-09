@@ -1,6 +1,6 @@
 # Roadmap
 
-82 of 88 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
+83 of 89 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
 
 ## Still open
 
@@ -131,6 +131,7 @@ Skeletons, imported models, and morph target deltas.
 - [ ] Skeletal meshes with cloth data or skin weight profiles: no sample in the engine content (the cooked reader has branches for them, unchecked against a real mesh)
 - [x] Morph targets: objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), read to the last byte with a hash of the deltas of each LOD (858 of the engine's plugins)
 - [ ] Cooked morph targets that store their deltas compressed (`FDeltaBatchHeader` and the packed deltas): no sample, they fail with a reason
+- [x] Data tables: the rows of a `UDataTable` (a name and the row struct each), listed as rows added, removed and the values that changed in a row; 33 of 33 on the engine's plugins
 
 ## Search, reports and workflows
 

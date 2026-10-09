@@ -23,6 +23,7 @@ Some bytes of an export are not tagged properties: mesh and texture data, compil
 | [Static meshes](#static-meshes) | slots, sockets, collision, render LODs, Nanite, distance fields, cards | 1,374 of 1,374 (plugins), 184 of 184 (engine content) |
 | [Skeletal meshes](#skeletal-meshes) | bones, materials, bounds, LODs, sections, vertices | 58 of 58 (plugins) |
 | [Morph targets](#morph-targets) | which LOD's vertex deltas changed | 858 of 858 (plugins) |
+| [Data tables](#data-tables) | rows added, removed, and the values that changed in a row | 33 of 33 (plugins) |
 
 The same numbers come from the decoder coverage scan, which also lists what could not be read ([how to run it](Architecture.md#coverage-scan)).
 
@@ -228,6 +229,16 @@ The diff names the LOD whose deltas changed, so a moved vertex shows as a change
 
 Coverage: 858 of 858 on the engine's plugins.
 
+## Data tables
+
+A data table (`UDataTable`) writes its rows after its tagged properties (`UDataTable::LoadStructData`): a count, then for each row its name and the row struct, written like any struct. The struct comes from the table's `RowStruct` property, and each row is read with the property decoder, so every property type it knows is shown as it is in a property diff.
+
+The diff pairs rows by name, since a table is a map and the order it is saved in is not a change. It lists the rows that were added or removed with their values, and for a row that stayed, each property that changed (`Row/Sword/Damage`: 10 to 12), was added or was removed. A change of the row struct is listed too.
+
+**Not read** (the entry says why, and the table stays opaque): a table whose row struct cannot be named, and a row with a property type the decoder does not read. The table is read as a whole or not at all.
+
+Coverage: 33 of 33 on the engine's plugins, the biggest with more than a hundred thousand rows.
+
 ## Engine layouts followed
 
 For anyone checking a reader against the engine source:
@@ -242,3 +253,4 @@ For anyone checking a reader against the engine source:
 | Static meshes | `UStaticMesh::Serialize`, `FStaticMeshRenderData`, `FStaticMeshSourceModel` (older editors) |
 | Skeletal meshes | `USkeletalMesh::Serialize`, `FSkeletalMaterial`, `FReferenceSkeleton`, `FSkeletalMeshModel`, `FSkeletalMeshLODModel`, `FSkelMeshSection`, `FSoftSkinVertex` |
 | Morph targets | `UMorphTarget::Serialize`, `FMorphTargetLODModel` |
+| Data tables | `UDataTable::Serialize`, `UDataTable::LoadStructData` |

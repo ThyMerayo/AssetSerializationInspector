@@ -111,6 +111,11 @@ struct FAssetDecoderCoverageResult
 	int32 MorphTargetsRead = 0;
 	TArray<FAssetDecoderCoverageIssue> MorphTargetIssues;
 
+	/** The data tables found, how many were read to their last byte, and why the others were not. */
+	int32 DataTablesScanned = 0;
+	int32 DataTablesRead = 0;
+	TArray<FAssetDecoderCoverageIssue> DataTableIssues;
+
 	/** Most widespread (then largest) first. */
 	TArray<FAssetDecoderCoverageIssue> Issues;
 	TArray<FAssetNativeRegionStat> NativeRegions;

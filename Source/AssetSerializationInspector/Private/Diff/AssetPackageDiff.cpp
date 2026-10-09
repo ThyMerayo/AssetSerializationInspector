@@ -13,6 +13,7 @@
 #include "Serialization/AssetArchetypeResolver.h"
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetContainerFinalValue.h"
+#include "Serialization/AssetDataTableData.h"
 #include "Serialization/AssetGraphNodePins.h"
 #include "Serialization/AssetMeshGeometry.h"
 #include "Serialization/AssetMipBlocks.h"
@@ -1112,6 +1113,38 @@ namespace
 	}
 
 	/**
+	 * The rows of a data table, read on both sides. A row that was added or removed shows with its values, and a row that stayed shows
+	 * the properties that changed; the order the rows were written in is not a change.
+	 */
+	bool AppendDataTableChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
+		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
+	{
+		FAssetDataTableData OldData;
+		FAssetDataTableData NewData;
+		if (!AssetDataTableData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData, OldTrace)
+			|| !AssetDataTableData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData, NewTrace))
+		{
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "DataTableData", "Data table rows");
+		AddNativeDataChildren(AssetDataTableData::Compare(OldData, NewData), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation = NSLOCTEXT("AssetPackageDiff", "DataTableRenumbered", "The rows and their values are the same; the bytes differ because of the order of the rows or ids.");
+		}
+
+		return true;
+	}
+
+	/**
 	 * The LODs of a morph target, read on both sides. The vertex deltas are hashed, so a change shows as a LOD whose deltas changed; when
 	 * nothing in the LODs differs, only ids and the numbering of objects do.
 	 */
@@ -1211,7 +1244,8 @@ namespace
 	{
 		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
 			&& !AppendStaticMeshChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry)
-			&& !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry))
+			&& !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry)
+			&& !AppendDataTableChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry))
 		{
 			AppendBulkDataChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry);
 		}
