@@ -716,4 +716,51 @@ bool FAssetStaticMeshData_ShowsAChangeOfTheCardsAndTheDistanceField::RunTest(con
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetStaticMeshData_ReadsTheRawMeshOfAnOlderStill, "AssetSerializationInspector.Serialization.AssetStaticMeshData.ReadsTheRawMeshOfAnOlderStill",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetStaticMeshData_ReadsTheRawMeshOfAnOlderStill::RunTest(const FString& Parameters)
+{
+	using namespace StaticMeshTestUtils;
+
+	// The garbage matte plane of the mixed reality capture plugin was saved before the raw mesh was replaced by the mesh description.
+	const FString Path = FPaths::Combine(FPaths::EnginePluginsDir(), TEXT("Runtime/MixedRealityCaptureFramework/Content/SM_GarbageMattePlane.uasset"));
+	if (!IFileManager::Get().FileExists(*Path))
+	{
+		AddInfo(TEXT("The engine does not have the mixed reality capture plugin, so there is nothing to read."));
+		return true;
+	}
+
+	FText Error;
+	const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(Path, Error);
+	if (!TestTrue(TEXT("The mesh loads"), Document.IsValid()))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+	int32 Read = 0;
+	for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+	{
+		FAssetStaticMeshData Data;
+		if (!DecodeData(*Document, *Traces, Export, Data))
+		{
+			continue;
+		}
+
+		++Read;
+		TestTrue(FString::Printf(TEXT("Read to the last byte (%s)"), *Data.Error), Data.bComplete);
+		if (TestEqual(TEXT("One source model"), Data.SourceModels.Num(), 1))
+		{
+			TestTrue(TEXT("It is a raw mesh"), Data.SourceModels[0].bRawMesh && Data.SourceModels[0].bHasMeshDescription);
+			TestEqual(TEXT("Of 284 bytes"), Data.SourceModels[0].PayloadSize, static_cast<int64>(284));
+			TestFalse(TEXT("With an identifier"), Data.SourceModels[0].MeshGuid.IsEmpty());
+		}
+		TestEqual(TEXT("And one material slot"), Data.Materials.Num(), 1);
+	}
+
+	TestEqual(TEXT("It has one static mesh"), Read, 1);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
