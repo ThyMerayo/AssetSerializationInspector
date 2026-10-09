@@ -982,14 +982,56 @@ namespace
 		RangeEntry.bNativeDataDecoded = !RangeEntry.Children.IsEmpty();
 	}
 
+	/** One side of a native range that changed: the package and export it is in, where it is, and what the readers of native data may need besides. */
+	struct FNativeSide
+	{
+		const FAssetPackageDocument& Document;
+		const FAssetPackageExportEntry& Export;
+		const FAssetSerializationTrace* Trace;
+		const FAssetGraphPinNames& PinNames;
+		int64 Offset;
+		int64 Size;
+	};
+
+	/**
+	 * What reading a kind of native data on both sides comes to, for the readers that explain a range completely: Decode reads one side
+	 * (and says false when the export is not of the kind), and when both were read to their last byte Compare lists what differs. When
+	 * nothing does, the bytes differ only by ids and numbering, which the entry says.
+	 */
+	template <typename TData, typename TDecode, typename TCompare>
+	bool AppendReadNativeData(
+		const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry, const FText& Title, const FText& NumberingExplanation, TDecode&& Decode, TCompare&& Compare)
+	{
+		TData OldData;
+		TData NewData;
+		if (!Decode(Old, OldData) || !Decode(New, NewData))
+		{
+			return false;
+		}
+
+		if (!OldData.bComplete || !NewData.bComplete)
+		{
+			return true;
+		}
+
+		RangeEntry.NativeDataTitle = Title;
+		AddNativeDataChildren(Compare(OldData, NewData), RangeEntry);
+
+		if (RangeEntry.Children.IsEmpty())
+		{
+			RangeEntry.bRepresentationOnly = true;
+			RangeEntry.Explanation = NumberingExplanation;
+		}
+
+		return true;
+	}
+
 	/** The data of a class or function, read on both sides. Returns false when the export is not one. */
-	bool AppendStructDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendStructDataChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetStructNativeData OldData;
 		FAssetStructNativeData NewData;
-		if (!AssetStructNativeData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetStructNativeData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		if (!AssetStructNativeData::Decode(Old.Document, Old.Export, Old.Offset, Old.Size, OldData) || !AssetStructNativeData::Decode(New.Document, New.Export, New.Offset, New.Size, NewData))
 		{
 			return false;
 		}
@@ -999,7 +1041,7 @@ namespace
 		if (OldData.bComplete && NewData.bComplete)
 		{
 			RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "ClassOrFunctionData", "Class or function data");
-			AddNativeDataChildren(AssetStructNativeData::Compare(OldDocument, OldData, NewDocument, NewData), RangeEntry);
+			AddNativeDataChildren(AssetStructNativeData::Compare(Old.Document, OldData, New.Document, NewData), RangeEntry);
 		}
 
 		return true;
@@ -1009,66 +1051,27 @@ namespace
 	 * The pins of a graph node, read on both sides. When the pins are the same but the bytes differ, the references to other objects
 	 * were renumbered (a node was added or removed before them in the export map), which is not a change of the graph.
 	 */
-	bool AppendPinChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetGraphPinNames& OldNames, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, const FAssetGraphPinNames& NewNames, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendPinChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
-		FAssetGraphNodePins OldData;
-		FAssetGraphNodePins NewData;
-		if (!AssetGraphNodePins::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetGraphNodePins::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
-		{
-			return false;
-		}
-
-		if (!OldData.bComplete || !NewData.bComplete)
-		{
-			return true;
-		}
-
-		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "GraphNodePins", "Graph node pins");
-		AddNativeDataChildren(AssetGraphNodePins::Compare(OldData, OldNames, NewData, NewNames), RangeEntry);
-
-		if (RangeEntry.Children.IsEmpty())
-		{
-			RangeEntry.bRepresentationOnly = true;
-			RangeEntry.Explanation =
-				NSLOCTEXT("AssetPackageDiff", "PinsRenumbered", "The pins, their values and their links are the same; the bytes differ because the objects they refer to are numbered differently.");
-		}
-
-		return true;
+		return AppendReadNativeData<FAssetGraphNodePins>(
+			Old, New, RangeEntry, NSLOCTEXT("AssetPackageDiff", "GraphNodePins", "Graph node pins"),
+			NSLOCTEXT("AssetPackageDiff", "PinsRenumbered", "The pins, their values and their links are the same; the bytes differ because the objects they refer to are numbered differently."),
+			[](const FNativeSide& Side, FAssetGraphNodePins& Out) { return AssetGraphNodePins::Decode(Side.Document, Side.Export, Side.Offset, Side.Size, Out); },
+			[&](const FAssetGraphNodePins& OldData, const FAssetGraphNodePins& NewData) { return AssetGraphNodePins::Compare(OldData, Old.PinNames, NewData, New.PinNames); });
 	}
 
 	/**
 	 * The collision, sockets and material slots of a static mesh, read on both sides. The geometry is not in the export: it is the
 	 * mesh description the source model refers to.
 	 */
-	bool AppendStaticMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace,
-		const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendStaticMeshChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
-		FAssetStaticMeshData OldData;
-		FAssetStaticMeshData NewData;
-		if (!AssetStaticMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData, OldTrace)
-			|| !AssetStaticMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData, NewTrace))
-		{
-			return false;
-		}
-
-		if (!OldData.bComplete || !NewData.bComplete)
-		{
-			return true;
-		}
-
-		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "StaticMeshData", "Static mesh data");
-		AddNativeDataChildren(AssetStaticMeshData::Compare(OldData, NewData), RangeEntry);
-
-		if (RangeEntry.Children.IsEmpty())
-		{
-			RangeEntry.bRepresentationOnly = true;
-			RangeEntry.Explanation = NSLOCTEXT(
-				"AssetPackageDiff", "StaticMeshRenumbered", "The collision, sockets and material slots are the same; the bytes differ because the objects they refer to are numbered differently.");
-		}
-
-		return true;
+		return AppendReadNativeData<FAssetStaticMeshData>(
+			Old, New, RangeEntry, NSLOCTEXT("AssetPackageDiff", "StaticMeshData", "Static mesh data"),
+			NSLOCTEXT(
+				"AssetPackageDiff", "StaticMeshRenumbered", "The collision, sockets and material slots are the same; the bytes differ because the objects they refer to are numbered differently."),
+			[](const FNativeSide& Side, FAssetStaticMeshData& Out) { return AssetStaticMeshData::Decode(Side.Document, Side.Export, Side.Offset, Side.Size, Out, Side.Trace); },
+			[](const FAssetStaticMeshData& OldData, const FAssetStaticMeshData& NewData) { return AssetStaticMeshData::Compare(OldData, NewData); });
 	}
 
 	/**
@@ -1076,13 +1079,11 @@ namespace
 	 * vertices) when it is in a layout that is read. When both sides are read to the last byte the range is explained like any other;
 	 * when only the start is, what was read is listed as changes, and the entry says that the rest is not.
 	 */
-	bool AppendSkeletalMeshChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendSkeletalMeshChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetSkeletalMeshData OldData;
 		FAssetSkeletalMeshData NewData;
-		if (!AssetSkeletalMeshData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetSkeletalMeshData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		if (!AssetSkeletalMeshData::Decode(Old.Document, Old.Export, Old.Offset, Old.Size, OldData) || !AssetSkeletalMeshData::Decode(New.Document, New.Export, New.Offset, New.Size, NewData))
 		{
 			return false;
 		}
@@ -1116,64 +1117,26 @@ namespace
 	 * The rows of a data table, read on both sides. A row that was added or removed shows with its values, and a row that stayed shows
 	 * the properties that changed; the order the rows were written in is not a change.
 	 */
-	bool AppendDataTableChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendDataTableChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
-		FAssetDataTableData OldData;
-		FAssetDataTableData NewData;
-		if (!AssetDataTableData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData, OldTrace)
-			|| !AssetDataTableData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData, NewTrace))
-		{
-			return false;
-		}
-
-		if (!OldData.bComplete || !NewData.bComplete)
-		{
-			return true;
-		}
-
-		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "DataTableData", "Data table rows");
-		AddNativeDataChildren(AssetDataTableData::Compare(OldData, NewData), RangeEntry);
-
-		if (RangeEntry.Children.IsEmpty())
-		{
-			RangeEntry.bRepresentationOnly = true;
-			RangeEntry.Explanation = NSLOCTEXT("AssetPackageDiff", "DataTableRenumbered", "The rows and their values are the same; the bytes differ because of the order of the rows or ids.");
-		}
-
-		return true;
+		return AppendReadNativeData<FAssetDataTableData>(
+			Old, New, RangeEntry, NSLOCTEXT("AssetPackageDiff", "DataTableData", "Data table rows"),
+			NSLOCTEXT("AssetPackageDiff", "DataTableRenumbered", "The rows and their values are the same; the bytes differ because of the order of the rows or ids."),
+			[](const FNativeSide& Side, FAssetDataTableData& Out) { return AssetDataTableData::Decode(Side.Document, Side.Export, Side.Offset, Side.Size, Out, Side.Trace); },
+			[](const FAssetDataTableData& OldData, const FAssetDataTableData& NewData) { return AssetDataTableData::Compare(OldData, NewData); });
 	}
 
 	/**
 	 * The LODs of a morph target, read on both sides. The vertex deltas are hashed, so a change shows as a LOD whose deltas changed; when
 	 * nothing in the LODs differs, only ids and the numbering of objects do.
 	 */
-	bool AppendMorphTargetChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendMorphTargetChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
-		FAssetMorphTargetData OldData;
-		FAssetMorphTargetData NewData;
-		if (!AssetMorphTargetData::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetMorphTargetData::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
-		{
-			return false;
-		}
-
-		if (!OldData.bComplete || !NewData.bComplete)
-		{
-			return true;
-		}
-
-		RangeEntry.NativeDataTitle = NSLOCTEXT("AssetPackageDiff", "MorphTargetData", "Morph target data");
-		AddNativeDataChildren(AssetMorphTargetData::Compare(OldData, NewData), RangeEntry);
-
-		if (RangeEntry.Children.IsEmpty())
-		{
-			RangeEntry.bRepresentationOnly = true;
-			RangeEntry.Explanation = NSLOCTEXT("AssetPackageDiff", "MorphTargetRenumbered", "The LODs and their vertex deltas are the same; the bytes differ because of ids.");
-		}
-
-		return true;
+		return AppendReadNativeData<FAssetMorphTargetData>(
+			Old, New, RangeEntry, NSLOCTEXT("AssetPackageDiff", "MorphTargetData", "Morph target data"),
+			NSLOCTEXT("AssetPackageDiff", "MorphTargetRenumbered", "The LODs and their vertex deltas are the same; the bytes differ because of ids."),
+			[](const FNativeSide& Side, FAssetMorphTargetData& Out) { return AssetMorphTargetData::Decode(Side.Document, Side.Export, Side.Offset, Side.Size, Out); },
+			[](const FAssetMorphTargetData& OldData, const FAssetMorphTargetData& NewData) { return AssetMorphTargetData::Compare(OldData, NewData); });
 	}
 
 	/**
@@ -1181,13 +1144,11 @@ namespace
 	 * so a change shows as the content hash and the size of the data; when they are the same and only where the data is kept or its
 	 * identifier differ, nothing of the asset changed.
 	 */
-	bool AppendBulkDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetPackageDocument& NewDocument,
-		const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, FAssetPackageDiffEntry& RangeEntry)
+	bool AppendBulkDataChanges(const FNativeSide& Old, const FNativeSide& New, FAssetPackageDiffEntry& RangeEntry)
 	{
 		FAssetBulkDataExport OldData;
 		FAssetBulkDataExport NewData;
-		if (!AssetBulkDataExport::Decode(OldDocument, OldExport, RangeEntry.OldOffset, RangeEntry.OldSize, OldData)
-			|| !AssetBulkDataExport::Decode(NewDocument, NewExport, RangeEntry.NewOffset, RangeEntry.NewSize, NewData))
+		if (!AssetBulkDataExport::Decode(Old.Document, Old.Export, Old.Offset, Old.Size, OldData) || !AssetBulkDataExport::Decode(New.Document, New.Export, New.Offset, New.Size, NewData))
 		{
 			return false;
 		}
@@ -1207,7 +1168,7 @@ namespace
 		if (bSourceChanged && NewData.Kind == TEXT("Texture"))
 		{
 			AssetSourceImage::AppendPixelChange(
-				AssetSourceImage::Load(OldDocument, OldExport, OldTrace, OldData.Bulk), AssetSourceImage::Load(NewDocument, NewExport, NewTrace, NewData.Bulk), Changes);
+				AssetSourceImage::Load(Old.Document, Old.Export, Old.Trace, OldData.Bulk), AssetSourceImage::Load(New.Document, New.Export, New.Trace, NewData.Bulk), Changes);
 		}
 
 		// A cooked texture whose mips changed: which blocks of each, when the package or its sidecar file holds them.
@@ -1215,14 +1176,14 @@ namespace
 		{
 			for (int32 PlatformIndex = 0; PlatformIndex < FMath::Min(OldData.PlatformData.Num(), NewData.PlatformData.Num()); ++PlatformIndex)
 			{
-				AssetMipBlocks::AppendBlockChanges(OldDocument, OldData.PlatformData[PlatformIndex], NewDocument, NewData.PlatformData[PlatformIndex], PlatformIndex, Changes);
+				AssetMipBlocks::AppendBlockChanges(Old.Document, OldData.PlatformData[PlatformIndex], New.Document, NewData.PlatformData[PlatformIndex], PlatformIndex, Changes);
 			}
 		}
 
 		// A mesh description whose content changed: say what changed in the geometry, when the package holds it.
 		if (bSourceChanged && NewData.Kind == TEXT("Mesh description"))
 		{
-			AssetMeshGeometry::AppendGeometryChange(AssetMeshGeometry::Load(OldDocument, OldData.Bulk), AssetMeshGeometry::Load(NewDocument, NewData.Bulk), Changes);
+			AssetMeshGeometry::AppendGeometryChange(AssetMeshGeometry::Load(Old.Document, OldData.Bulk), AssetMeshGeometry::Load(New.Document, NewData.Bulk), Changes);
 		}
 
 		AddNativeDataChildren(Changes, RangeEntry);
@@ -1237,17 +1198,24 @@ namespace
 		return true;
 	}
 
-	/** Reads the native data of a class, function or graph node on both sides and adds what differs in it as children of the range's entry. */
+	/**
+	 * Reads the native data of a class, function, graph node, mesh, morph target, data table, texture or mesh description on both sides and adds what differs in it as
+	 * children of the range's entry. The first reader that knows the export wins.
+	 */
 	void AppendNativeDataChanges(const FAssetPackageDocument& OldDocument, const FAssetPackageExportEntry& OldExport, const FAssetSerializationTrace* OldTrace, const FAssetGraphPinNames& OldNames,
 		const FAssetPackageDocument& NewDocument, const FAssetPackageExportEntry& NewExport, const FAssetSerializationTrace* NewTrace, const FAssetGraphPinNames& NewNames,
 		FAssetPackageDiffEntry& RangeEntry)
 	{
-		if (!AppendStructDataChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendPinChanges(OldDocument, OldExport, OldNames, NewDocument, NewExport, NewNames, RangeEntry)
-			&& !AppendStaticMeshChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry)
-			&& !AppendSkeletalMeshChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry) && !AppendMorphTargetChanges(OldDocument, OldExport, NewDocument, NewExport, RangeEntry)
-			&& !AppendDataTableChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry))
+		const FNativeSide Old{ OldDocument, OldExport, OldTrace, OldNames, RangeEntry.OldOffset, RangeEntry.OldSize };
+		const FNativeSide New{ NewDocument, NewExport, NewTrace, NewNames, RangeEntry.NewOffset, RangeEntry.NewSize };
+
+		for (bool (*Append)(const FNativeSide&, const FNativeSide&, FAssetPackageDiffEntry&) :
+			{ &AppendStructDataChanges, &AppendPinChanges, &AppendStaticMeshChanges, &AppendSkeletalMeshChanges, &AppendMorphTargetChanges, &AppendDataTableChanges, &AppendBulkDataChanges })
 		{
-			AppendBulkDataChanges(OldDocument, OldExport, OldTrace, NewDocument, NewExport, NewTrace, RangeEntry);
+			if (Append(Old, New, RangeEntry))
+			{
+				return;
+			}
 		}
 	}
 
