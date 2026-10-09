@@ -24,7 +24,7 @@ Some bytes of an export are not tagged properties: mesh and texture data, compil
 | [Skeletal meshes](#skeletal-meshes) | bones, materials, bounds, LODs, sections, vertices | 58 of 58 (plugins) |
 | [Morph targets](#morph-targets) | which LOD's vertex deltas changed | 858 of 858 (plugins) |
 
-The same numbers come from the decoder coverage scan, which also lists what could not be read ([how to run it](Architecture.md#decoder-coverage-scan)).
+The same numbers come from the decoder coverage scan, which also lists what could not be read ([how to run it](Architecture.md#coverage-scan)).
 
 ## Classes and functions
 
