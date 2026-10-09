@@ -618,3 +618,34 @@ FAssetSaveAnalysis FAssetSaveAnalyzer::Analyze(const FAssetPackageDiffResult& Di
 
 	return Result;
 }
+
+const TCHAR* LexToString(const EAssetSaveChangeClassification Classification)
+{
+	switch (Classification)
+	{
+		case EAssetSaveChangeClassification::Unknown:
+			return TEXT("Unknown");
+		case EAssetSaveChangeClassification::PropertyValueChanged:
+			return TEXT("PropertyValueChanged");
+		case EAssetSaveChangeClassification::PropertyBecameSerialized:
+			return TEXT("PropertyBecameSerialized");
+		case EAssetSaveChangeClassification::PropertyBecameOmitted:
+			return TEXT("PropertyBecameOmitted");
+		case EAssetSaveChangeClassification::ContainerChanged:
+			return TEXT("ContainerChanged");
+		case EAssetSaveChangeClassification::ExportPayloadChanged:
+			return TEXT("ExportPayloadChanged");
+		case EAssetSaveChangeClassification::ExportRelocated:
+			return TEXT("ExportRelocated");
+		case EAssetSaveChangeClassification::PackageMetadataChanged:
+			return TEXT("PackageMetadataChanged");
+		case EAssetSaveChangeClassification::TableChanged:
+			return TEXT("TableChanged");
+		case EAssetSaveChangeClassification::NativeOrUndecodedChanged:
+			return TEXT("NativeOrUndecodedChanged");
+		case EAssetSaveChangeClassification::PropertyStoredDifferently:
+			return TEXT("PropertyStoredDifferently");
+	}
+
+	return TEXT("Unknown");
+}

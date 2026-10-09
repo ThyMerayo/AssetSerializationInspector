@@ -36,6 +36,9 @@ enum class EAssetSaveChangeClassification : uint8
 	PropertyStoredDifferently
 };
 
+/** The name of a classification, as the reports and the batch results write it. */
+const TCHAR* LexToString(EAssetSaveChangeClassification Classification);
+
 enum class EAssetSaveResultKind : uint8
 {
 	Identical,

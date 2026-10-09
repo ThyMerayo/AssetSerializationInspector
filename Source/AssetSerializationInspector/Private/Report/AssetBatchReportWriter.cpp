@@ -2,8 +2,6 @@
 
 #include "Report/AssetBatchReportWriter.h"
 
-#include "HAL/FileManager.h"
-#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonWriter.h"
@@ -48,22 +46,13 @@ namespace
 		return TEXT("Unknown");
 	}
 
-	FString CollapseLines(const FString& Value)
-	{
-		FString Result = Value;
-		Result.ReplaceInline(TEXT("\r\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\n"), TEXT(" | "));
-		Result.ReplaceInline(TEXT("\r"), TEXT(" | "));
-		return Result;
-	}
-
 	void AppendChanges(const TCHAR* Heading, const int64 ChangedBytes, const TArray<FAssetBatchResaveChange>& Changes, const int32 Omitted, TArray<FString>& OutLines)
 	{
 		OutLines.Add(FString::Printf(TEXT("    %s: %lld changed bytes, %d changes"), Heading, ChangedBytes, Changes.Num() + Omitted));
 
 		for (const FAssetBatchResaveChange& Change : Changes)
 		{
-			OutLines.Add(FString::Printf(TEXT("      - [%s] %s%s%s"), *Change.Category, *Change.Name, Change.Detail.IsEmpty() ? TEXT("") : TEXT(": "), *CollapseLines(Change.Detail)));
+			OutLines.Add(FString::Printf(TEXT("      - [%s] %s%s%s"), *Change.Category, *Change.Name, Change.Detail.IsEmpty() ? TEXT("") : TEXT(": "), *AssetReportWriter::OneLine(Change.Detail)));
 		}
 
 		if (Omitted > 0)
@@ -401,21 +390,7 @@ FString AssetBatchReportWriter::MakeDefaultFilename(const FString& Scope, const 
 
 bool AssetBatchReportWriter::SaveToFile(const FAssetBatchResaveResult& Result, const FString& Filename, FText& OutError)
 {
-	if (Filename.IsEmpty())
-	{
-		OutError = LOCTEXT("NoReportFilename", "No filename was provided for the report.");
-		return false;
-	}
-
-	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
-
-	if (!FFileHelper::SaveStringToFile(Write(Result, AssetReportWriter::GetFormatForFilename(Filename)), *Filename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-	{
-		OutError = FText::Format(LOCTEXT("ReportWriteFailed", "The report could not be written to:\n{0}"), FText::FromString(Filename));
-		return false;
-	}
-
-	return true;
+	return AssetReportWriter::SaveTextToFile(Filename, [&] { return Write(Result, AssetReportWriter::GetFormatForFilename(Filename)); }, OutError);
 }
 
 #undef LOCTEXT_NAMESPACE
