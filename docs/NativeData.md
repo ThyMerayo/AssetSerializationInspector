@@ -202,7 +202,19 @@ The diff lists:
 
 Earlier layouts are read back to 4.2x: their raw point indices and reduction sources were bulk data blocks of their own (the older bulk data format), and their sections have no ray tracing flag.
 
-**Not read** (the entry says so, the mesh is read from the start only, and its changed bytes stay unexplained): cloth data, skin weight profiles, older layouts still, and the render data of a cooked skeletal mesh.
+### Cooked skeletal meshes
+
+A cooked skeletal mesh has no imported model; it has **render data** (`FSkeletalMeshRenderData`), which is read to the last byte. Per LOD:
+
+- the required and active bones, and the **sections** (material, triangles, vertices, the bones each is skinned to as a count and a hash, the most bone influences, shadow and ray tracing flags, the cloth it maps to),
+- the **buffers** (indices, positions, tangents and UVs, colors, skin weights, cloth, morph targets...) as one block of the size the LOD records, hashed from the export or from the sidecar file it streams from,
+- the record of what the buffers hold: vertices, indices and their width, UV channels, vertex colors, bone influences (and whether they vary per vertex), cloth vertices and skin weight profiles.
+
+Then the Nanite data and how many LODs are inlined. The diff names the LOD and the section that changed, and a changed vertex or weight shows as a changed buffer hash with the counts next to it, as for static meshes. The contents of the buffers are hashed, not decoded.
+
+Coverage: all 13 skeletal meshes of a cook of the engine's animation plugins (one to three LODs, up to 12,972 vertices and 8 bone influences).
+
+**Not read** (the entry says so, the mesh is read from the start only, and its changed bytes stay unexplained): older layouts of the imported model, and in a cooked mesh the duplicated vertices of a section, a layout older than unlimited bone influences, and meshes cooked with editor data. Cloth data and skin weight profiles are read as counts only where a sample was available; none was, so those branches are not checked against a real mesh.
 
 Coverage: all 3 on the engine content, all 58 on the engine's plugins.
 

@@ -21,7 +21,11 @@
 #include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetNumberText.h"
+#include "Serialization/AssetRenderDataReaders.h"
 #include "Serialization/AssetSchemaReflection.h"
+
+using namespace AssetCookedBulkData;
+using namespace AssetRenderDataReaders;
 
 namespace
 {
@@ -449,10 +453,242 @@ FString FAssetSkeletalMeshLod::Describe() const
 	return FString::Printf(TEXT("%d sections, %u vertices, %d indices, %u UV channels, %d bones"), Sections.Num(), NumVertices, IndexCount, NumTexCoords, RequiredBoneCount);
 }
 
+FString FAssetSkeletalRenderSection::Describe() const
+{
+	FString Text = FString::Printf(TEXT("material %u, %u triangles from index %u, %u vertices from %u, %d bones (%s), up to %u influences"), MaterialIndex, NumTriangles, BaseIndex, NumVertices,
+		BaseVertexIndex, BoneCount, *BoneMapHash, MaxBoneInfluences);
+	Text += bCastShadow ? FString() : FString(TEXT(", no shadow"));
+	Text += bVisibleInRayTracing ? FString() : FString(TEXT(", hidden in ray tracing"));
+	Text += bRecomputeTangent ? FString(TEXT(", recomputes tangents")) : FString();
+	Text += bUnifiedBoneMap ? FString(TEXT(", unified bone map")) : FString();
+	Text += bDisabled ? FString(TEXT(", disabled")) : FString();
+	Text += ClothAssetIndex != INDEX_NONE ? FString::Printf(TEXT(", cloth asset %d (%lld mapping vertices)"), ClothAssetIndex, ClothMappingVertices) : FString();
+	return Text;
+}
+
+FString FAssetSkeletalRenderLod::Describe() const
+{
+	if (bCookedOut)
+	{
+		return TEXT("left out by the cook");
+	}
+
+	FString Text = FString::Printf(TEXT("%d sections, %d required bones, %d active bones"), Sections.Num(), RequiredBones, ActiveBones);
+	if (bHasCounts)
+	{
+		Text += FString::Printf(TEXT(", %u vertices, %d indices (%d bit), %u UV channels, up to %u bone influences%s"), NumVertices, NumIndices, IndexBytes * 8, NumTexCoords, MaxBoneInfluences,
+			bVariableBonesPerVertex ? TEXT(" (a variable number per vertex)") : TEXT(""));
+		Text += ColorVertices > 0 ? FString::Printf(TEXT(", %u vertex colors"), ColorVertices) : FString();
+		Text += ClothVertices > 0 ? FString::Printf(TEXT(", %u cloth vertices"), ClothVertices) : FString();
+		Text += SkinWeightProfiles > 0 ? FString::Printf(TEXT(", %d skin weight profiles"), SkinWeightProfiles) : FString();
+	}
+	Text += FString::Printf(TEXT(", %u bytes of buffers %s, %s"), BuffersSize, bInlined ? TEXT("in the export") : TEXT("streamed"), BufferHash.IsEmpty() ? TEXT("not read") : *BufferHash);
+	return Text;
+}
+
 FString FAssetSkeletalMeshData::Summarize() const
 {
 	return FString::Printf(TEXT("%d material slots, %d bones, %d LODs"), Materials.Num(), Bones.Num(), Lods.Num());
 }
+
+namespace
+{
+	/** The custom version of the recomputed tangents (its GUID is not exported by the engine module). */
+	const FGuid RecomputeTangentVersion(0x5579F886, 0x933A4C1F, 0x83BA087B, 0x6361B92F);
+
+	/** FMeshToMeshVertData: three barycentric coordinates and distances, four source vertex indices, a weight and padding. */
+	constexpr int64 ClothMappingBytes = 3 * 16 + 4 * 2 + 4 + 4;
+
+	/** FSkelMeshRenderSection (operator<<), as a cooked package writes it. */
+	void ReadSkeletalRenderSection(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetSkeletalRenderSection& Out, bool& bOutHasCloth)
+	{
+		constexpr uint8 DuplicatedVerticesStripped = 1;
+
+		Reader.Read<uint8>(); // the strip flags of the section
+		const uint8 ClassStrip = Reader.Read<uint8>();
+
+		Out.MaterialIndex = Reader.Read<uint16>();
+		Out.BaseIndex = Reader.Read<uint32>();
+		Out.NumTriangles = Reader.Read<uint32>();
+		Out.bRecomputeTangent = Reader.ReadBool();
+		if (Reader.CustomVer(RecomputeTangentVersion) >= FRecomputeTangentCustomVersion::RecomputeTangentVertexColorMask)
+		{
+			Reader.Read<uint8>(); // which vertex color channel masks the recomputed tangents
+		}
+		Out.bCastShadow = Reader.ReadBool();
+		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkelMeshSectionVisibleInRayTracingFlagAdded)
+		{
+			Out.bVisibleInRayTracing = Reader.ReadBool();
+		}
+		Out.BaseVertexIndex = Reader.Read<uint32>();
+
+		// The mapping of the section to the cloth: one array before a LOD bias existed, an array of arrays after.
+		bOutHasCloth = false;
+		const int32 MappingArrays = Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::AddClothMappingLODBias ? 1 : Reader.Read<int32>();
+		if (Reader.Ok() && (MappingArrays < 0 || MappingArrays > 64))
+		{
+			Reader.Fail(TEXT("The number of cloth mappings of a section does not make sense"));
+			return;
+		}
+		for (int32 Index = 0; Index < MappingArrays && Reader.Ok(); ++Index)
+		{
+			const int32 Vertices = SkipFixedArray(Reader, ClothMappingBytes, TEXT("cloth mapping vertices"));
+			Out.ClothMappingVertices += Vertices;
+			bOutHasCloth |= Index == 0 && Vertices > 0;
+		}
+
+		SkipHashedArray(Reader, Document, 2, TEXT("bones of a section"), Out.BoneCount, Out.BoneMapHash);
+
+		Out.NumVertices = Reader.Read<uint32>();
+		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkeletalMeshUnifiedBoneMap)
+		{
+			const uint32 Packed = Reader.Read<uint32>();
+			Out.bUnifiedBoneMap = (Packed & (1u << 31)) != 0;
+			Out.MaxBoneInfluences = Packed & ~(1u << 31);
+		}
+		else
+		{
+			Out.MaxBoneInfluences = Reader.Read<uint32>();
+		}
+
+		Out.ClothAssetIndex = Reader.Read<int16>();
+		Reader.Skip(16 + 4); // the clothing data: the asset and the LOD of it
+		if ((ClassStrip & DuplicatedVerticesStripped) == 0)
+		{
+			Reader.Fail(TEXT("The duplicated vertices of a section are not read"));
+			return;
+		}
+		Out.bDisabled = Reader.ReadBool();
+	}
+
+	/** FSkeletalMeshLODRenderData::Serialize of a cooked LOD: the sections and bones, the block of buffers, and the record of what the buffers hold. */
+	void ReadSkeletalRenderLod(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, FAssetSkeletalRenderLod& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		Out.bCookedOut = Reader.ReadBool();
+		Out.bInlined = Reader.ReadBool();
+		Out.RequiredBones = SkipFixedArray(Reader, 2, TEXT("required bones"));
+		if (!Reader.Ok() || (GlobalStrip & AudioVisualStripped) != 0 || Out.bCookedOut)
+		{
+			return;
+		}
+
+		const int32 SectionCount = Reader.Read<int32>();
+		if (Reader.Ok() && (SectionCount < 0 || SectionCount > 4096 || SectionCount > Reader.Remaining() / 20))
+		{
+			Reader.Fail(TEXT("The number of sections of a LOD does not fit the data"));
+			return;
+		}
+		bool bHasCloth = false;
+		for (int32 Index = 0; Index < SectionCount && Reader.Ok(); ++Index)
+		{
+			bool bSectionCloth = false;
+			ReadSkeletalRenderSection(Reader, Document, Out.Sections.AddDefaulted_GetRef(), bSectionCloth);
+			bHasCloth |= bSectionCloth;
+		}
+		Out.ActiveBones = SkipFixedArray(Reader, 2, TEXT("active bones"));
+		Out.BuffersSize = Reader.Read<uint32>();
+		if (!Reader.Ok())
+		{
+			return;
+		}
+
+		// The buffers are one block of bulk data: in the package, or in a sidecar file for a LOD that streams.
+		FBulkReference Buffers;
+		if (!ReadBulkReference(Reader, Document, Resources, TEXT("The buffers of a LOD"), Buffers))
+		{
+			return;
+		}
+		Out.BulkFlags = Buffers.Flags;
+		Out.BufferHash = Buffers.PayloadHash;
+		Out.BufferOffset = Out.bInlined ? Buffers.DataOffset : INDEX_NONE;
+		if (Buffers.RawSize == 0)
+		{
+			return; // a LOD with no buffers keeps no record of them either
+		}
+
+		// The record of what the buffers hold (SerializeAvailabilityInfo).
+		if (Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::RemovingTessellation
+			|| Reader.CustomVer(FAnimObjectVersion::GUID) < FAnimObjectVersion::UnlimitedBoneInfluences
+			|| Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::IncreasedSkinWeightPrecision)
+		{
+			Reader.Fail(TEXT("The record of the buffers of a LOD is in a layout older than unlimited bone influences"));
+			return;
+		}
+
+		Out.bHasCounts = true;
+		Out.IndexBytes = Reader.Read<uint8>();
+		Out.NumIndices = Reader.Read<int32>();
+		Out.NumTexCoords = Reader.Read<uint32>();
+		Out.NumVertices = Reader.Read<uint32>();
+		Out.bFullPrecisionUVs = Reader.ReadBool();
+		Out.bHighPrecisionTangents = Reader.ReadBool();
+		Reader.Read<uint32>(); // the stride of the positions
+		Reader.Read<uint32>(); // and how many there are
+		Reader.Read<uint32>(); // the stride of the colors
+		Out.ColorVertices = Reader.Read<uint32>();
+		Out.bVariableBonesPerVertex = Reader.ReadBool();
+		Out.MaxBoneInfluences = Reader.Read<uint32>();
+		Reader.Read<uint32>(); // the number of bone weights
+		Reader.Read<uint32>(); // the vertices of the weights
+		Out.b16BitBoneIndex = Reader.ReadBool();
+		Out.b16BitBoneWeight = Reader.ReadBool();
+		Reader.Read<uint32>(); // the vertices of the lookup of the weights
+		if (bHasCloth)
+		{
+			SkipFixedArray(Reader, 12, TEXT("cloth index mappings"));
+			Reader.Read<uint32>(); // the stride
+			Out.ClothVertices = Reader.Read<uint32>();
+		}
+		const int32 Profiles = Reader.Read<int32>();
+		if (Reader.Ok() && (Profiles < 0 || static_cast<int64>(Profiles) * 8 > Reader.Remaining()))
+		{
+			Reader.Fail(TEXT("The number of skin weight profiles does not fit the data"));
+			return;
+		}
+		Out.SkinWeightProfiles = Profiles;
+		Reader.Skip(static_cast<int64>(Profiles) * 8);
+		Reader.Skip(6 * 4); // the header of the ray tracing geometry
+	}
+
+	/** FSkeletalMeshRenderData::Serialize of a cooked mesh: the LODs, the Nanite data and how many LODs are inlined. */
+	void ReadSkeletalRenderData(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetSkeletalRenderData& Out, FString& OutError)
+	{
+		TArray<FDataResource> Resources;
+		FString TableError;
+		ReadDataResources(Document, Resources, TableError);
+		if (!TableError.IsEmpty())
+		{
+			OutError = TableError;
+			return;
+		}
+
+		const int32 LodCount = Reader.Read<int32>();
+		if (Reader.Ok() && (LodCount < 0 || LodCount > 16))
+		{
+			Reader.Fail(TEXT("The number of LODs of the render data does not make sense"));
+		}
+		for (int32 Index = 0; Index < LodCount && Reader.Ok(); ++Index)
+		{
+			ReadSkeletalRenderLod(Reader, Document, Resources, Out.Lods.AddDefaulted_GetRef());
+		}
+		if (Reader.Ok())
+		{
+			ReadNaniteResources(Reader, Document, Resources, Out.Nanite);
+		}
+		Out.NumInlinedLods = Reader.Read<uint8>();
+		Out.NumNonOptionalLods = Reader.Read<uint8>();
+		if (!Reader.Ok())
+		{
+			OutError = Reader.GetError();
+			return;
+		}
+		Out.bRead = true;
+	}
+} // namespace
 
 bool AssetSkeletalMeshData::Decode(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const int64 NativeOffset, const int64 NativeSize, FAssetSkeletalMeshData& Out)
 {
@@ -574,9 +810,45 @@ bool AssetSkeletalMeshData::Decode(const FAssetPackageDocument& Document, const 
 	{
 		ReadModel(Reader, Document, Out);
 	}
+	else if ((Document.PackageSummary.GetPackageFlags() & PKG_FilterEditorOnly) == 0 || Reader.CustomVer(FSkeletalMeshCustomVersion::GUID) < FSkeletalMeshCustomVersion::SplitModelAndRenderData)
+	{
+		Out.ModelError = TEXT("The editor data (the imported model) was stripped, and the render data is not in a layout that is read");
+	}
 	else
 	{
-		Out.ModelError = TEXT("The editor data (the imported model) was stripped");
+		// A cooked mesh has no imported model: it writes whether it is cooked, and then its render data.
+		const bool bCooked = Reader.ReadBool();
+		if (!bCooked)
+		{
+			Out.ModelError = TEXT("The editor data (the imported model) was stripped and the mesh is not cooked");
+		}
+		else
+		{
+			FString RenderError;
+			ReadSkeletalRenderData(Reader, Document, Out.Render, RenderError);
+			if (!RenderError.IsEmpty())
+			{
+				Out.ModelError = RenderError;
+			}
+			else
+			{
+				// What follows is the list of objects a legacy mesh wrote (empty), and the end of the data.
+				const int32 LegacyObjects = Reader.Read<int32>();
+				Reader.Skip(static_cast<int64>(FMath::Max(LegacyObjects, 0)) * 4);
+				if (!Reader.Ok())
+				{
+					Out.ModelError = Reader.GetError();
+				}
+				else if (Reader.Remaining() != 0)
+				{
+					Out.ModelError = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+				}
+				else
+				{
+					Out.bComplete = true;
+				}
+			}
+		}
 	}
 	return true;
 }
@@ -725,6 +997,74 @@ TArray<FAssetNativeDataChange> AssetSkeletalMeshData::Compare(const FAssetSkelet
 		if (!Old.ModelGuid.Equals(New.ModelGuid, ESearchCase::CaseSensitive) && !Changes.IsEmpty())
 		{
 			Add(TEXT("ModelGuid"), TEXT("Model identifier"), FAssetNativeDataChange::EState::Modified, Old.ModelGuid, New.ModelGuid);
+		}
+	}
+
+	// The render data of a cooked mesh: each LOD with its sections and the block of its buffers, the Nanite data, and how many LODs are inlined.
+	if (Old.Render.bRead && New.Render.bRead)
+	{
+		const FAssetSkeletalRenderData& OldRender = Old.Render;
+		const FAssetSkeletalRenderData& NewRender = New.Render;
+		const int32 LodCount = FMath::Max(OldRender.Lods.Num(), NewRender.Lods.Num());
+		for (int32 LodIndex = 0; LodIndex < LodCount; ++LodIndex)
+		{
+			const FString LodKey = FString::Printf(TEXT("Render/Lod/%d"), LodIndex);
+			const FString LodTitle = FString::Printf(TEXT("Render LOD %d"), LodIndex);
+			if (!OldRender.Lods.IsValidIndex(LodIndex))
+			{
+				Add(LodKey, LodTitle, FAssetNativeDataChange::EState::Added, FString(), NewRender.Lods[LodIndex].Describe());
+				continue;
+			}
+			if (!NewRender.Lods.IsValidIndex(LodIndex))
+			{
+				Add(LodKey, LodTitle, FAssetNativeDataChange::EState::Removed, OldRender.Lods[LodIndex].Describe(), FString());
+				continue;
+			}
+
+			const FAssetSkeletalRenderLod& OldLod = OldRender.Lods[LodIndex];
+			const FAssetSkeletalRenderLod& NewLod = NewRender.Lods[LodIndex];
+			const int32 SectionCount = FMath::Max(OldLod.Sections.Num(), NewLod.Sections.Num());
+			for (int32 SectionIndex = 0; SectionIndex < SectionCount; ++SectionIndex)
+			{
+				const FString SectionKey = FString::Printf(TEXT("%s/Section/%d"), *LodKey, SectionIndex);
+				const FString SectionTitle = FString::Printf(TEXT("%s, section %d"), *LodTitle, SectionIndex);
+				if (!OldLod.Sections.IsValidIndex(SectionIndex))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Added, FString(), NewLod.Sections[SectionIndex].Describe());
+				}
+				else if (!NewLod.Sections.IsValidIndex(SectionIndex))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Removed, OldLod.Sections[SectionIndex].Describe(), FString());
+				}
+				else if (!OldLod.Sections[SectionIndex].Describe().Equals(NewLod.Sections[SectionIndex].Describe(), ESearchCase::CaseSensitive))
+				{
+					Add(SectionKey, SectionTitle, FAssetNativeDataChange::EState::Modified, OldLod.Sections[SectionIndex].Describe(), NewLod.Sections[SectionIndex].Describe());
+				}
+			}
+
+			// The LOD as a whole: bones, the counts the buffers hold and the hash of the block. A hash that could not be read says nothing.
+			const bool bSameHash = OldLod.BufferHash.IsEmpty() || NewLod.BufferHash.IsEmpty() || OldLod.BufferHash.Equals(NewLod.BufferHash, ESearchCase::CaseSensitive);
+			const bool bSameBuffers = OldLod.bInlined == NewLod.bInlined && OldLod.BuffersSize == NewLod.BuffersSize && bSameHash;
+			const auto Counts = [](const FAssetSkeletalRenderLod& Lod) {
+				return FString::Printf(TEXT("%d/%d/%u/%d/%u/%u/%u/%d%d%d/%u/%d/%d"), Lod.RequiredBones, Lod.ActiveBones, Lod.NumVertices, Lod.NumIndices, Lod.NumTexCoords, Lod.MaxBoneInfluences,
+					Lod.ColorVertices, Lod.bFullPrecisionUVs, Lod.bHighPrecisionTangents, Lod.bVariableBonesPerVertex, Lod.ClothVertices, Lod.bCookedOut, Lod.SkinWeightProfiles);
+			};
+			if (!bSameBuffers || !Counts(OldLod).Equals(Counts(NewLod)))
+			{
+				Add(FString::Printf(TEXT("%s/Buffers"), *LodKey), FString::Printf(TEXT("%s: bones and buffers"), *LodTitle), FAssetNativeDataChange::EState::Modified, OldLod.Describe(),
+					NewLod.Describe());
+			}
+		}
+
+		if (OldRender.Nanite.Part.Bytes != NewRender.Nanite.Part.Bytes || !OldRender.Nanite.Part.Hash.Equals(NewRender.Nanite.Part.Hash, ESearchCase::CaseSensitive))
+		{
+			Add(TEXT("Render/Nanite"), TEXT("Nanite resources"), FAssetNativeDataChange::EState::Modified, OldRender.Nanite.Describe(), NewRender.Nanite.Describe());
+		}
+		if (OldRender.NumInlinedLods != NewRender.NumInlinedLods || OldRender.NumNonOptionalLods != NewRender.NumNonOptionalLods)
+		{
+			Add(TEXT("Render/InlinedLods"), TEXT("LODs kept in the export"), FAssetNativeDataChange::EState::Modified,
+				FString::Printf(TEXT("%d inlined, %d not optional"), OldRender.NumInlinedLods, OldRender.NumNonOptionalLods),
+				FString::Printf(TEXT("%d inlined, %d not optional"), NewRender.NumInlinedLods, NewRender.NumNonOptionalLods));
 		}
 	}
 

@@ -1,13 +1,13 @@
 # Roadmap
 
-80 of 86 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
+81 of 87 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
 
 ## Still open
 
 **Waiting for a sample file** (a reader cannot be built or checked without one; until then these fail with a reason):
 
 - Skeletal meshes from before the model and the render data were split ([skeletal meshes](#native-data-skeletal-meshes-and-morph-targets))
-- Skeletal meshes with cloth data or skin weight profiles, and the render data of cooked skeletal meshes (the engine's skeletal meshes did not cook with `-CookDir`, so a sample has to be made first)
+- Skeletal meshes with cloth data or skin weight profiles (no sample: the cooked render data reader has branches for them that are not checked against a real mesh)
 - Cooked morph targets that store their deltas compressed
 - Cooked textures that store their platform data as derived data references ([textures](#native-data-textures))
 
@@ -127,7 +127,8 @@ Skeletons, imported models, and morph target deltas.
 - [x] The imported model of skeletal meshes: LODs, sections, vertices (as a hash), index buffers and bones; all three of the engine content
 - [x] Skeletal meshes saved by 4.2x and early 5.0 versions (the Mannequins, four of the 58 in the engine's plugins): the raw point indices and the reduction sources as blocks of bulk data, and the sections and their settings without the ray tracing flag; all 58 of the engine's plugins
 - [ ] Skeletal meshes from before the model and the render data were split (their vertices, skin weights, colors, adjacency and cloth in separate buffers); no sample in the engine
-- [ ] Skeletal meshes with cloth data or skin weight profiles, and the render data of cooked skeletal meshes: no sample in the engine content, and the engine's skeletal meshes did not cook with `-CookDir`, so a sample has to be made first (these fail with a reason until then)
+- [x] Read the render data of cooked skeletal meshes: LODs with their sections and bones, the block of buffers (hashed) and the record of what it holds, the Nanite data; 13 of 13 meshes of a cook of the engine's animation plugins
+- [ ] Skeletal meshes with cloth data or skin weight profiles: no sample in the engine content (the cooked reader has branches for them, unchecked against a real mesh)
 - [x] Morph targets: objects of their own (`UMorphTarget`, with LOD models of their vertex deltas), read to the last byte with a hash of the deltas of each LOD (858 of the engine's plugins)
 - [ ] Cooked morph targets that store their deltas compressed (`FDeltaBatchHeader` and the packed deltas): no sample, they fail with a reason
 
