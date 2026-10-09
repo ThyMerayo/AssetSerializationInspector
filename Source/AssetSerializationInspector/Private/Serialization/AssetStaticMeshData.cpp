@@ -15,10 +15,12 @@
 #include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
+#include "Serialization/AssetRenderDataReaders.h"
 #include "Serialization/AssetSchemaReflection.h"
 #include "Trace/AssetSerializationTrace.h"
 
 using namespace AssetCookedBulkData;
+using namespace AssetRenderDataReaders;
 
 namespace
 {
@@ -399,71 +401,6 @@ namespace
 		Out.SerializedBuffersSize = Reader.Read<uint32>();
 		Out.DepthOnlyIndexBytes = Reader.Read<uint32>();
 		Out.ReversedIndexBytes = Reader.Read<uint32>();
-	}
-
-	FAssetRenderPart MakePart(const FAssetPackageDocument& Document, const int64 Start, const int64 End)
-	{
-		FAssetRenderPart Part;
-		Part.Offset = Start;
-		Part.Bytes = End - Start;
-		Part.Hash = HashBytes(Document.FileData.GetData() + Start, Part.Bytes);
-		return Part;
-	}
-
-	/** An array of elements of a fixed size that is skipped: its count must fit what is left. */
-	int32 SkipFixedArray(FNativeReader& Reader, const int64 ElementBytes, const TCHAR* What)
-	{
-		const int32 Count = Reader.Read<int32>();
-		if (Reader.Ok() && (Count < 0 || static_cast<int64>(Count) * ElementBytes > Reader.Remaining()))
-		{
-			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
-			return 0;
-		}
-		Reader.Skip(static_cast<int64>(Count) * ElementBytes);
-		return Count;
-	}
-
-	/** Nanite::FResources::Serialize of a cooked mesh. */
-	void ReadNaniteResources(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, FAssetNaniteResources& Out)
-	{
-		constexpr uint8 AudioVisualStripped = 2;
-		const int64 Start = Reader.Tell();
-
-		const uint8 GlobalStrip = Reader.Read<uint8>();
-		Reader.Read<uint8>();
-		if (Reader.Ok() && (GlobalStrip & AudioVisualStripped) == 0)
-		{
-			Out.bPresent = true;
-			Out.ResourceFlags = Reader.Read<uint32>();
-
-			FBulkReference Pages;
-			if (!ReadBulkReference(Reader, Document, Resources, TEXT("The streamable pages of Nanite"), Pages))
-			{
-				return;
-			}
-			Out.StreamableBytes = Pages.RawSize;
-			Out.StreamableHash = Pages.PayloadHash;
-
-			Out.RootDataBytes = SkipFixedArray(Reader, 1, TEXT("bytes of Nanite root data"));
-			Out.Pages = SkipFixedArray(Reader, 20, TEXT("Nanite page streaming states"));
-			Out.HierarchyNodes = SkipFixedArray(Reader, 240, TEXT("Nanite hierarchy nodes"));
-			SkipFixedArray(Reader, 4, TEXT("Nanite hierarchy roots"));
-			SkipFixedArray(Reader, 2, TEXT("Nanite page dependencies"));
-			SkipFixedArray(Reader, 48, TEXT("Nanite assembly transforms"));
-			SkipFixedArray(Reader, 4, TEXT("Nanite bone attachments"));
-			SkipFixedArray(Reader, 4, TEXT("Nanite bone indices"));
-			SkipFixedArray(Reader, 4, TEXT("Nanite page ranges"));
-			Reader.Skip(28); // the bounds of the mesh
-			Out.RootPages = Reader.Read<uint32>();
-			Reader.Skip(8); // the position and normal precision
-			Out.InputTriangles = Reader.Read<uint32>();
-			Out.InputVertices = Reader.Read<uint32>();
-			Out.Clusters = Reader.Read<uint32>();
-			Reader.Skip(8); // the mask of voxel materials
-			Out.InputCurves = Reader.Read<uint32>();
-		}
-
-		Out.Part = MakePart(Document, Start, Reader.Tell());
 	}
 
 	/** FStaticMeshRayTracingProxy::Serialize of a cooked mesh whose proxy shares the buffers of the render LODs. */
@@ -1322,3 +1259,71 @@ TArray<FAssetNativeDataChange> AssetStaticMeshData::Compare(const FAssetStaticMe
 
 	return Changes;
 }
+
+namespace AssetRenderDataReaders
+{
+	FAssetRenderPart MakePart(const FAssetPackageDocument& Document, const int64 Start, const int64 End)
+	{
+		FAssetRenderPart Part;
+		Part.Offset = Start;
+		Part.Bytes = End - Start;
+		Part.Hash = HashBytes(Document.FileData.GetData() + Start, Part.Bytes);
+		return Part;
+	}
+
+	/** An array of elements of a fixed size that is skipped: its count must fit what is left. */
+	int32 SkipFixedArray(FNativeReader& Reader, const int64 ElementBytes, const TCHAR* What)
+	{
+		const int32 Count = Reader.Read<int32>();
+		if (Reader.Ok() && (Count < 0 || static_cast<int64>(Count) * ElementBytes > Reader.Remaining()))
+		{
+			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
+			return 0;
+		}
+		Reader.Skip(static_cast<int64>(Count) * ElementBytes);
+		return Count;
+	}
+
+	/** Nanite::FResources::Serialize of a cooked mesh. */
+	void ReadNaniteResources(FNativeReader& Reader, const FAssetPackageDocument& Document, const TArray<FDataResource>& Resources, FAssetNaniteResources& Out)
+	{
+		constexpr uint8 AudioVisualStripped = 2;
+		const int64 Start = Reader.Tell();
+
+		const uint8 GlobalStrip = Reader.Read<uint8>();
+		Reader.Read<uint8>();
+		if (Reader.Ok() && (GlobalStrip & AudioVisualStripped) == 0)
+		{
+			Out.bPresent = true;
+			Out.ResourceFlags = Reader.Read<uint32>();
+
+			FBulkReference Pages;
+			if (!ReadBulkReference(Reader, Document, Resources, TEXT("The streamable pages of Nanite"), Pages))
+			{
+				return;
+			}
+			Out.StreamableBytes = Pages.RawSize;
+			Out.StreamableHash = Pages.PayloadHash;
+
+			Out.RootDataBytes = SkipFixedArray(Reader, 1, TEXT("bytes of Nanite root data"));
+			Out.Pages = SkipFixedArray(Reader, 20, TEXT("Nanite page streaming states"));
+			Out.HierarchyNodes = SkipFixedArray(Reader, 240, TEXT("Nanite hierarchy nodes"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite hierarchy roots"));
+			SkipFixedArray(Reader, 2, TEXT("Nanite page dependencies"));
+			SkipFixedArray(Reader, 48, TEXT("Nanite assembly transforms"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite bone attachments"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite bone indices"));
+			SkipFixedArray(Reader, 4, TEXT("Nanite page ranges"));
+			Reader.Skip(28); // the bounds of the mesh
+			Out.RootPages = Reader.Read<uint32>();
+			Reader.Skip(8); // the position and normal precision
+			Out.InputTriangles = Reader.Read<uint32>();
+			Out.InputVertices = Reader.Read<uint32>();
+			Out.Clusters = Reader.Read<uint32>();
+			Reader.Skip(8); // the mask of voxel materials
+			Out.InputCurves = Reader.Read<uint32>();
+		}
+
+		Out.Part = MakePart(Document, Start, Reader.Tell());
+	}
+} // namespace AssetRenderDataReaders

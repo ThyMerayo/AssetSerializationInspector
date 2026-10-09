@@ -75,6 +75,85 @@ struct FAssetSkeletalMeshLod
 	FString Describe() const;
 };
 
+/** One section of a LOD of the render data of a cooked skeletal mesh (FSkelMeshRenderSection). */
+struct FAssetSkeletalRenderSection
+{
+	uint32 MaterialIndex = 0;
+	uint32 BaseIndex = 0;
+	uint32 NumTriangles = 0;
+	uint32 BaseVertexIndex = 0;
+	uint32 NumVertices = 0;
+	uint32 MaxBoneInfluences = 0;
+	bool bRecomputeTangent = false;
+	bool bCastShadow = true;
+	bool bVisibleInRayTracing = true;
+	bool bUnifiedBoneMap = false;
+	bool bDisabled = false;
+
+	/** The bones the vertices are skinned to, as their number and a hash of their indices. */
+	int32 BoneCount = 0;
+	FString BoneMapHash;
+
+	/** The cloth the section is mapped to: the asset index, and how many vertices of mapping data the LODs of the mapping have. */
+	int32 ClothAssetIndex = INDEX_NONE;
+	int64 ClothMappingVertices = 0;
+
+	/** One line: material, triangles, vertices, bones and the flags that are not the default. */
+	FString Describe() const;
+};
+
+/**
+ * One LOD of the render data of a cooked skeletal mesh (FSkeletalMeshLODRenderData): its sections and bones, and the buffers (indices,
+ * positions, tangents and UVs, colors, skin weights, cloth, morph targets...) that are kept as one block of the size the LOD records. The
+ * block is hashed from the package or from the sidecar file it streams from; the counts come from the record of what the buffers hold.
+ */
+struct FAssetSkeletalRenderLod
+{
+	bool bCookedOut = false;
+	bool bInlined = false;
+
+	int32 RequiredBones = 0;
+	int32 ActiveBones = 0;
+	TArray<FAssetSkeletalRenderSection> Sections;
+
+	/** The size of the buffers as the LOD records it, how they are stored (EBulkDataFlags) and a hash of them (empty when not read). */
+	uint32 BuffersSize = 0;
+	uint32 BulkFlags = 0;
+	FString BufferHash;
+
+	/** Where the buffers start in the document when they are inline, and INDEX_NONE when they stream from a sidecar file. */
+	int64 BufferOffset = INDEX_NONE;
+
+	/** What the buffers hold, from the record the LOD keeps. */
+	bool bHasCounts = false;
+	int32 NumIndices = 0;
+	uint8 IndexBytes = 0;
+	uint32 NumVertices = 0;
+	uint32 NumTexCoords = 0;
+	bool bFullPrecisionUVs = false;
+	bool bHighPrecisionTangents = false;
+	uint32 ColorVertices = 0;
+	uint32 MaxBoneInfluences = 0;
+	bool bVariableBonesPerVertex = false;
+	bool b16BitBoneIndex = false;
+	bool b16BitBoneWeight = false;
+	uint32 ClothVertices = 0;
+	int32 SkinWeightProfiles = 0;
+
+	/** One line: sections, vertices, indices, UV channels, bone influences and the buffers. */
+	FString Describe() const;
+};
+
+/** The render data of a cooked skeletal mesh (FSkeletalMeshRenderData): its LODs and its Nanite data. */
+struct FAssetSkeletalRenderData
+{
+	bool bRead = false;
+	TArray<FAssetSkeletalRenderLod> Lods;
+	FAssetNaniteResources Nanite;
+	uint8 NumInlinedLods = 0;
+	uint8 NumNonOptionalLods = 0;
+};
+
 /**
  * What a skeletal mesh writes after its tagged properties, decoded (USkeletalMesh::Serialize): its bounds, its material slots, its
  * reference skeleton and its imported model (the LODs with their sections and vertices). The vertices are not interpreted; each
@@ -105,6 +184,9 @@ struct FAssetSkeletalMeshData
 	TArray<FAssetSkeletonBone> Bones;
 
 	TArray<FAssetSkeletalMeshLod> Lods;
+
+	/** The render data of a cooked mesh (which has no imported model), when it was read. */
+	FAssetSkeletalRenderData Render;
 
 	/** The identifier of the model, and whether it is a hash of its content. */
 	FString ModelGuid;

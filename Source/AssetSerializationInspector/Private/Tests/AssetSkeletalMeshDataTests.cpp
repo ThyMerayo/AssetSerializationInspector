@@ -5,6 +5,8 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "HAL/FileManager.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
 #include "Diff/AssetPackageDiff.h"
@@ -54,6 +56,33 @@ namespace SkeletalMeshTestUtils
 		Mesh.ImportedBounds = TEXT("origin X=0.000 Y=0.000 Z=0.000, extent X=50.000 Y=50.000 Z=50.000, radius 86.6");
 		Mesh.Bones = Bones;
 		return Mesh;
+	}
+	/** Reads the skeletal mesh of a package at a path. */
+	static bool ReadMeshAt(FAutomationTestBase& Test, const FString& Path, FAssetSkeletalMeshData& Out)
+	{
+		FText Error;
+		const TSharedPtr<FAssetPackageDocument> Document = FAssetPackageReader::LoadFromFile(Path, Error);
+		if (!Test.TestTrue(FString::Printf(TEXT("%s loads"), *Path), Document.IsValid()))
+		{
+			return false;
+		}
+
+		const TSharedPtr<FAssetPackageTraceCollection> Traces = FAssetPackageFieldDecoder::Decode(*Document);
+		for (const FAssetPackageExportEntry& Export : Document->ExportMap)
+		{
+			if (DecodeData(*Document, *Traces, Export, Out))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Reads the skeletal mesh of a cooked package kept with the plugin (cooked for Windows by this engine version). */
+	static bool ReadFixture(FAutomationTestBase& Test, const TCHAR* Fixture, FAssetSkeletalMeshData& Out)
+	{
+		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+		return Test.TestTrue(TEXT("The plugin is found"), Plugin.IsValid()) && ReadMeshAt(Test, FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("CookedTestFixtures"), Fixture), Out);
 	}
 } // namespace SkeletalMeshTestUtils
 
@@ -352,6 +381,136 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		TestTrue(TEXT("Nothing is said of a model that was not read"), AssetSkeletalMeshData::Compare(NotRead, Base).IsEmpty());
 	}
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSkeletalMeshData_ReadsTheRenderDataOfACookedMesh, "AssetSerializationInspector.Serialization.AssetSkeletalMeshData.ReadsTheRenderDataOfACookedMesh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSkeletalMeshData_ReadsTheRenderDataOfACookedMesh::RunTest(const FString& Parameters)
+{
+	using namespace SkeletalMeshTestUtils;
+
+	// A cube with three bones, cooked for Windows: one LOD with its buffers in the export.
+	FAssetSkeletalMeshData Cube;
+	if (ReadFixture(*this, TEXT("SKM_PhysCube.uasset"), Cube))
+	{
+		TestTrue(FString::Printf(TEXT("It is read to the last byte (%s)"), *Cube.ModelError), Cube.bComplete);
+		TestTrue(TEXT("Its render data is read"), Cube.Render.bRead);
+		TestEqual(TEXT("It has three bones"), Cube.Bones.Num(), 3);
+		if (TestEqual(TEXT("One LOD"), Cube.Render.Lods.Num(), 1))
+		{
+			const FAssetSkeletalRenderLod& Lod = Cube.Render.Lods[0];
+			TestTrue(TEXT("Its buffers are in the export"), Lod.bInlined && !Lod.bCookedOut && Lod.BufferOffset != INDEX_NONE && !Lod.BufferHash.IsEmpty());
+			TestEqual(TEXT("Three required bones and three active"), Lod.RequiredBones * 10 + Lod.ActiveBones, 33);
+			TestTrue(TEXT("The record of the buffers: 54 vertices, 144 indices of 16 bits, a UV channel, 54 colors"),
+				Lod.bHasCounts && Lod.NumVertices == 54 && Lod.NumIndices == 144 && Lod.IndexBytes == 2 && Lod.NumTexCoords == 1 && Lod.ColorVertices == 54);
+			if (TestEqual(TEXT("One section"), Lod.Sections.Num(), 1))
+			{
+				// 144 indices are 48 triangles, which is what the section draws, over the 54 vertices.
+				TestTrue(TEXT("Of 48 triangles and the 54 vertices"), Lod.Sections[0].NumTriangles == 48 && Lod.Sections[0].NumVertices == 54);
+			}
+		}
+		TestTrue(TEXT("The same mesh is no change"), AssetSkeletalMeshData::Compare(Cube, Cube).IsEmpty());
+	}
+
+	// A chain with three LODs, the last two smaller.
+	FAssetSkeletalMeshData Chain;
+	if (ReadFixture(*this, TEXT("SKM_Chain_Template.uasset"), Chain))
+	{
+		TestTrue(FString::Printf(TEXT("The chain is read to the last byte (%s)"), *Chain.ModelError), Chain.bComplete && Chain.Render.bRead);
+		if (TestEqual(TEXT("Three LODs"), Chain.Render.Lods.Num(), 3))
+		{
+			TestEqual(TEXT("The first has 8 vertices"), static_cast<int32>(Chain.Render.Lods[0].NumVertices), 8);
+			TestEqual(TEXT("The others have 6"), static_cast<int32>(Chain.Render.Lods[1].NumVertices + Chain.Render.Lods[2].NumVertices), 12);
+			TestEqual(TEXT("Two sections in each"), Chain.Render.Lods[0].Sections.Num() + Chain.Render.Lods[1].Sections.Num() + Chain.Render.Lods[2].Sections.Num(), 6);
+		}
+		TestEqual(TEXT("Of the three, all are inlined"), static_cast<int32>(Chain.Render.NumInlinedLods), 3);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData, "AssetSerializationInspector.Serialization.AssetSkeletalMeshData.ShowsAChangeOfTheRenderData",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& Parameters)
+{
+	using namespace SkeletalMeshTestUtils;
+
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("AssetSerializationInspector"));
+	if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+	{
+		return false;
+	}
+
+	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
+		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
+	};
+
+	FAssetSkeletalMeshData Cube;
+	FAssetSkeletalMeshData Chain;
+	if (!ReadFixture(*this, TEXT("SKM_PhysCube.uasset"), Cube) || !ReadFixture(*this, TEXT("SKM_Chain_Template.uasset"), Chain) || !Cube.Render.bRead || !Chain.Render.bRead)
+	{
+		AddError(TEXT("The fixtures are not read"));
+		return false;
+	}
+
+	// Two meshes: LODs added, and the first one differs in its buffers and its sections.
+	{
+		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Chain);
+		TestNotNull(TEXT("A LOD was added"), Find(Changes, TEXT("Render/Lod/1")));
+		TestNotNull(TEXT("The buffers of the first LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
+		TestNotNull(TEXT("A section was added to it"), Find(Changes, TEXT("Render/Lod/0/Section/1")));
+	}
+
+	// One byte of the vertices of a copy of the cube: only the buffers of that LOD change.
+	const FString Fixtures = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources"), TEXT("CookedTestFixtures"));
+	const FString Folder = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("__AssetSerializationInspectorTests"), TEXT("CookedSkeletal"));
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
+	IFileManager::Get().MakeDirectory(*Folder, true);
+	for (const TCHAR* Extension : { TEXT("uasset"), TEXT("uexp") })
+	{
+		IFileManager::Get().Copy(*FPaths::Combine(Folder, FString::Printf(TEXT("SKM_PhysCube.%s"), Extension)), *FPaths::Combine(Fixtures, FString::Printf(TEXT("SKM_PhysCube.%s"), Extension)));
+	}
+
+	const int64 HeaderSize = IFileManager::Get().FileSize(*FPaths::Combine(Fixtures, TEXT("SKM_PhysCube.uasset")));
+	TArray<uint8> Exports;
+	if (!TestTrue(TEXT("The copy is there"), FFileHelper::LoadFileToArray(Exports, *FPaths::Combine(Folder, TEXT("SKM_PhysCube.uexp")))))
+	{
+		return false;
+	}
+
+	// The positions start 30 bytes into the buffers (the strip flags, the index buffer and the header of the positions).
+	const int64 Position = Cube.Render.Lods[0].BufferOffset + 60 - HeaderSize;
+	if (TestTrue(TEXT("The byte is in the .uexp"), Position >= 0 && Position < Exports.Num()))
+	{
+		Exports[Position] ^= 0x55;
+		FFileHelper::SaveArrayToFile(Exports, *FPaths::Combine(Folder, TEXT("SKM_PhysCube.uexp")));
+
+		FAssetSkeletalMeshData Changed;
+		if (ReadMeshAt(*this, FPaths::Combine(Folder, TEXT("SKM_PhysCube.uasset")), Changed) && Changed.Render.bRead)
+		{
+			const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Changed);
+			TestEqual(TEXT("One byte of the vertices is one change"), Changes.Num(), 1);
+			TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
+		}
+		else
+		{
+			AddError(TEXT("The changed copy is not read"));
+		}
+	}
+
+	// One thing at a time on a copy in memory.
+	{
+		FAssetSkeletalMeshData Other = Cube;
+		Other.Render.Lods[0].Sections[0].MaxBoneInfluences += 1;
+		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Other);
+		TestEqual(TEXT("A section is one change"), Changes.Num(), 1);
+		TestNotNull(TEXT("Named by its LOD and place"), Find(Changes, TEXT("Render/Lod/0/Section/0")));
+	}
+
+	IFileManager::Get().DeleteDirectory(*Folder, false, true);
 	return true;
 }
 
