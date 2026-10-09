@@ -24,6 +24,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
+#include "Serialization/AssetAstcDecoder.h"
 #include "Serialization/AssetBlockDecoder.h"
 #include "Serialization/AssetBulkDataExport.h"
 #include "Serialization/AssetCookedBulkData.h"
@@ -770,15 +771,15 @@ bool FAssetBulkDataExport_DecodesTheBlocksOfTheBcFormats::RunTest(const FString&
 			TestTrue(TEXT("The new one has a sixteenth of blue"), Diff.NewAverage.Equals(FVector4d(15.0 / 16.0, 0, 1.0 / 16.0, 1), 1e-3));
 		}
 
-		// A format without a codec is still compared by blocks.
-		FAssetBlockFormat Bc7;
-		AssetMipBlocks::FindBlockFormat(TEXT("PF_ASTC_4x4"), Bc7);
-		TArray<uint8> Seven;
-		Seven.Init(1, 16);
-		TArray<uint8> Changed = Seven;
+		// A format without a codec (uncompressed pixels) is still compared, pixel by pixel, without colors.
+		FAssetBlockFormat Bgra;
+		AssetMipBlocks::FindBlockFormat(TEXT("PF_B8G8R8A8"), Bgra);
+		TArray<uint8> Four;
+		Four.Init(1, 16);
+		TArray<uint8> Changed = Four;
 		Changed[3] = 2;
-		const FAssetMipBlockDiff SevenDiff = AssetMipBlocks::CompareBytes(Seven.GetData(), Changed.GetData(), 16, 4, 4, Bc7);
-		TestTrue(TEXT("ASTC is compared by blocks, without colors"), SevenDiff.bComparable && SevenDiff.DifferingBlocks == 1 && !SevenDiff.bColors);
+		const FAssetMipBlockDiff PixelDiff = AssetMipBlocks::CompareBytes(Four.GetData(), Changed.GetData(), 16, 4, 1, Bgra);
+		TestTrue(TEXT("A format without a codec is compared without colors"), PixelDiff.bComparable && PixelDiff.DifferingBlocks == 1 && !PixelDiff.bColors);
 	}
 
 	return true;
@@ -1080,6 +1081,166 @@ bool FAssetBulkDataExport_DecodesBc7AndTheOtherFormatsAgainstTheEngineEncoder::R
 				ModeCounts[6], ModeCounts[7]));
 		}
 		TestTrue(FString::Printf(TEXT("%s: the decoded colors are those of the image (mean error %.4f)"), Case.Name, Mean), Mean < Case.Tolerance);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_DecodesAstcWithTheEngineLibrary, "AssetSerializationInspector.Serialization.AssetBulkDataExport.DecodesAstcWithTheEngineLibrary",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetBulkDataExport_DecodesAstcWithTheEngineLibrary::RunTest(const FString& Parameters)
+{
+	FString LoadError;
+	const AssetAstcDecoder::FThunk* Thunk = AssetAstcDecoder::Load(LoadError);
+	if (Thunk == nullptr)
+	{
+		AddInfo(FString::Printf(TEXT("The library is not there, so ASTC is not decoded in this run (%s)."), *LoadError));
+		return true;
+	}
+
+	// Compresses an image with the engine's own encoder (the thunk), to give the decoder real blocks.
+	const auto Encode = [Thunk](const void* Pixels, const int32 Width, const int32 Height, const int32 BlockSize, const bool bHdr, TArray<uint8>& OutBlocks) {
+		const int64 Blocks = static_cast<int64>((Width + BlockSize - 1) / BlockSize) * ((Height + BlockSize - 1) / BlockSize);
+		OutBlocks.SetNumZeroed(Blocks * 16);
+		void* Slice = const_cast<void*>(Pixels);
+
+		FAstcEncThunk_CreateParams Params;
+		Params.Profile = bHdr ? EAstcEncThunk_Profile::HDR_RGB_LDR_A : EAstcEncThunk_Profile::LDR;
+		Params.Quality = EAstcEncThunk_Quality::THOROUGH;
+		Params.BlockSize = static_cast<uint8>(BlockSize);
+		Params.SizeX = static_cast<uint32>(Width);
+		Params.SizeY = static_cast<uint32>(Height);
+		Params.NumSlices = 1;
+		Params.ImageSlices = &Slice;
+		Params.ImageDataType = bHdr ? EAstcEncThunk_Type::F16 : EAstcEncThunk_Type::U8;
+		Params.OutputImageBuffer = OutBlocks.GetData();
+		Params.OutputImageBufferSize = OutBlocks.Num();
+
+		AstcEncThunk_Context Context = nullptr;
+		const char* Failure = Thunk->Create(Params, &Context);
+		if (Failure == nullptr)
+		{
+			Failure = Thunk->DoWork(Context, 0);
+		}
+		Thunk->Destroy(Context);
+		return Failure == nullptr;
+	};
+
+	// LDR: a smooth image of 30 by 22 pixels (blocks of 6, so the last blocks are cut by the edge).
+	{
+		constexpr int32 Width = 30;
+		constexpr int32 Height = 22;
+		TArray<uint8> Image;
+		Image.SetNumUninitialized(Width * Height * 4);
+		for (int32 Y = 0; Y < Height; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				uint8* Texel = Image.GetData() + (Y * Width + X) * 4;
+				Texel[0] = static_cast<uint8>(X * 8);
+				Texel[1] = static_cast<uint8>(Y * 10);
+				Texel[2] = static_cast<uint8>((X + Y) * 4);
+				Texel[3] = static_cast<uint8>(255 - X * 5);
+			}
+		}
+
+		TArray<uint8> Blocks;
+		if (TestTrue(TEXT("The engine's encoder compresses the image"), Encode(Image.GetData(), Width, Height, 6, false, Blocks)))
+		{
+			TArray<FVector4f> Pixels;
+			FString Error;
+			if (TestTrue(FString::Printf(TEXT("The blocks decode (%s)"), *Error), AssetAstcDecoder::DecodeImage(Blocks.GetData(), Blocks.Num(), Width, Height, 6, false, Pixels, Error))
+				&& TestEqual(TEXT("A pixel each"), Pixels.Num(), Width * Height))
+			{
+				double Total = 0.0;
+				for (int32 Index = 0; Index < Width * Height; ++Index)
+				{
+					const FVector4f Want(Image[Index * 4] / 255.0f, Image[Index * 4 + 1] / 255.0f, Image[Index * 4 + 2] / 255.0f, Image[Index * 4 + 3] / 255.0f);
+					const FVector4f Delta = Pixels[Index] - Want;
+					Total += FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)));
+				}
+				const double Mean = Total / (Width * Height);
+				AddInfo(FString::Printf(TEXT("ASTC 6x6, 30 by 22: mean error %.4f"), Mean));
+				TestTrue(FString::Printf(TEXT("The decoded colors are those of the image (mean error %.4f)"), Mean), Mean < 0.04);
+			}
+
+			// The comparison: one block changed (a block of another picture), with the colors.
+			FAssetBlockFormat Format;
+			if (TestTrue(TEXT("PF_ASTC_6x6 is known and has a codec"), AssetMipBlocks::FindBlockFormat(TEXT("PF_ASTC_6x6"), Format) && Format.Codec == EAssetBlockCodec::Astc && !Format.bHdr))
+			{
+				TArray<uint8> Other = Image;
+				for (int32 Y = 6; Y < 12; ++Y)
+				{
+					for (int32 X = 12; X < 18; ++X)
+					{
+						uint8* Texel = Other.GetData() + (Y * Width + X) * 4;
+						Texel[0] = 255;
+						Texel[1] = 0;
+						Texel[2] = 0;
+						Texel[3] = 255;
+					}
+				}
+				TArray<uint8> OtherBlocks;
+				if (TestTrue(TEXT("The changed image compresses"), Encode(Other.GetData(), Width, Height, 6, false, OtherBlocks)))
+				{
+					const FAssetMipBlockDiff Diff = AssetMipBlocks::CompareBytes(Blocks.GetData(), OtherBlocks.GetData(), Blocks.Num(), Width, Height, Format);
+					TestTrue(TEXT("It is compared by blocks and colors"), Diff.bComparable && Diff.bColors);
+					TestTrue(TEXT("The change is in the block that was painted"), Diff.DifferingBlocks >= 1 && Diff.MinX <= 12 && Diff.MaxX >= 17 && Diff.MinY <= 6 && Diff.MaxY >= 11);
+					TestTrue(TEXT("It is large"), Diff.LargestChange > 0.3);
+					TestTrue(TEXT("The new image has more red on average"), Diff.NewAverage.X > Diff.OldAverage.X);
+				}
+			}
+		}
+	}
+
+	// HDR: values above 1, in blocks of 4.
+	{
+		constexpr int32 Size = 16;
+		TArray<FFloat16> Image;
+		Image.SetNumUninitialized(Size * Size * 4);
+		for (int32 Y = 0; Y < Size; ++Y)
+		{
+			for (int32 X = 0; X < Size; ++X)
+			{
+				FFloat16* Texel = Image.GetData() + (Y * Size + X) * 4;
+				Texel[0] = FFloat16(0.5f + X * 0.4f);
+				Texel[1] = FFloat16(0.2f + Y * 0.1f);
+				Texel[2] = FFloat16(3.0f);
+				Texel[3] = FFloat16(1.0f);
+			}
+		}
+
+		TArray<uint8> Blocks;
+		if (TestTrue(TEXT("The HDR image compresses"), Encode(Image.GetData(), Size, Size, 4, true, Blocks)))
+		{
+			TArray<FVector4f> Pixels;
+			FString Error;
+			if (TestTrue(FString::Printf(TEXT("The HDR blocks decode (%s)"), *Error), AssetAstcDecoder::DecodeImage(Blocks.GetData(), Blocks.Num(), Size, Size, 4, true, Pixels, Error)))
+			{
+				double Total = 0.0;
+				for (int32 Index = 0; Index < Size * Size; ++Index)
+				{
+					const FFloat16* Texel = Image.GetData() + Index * 4;
+					const float Want[3] = { Texel[0].GetFloat(), Texel[1].GetFloat(), Texel[2].GetFloat() };
+					Total += FMath::Max(FMath::Max(FMath::Abs(Pixels[Index].X - Want[0]) / FMath::Max(Want[0], 0.2f), FMath::Abs(Pixels[Index].Y - Want[1]) / FMath::Max(Want[1], 0.2f)),
+						FMath::Abs(Pixels[Index].Z - Want[2]) / FMath::Max(Want[2], 0.2f));
+				}
+				const double Mean = Total / (Size * Size);
+				AddInfo(FString::Printf(TEXT("ASTC 4x4 HDR: mean relative error %.4f"), Mean));
+				TestTrue(FString::Printf(TEXT("The HDR values come back (mean relative error %.4f)"), Mean), Mean < 0.05);
+				TestTrue(TEXT("Above 1"), Pixels[Size * Size - 1].X > 4.0f);
+			}
+		}
+	}
+
+	// What it cannot decode is an error, not garbage.
+	{
+		TArray<FVector4f> Pixels;
+		FString Error;
+		const uint8 Short[16] = {};
+		TestFalse(TEXT("A size that is not the blocks of the image"), AssetAstcDecoder::DecodeImage(Short, 16, 30, 22, 6, false, Pixels, Error));
+		TestFalse(TEXT("Says why"), Error.IsEmpty());
 	}
 
 	return true;

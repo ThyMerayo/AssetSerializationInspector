@@ -8,7 +8,7 @@
 
 /**
  * Decoders for the block formats BC1 to BC5 (plain interpolation), BC6H (HDR, 14 modes) and BC7 (eight modes), so the colors of a
- * cooked mip can be compared and not only its blocks. ASTC is not decoded.
+ * cooked mip can be compared and not only its blocks. ASTC is decoded by the engine's library (AssetAstcDecoder), not here.
  */
 namespace AssetBlockDecoder
 {

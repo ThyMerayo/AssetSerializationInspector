@@ -3,6 +3,7 @@
 #include "Serialization/AssetMipBlocks.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetAstcDecoder.h"
 #include "Serialization/AssetBlockDecoder.h"
 #include "Serialization/AssetCookedBulkData.h"
 
@@ -15,6 +16,7 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 		int32 Height;
 		int32 Bytes;
 		EAssetBlockCodec Codec = EAssetBlockCodec::None;
+		bool bHdr = false;
 	};
 
 	static const FKnownFormat Formats[] = {
@@ -25,16 +27,16 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 		{ TEXT("PF_BC5"), 4, 4, 16, EAssetBlockCodec::BC5 },
 		{ TEXT("PF_BC6H"), 4, 4, 16, EAssetBlockCodec::BC6H },
 		{ TEXT("PF_BC7"), 4, 4, 16, EAssetBlockCodec::BC7 },
-		{ TEXT("PF_ASTC_4x4"), 4, 4, 16 },
-		{ TEXT("PF_ASTC_4x4_HDR"), 4, 4, 16 },
-		{ TEXT("PF_ASTC_6x6"), 6, 6, 16 },
-		{ TEXT("PF_ASTC_6x6_HDR"), 6, 6, 16 },
-		{ TEXT("PF_ASTC_8x8"), 8, 8, 16 },
-		{ TEXT("PF_ASTC_8x8_HDR"), 8, 8, 16 },
-		{ TEXT("PF_ASTC_10x10"), 10, 10, 16 },
-		{ TEXT("PF_ASTC_10x10_HDR"), 10, 10, 16 },
-		{ TEXT("PF_ASTC_12x12"), 12, 12, 16 },
-		{ TEXT("PF_ASTC_12x12_HDR"), 12, 12, 16 },
+		{ TEXT("PF_ASTC_4x4"), 4, 4, 16, EAssetBlockCodec::Astc },
+		{ TEXT("PF_ASTC_4x4_HDR"), 4, 4, 16, EAssetBlockCodec::Astc, true },
+		{ TEXT("PF_ASTC_6x6"), 6, 6, 16, EAssetBlockCodec::Astc },
+		{ TEXT("PF_ASTC_6x6_HDR"), 6, 6, 16, EAssetBlockCodec::Astc, true },
+		{ TEXT("PF_ASTC_8x8"), 8, 8, 16, EAssetBlockCodec::Astc },
+		{ TEXT("PF_ASTC_8x8_HDR"), 8, 8, 16, EAssetBlockCodec::Astc, true },
+		{ TEXT("PF_ASTC_10x10"), 10, 10, 16, EAssetBlockCodec::Astc },
+		{ TEXT("PF_ASTC_10x10_HDR"), 10, 10, 16, EAssetBlockCodec::Astc, true },
+		{ TEXT("PF_ASTC_12x12"), 12, 12, 16, EAssetBlockCodec::Astc },
+		{ TEXT("PF_ASTC_12x12_HDR"), 12, 12, 16, EAssetBlockCodec::Astc, true },
 		{ TEXT("PF_G8"), 1, 1, 1 },
 		{ TEXT("PF_A8"), 1, 1, 1 },
 		{ TEXT("PF_R8_UINT"), 1, 1, 1 },
@@ -56,6 +58,7 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 			Out.BlockHeight = Format.Height;
 			Out.BytesPerBlock = Format.Bytes;
 			Out.Codec = Format.Codec;
+			Out.bHdr = Format.bHdr || Format.Codec == EAssetBlockCodec::BC6H;
 			return true;
 		}
 	}
@@ -84,7 +87,13 @@ FAssetMipBlockDiff AssetMipBlocks::CompareBytes(const uint8* Old, const uint8* N
 	int64 MinBlockX = MAX_int64, MinBlockY = MAX_int64, MaxBlockX = -1, MaxBlockY = -1;
 
 	// With a codec the colors of every block are decoded on both sides, for the average of the mip and the largest change.
-	const bool bDecode = Format.Codec != EAssetBlockCodec::None && Format.BlockWidth == 4 && Format.BlockHeight == 4;
+	const bool bAstc = Format.Codec == EAssetBlockCodec::Astc;
+	const bool bDecode = Format.Codec != EAssetBlockCodec::None && !bAstc && Format.BlockWidth == 4 && Format.BlockHeight == 4;
+	TArray<bool> DifferingBlock; // for ASTC: which blocks differ, to find the largest change once the images are decoded
+	if (bAstc)
+	{
+		DifferingBlock.Init(false, Result.TotalBlocks);
+	}
 	FVector4d OldSum(0.0, 0.0, 0.0, 0.0);
 	FVector4d NewSum(0.0, 0.0, 0.0, 0.0);
 	for (int64 Index = 0; Index < Result.TotalBlocks; ++Index)
@@ -120,11 +129,47 @@ FAssetMipBlockDiff AssetMipBlocks::CompareBytes(const uint8* Old, const uint8* N
 
 		if (bDiffers)
 		{
+			if (bAstc)
+			{
+				DifferingBlock[Index] = true;
+			}
 			++Result.DifferingBlocks;
 			MinBlockX = FMath::Min(MinBlockX, BlockX);
 			MaxBlockX = FMath::Max(MaxBlockX, BlockX);
 			MinBlockY = FMath::Min(MinBlockY, BlockY);
 			MaxBlockY = FMath::Max(MaxBlockY, BlockY);
+		}
+	}
+
+	if (bAstc)
+	{
+		// ASTC is decoded by the library as whole images; the largest change is looked for in the blocks that differ.
+		TArray<FVector4f> OldImage;
+		TArray<FVector4f> NewImage;
+		FString Unused;
+		if (AssetAstcDecoder::DecodeImage(Old, Size, Width, Height, Format.BlockWidth, Format.bHdr, OldImage, Unused)
+			&& AssetAstcDecoder::DecodeImage(New, Size, Width, Height, Format.BlockWidth, Format.bHdr, NewImage, Unused))
+		{
+			for (int32 Y = 0; Y < Height; ++Y)
+			{
+				for (int32 X = 0; X < Width; ++X)
+				{
+					const int64 PixelIndex = static_cast<int64>(Y) * Width + X;
+					OldSum += FVector4d(OldImage[PixelIndex]);
+					NewSum += FVector4d(NewImage[PixelIndex]);
+					if (DifferingBlock[(Y / Format.BlockHeight) * BlocksX + X / Format.BlockWidth])
+					{
+						const FVector4f Delta = OldImage[PixelIndex] - NewImage[PixelIndex];
+						Result.LargestChange = FMath::Max(
+							Result.LargestChange, static_cast<double>(FMath::Max(FMath::Max(FMath::Abs(Delta.X), FMath::Abs(Delta.Y)), FMath::Max(FMath::Abs(Delta.Z), FMath::Abs(Delta.W)))));
+					}
+				}
+			}
+
+			const double Pixels = static_cast<double>(Width) * Height;
+			Result.bColors = true;
+			Result.OldAverage = OldSum / Pixels;
+			Result.NewAverage = NewSum / Pixels;
 		}
 	}
 
@@ -199,8 +244,8 @@ void AssetMipBlocks::AppendBlockChanges(const FAssetPackageDocument& OldDocument
 			if (Diff.bColors)
 			{
 				// An HDR format has no range of 0 to 1: the change is in the units of the values.
-				Change.Title += Format.Codec == EAssetBlockCodec::BC6H ? FString::Printf(TEXT("; the largest change of a channel is %.4g (HDR values)"), Diff.LargestChange)
-																	   : FString::Printf(TEXT("; the largest change of a channel is %.3f of the range"), Diff.LargestChange);
+				Change.Title += Format.bHdr || Format.Codec == EAssetBlockCodec::BC6H ? FString::Printf(TEXT("; the largest change of a channel is %.4g (HDR values)"), Diff.LargestChange)
+																					  : FString::Printf(TEXT("; the largest change of a channel is %.3f of the range"), Diff.LargestChange);
 			}
 		}
 	}
