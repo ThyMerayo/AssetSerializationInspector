@@ -67,6 +67,11 @@ namespace AssetCookedBulkData
 		return Size > 0 ? FSHA1::HashBuffer(Data, static_cast<uint64>(Size)).ToString().Left(16) : FString();
 	}
 
+	FString HashDocumentRange(const FAssetPackageDocument& Document, const int64 Offset, const int64 Size)
+	{
+		return Size > 0 && Document.IsValidRange(Offset, Size) ? HashBytes(Document.FileData.GetData() + Offset, Size) : FString();
+	}
+
 	/**
 	 * A hash of a range of the sidecar file of the package (.ubulk for mips that stream), when the file is next to the package. Empty
 	 * when it is not there, as it is for a package that is not on disk or one copied without its sidecar.

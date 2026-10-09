@@ -9,6 +9,7 @@
 #include "UObject/UE5SpecialProjectStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
 
@@ -19,18 +20,6 @@ namespace
 
 	/** The most LODs a morph target can have in practice; a count beyond it is not a count. */
 	constexpr int32 MaximumLods = 64;
-
-	/** Reads a count that must fit what is left of the data, as many elements of ElementSize bytes. */
-	int32 ReadFittingCount(FNativeReader& Reader, const int64 ElementSize, const TCHAR* What)
-	{
-		const int32 Count = Reader.Read<int32>();
-		if (Reader.Ok() && (Count < 0 || Count > Reader.Remaining() / FMath::Max<int64>(ElementSize, 1)))
-		{
-			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
-			return 0;
-		}
-		return Reader.Ok() ? Count : 0;
-	}
 
 	/** FMorphTargetLODModel (MorphTarget.cpp), in the layout since the sections and the engine-generated flag were saved. */
 	void ReadLod(FNativeReader& Reader, const FAssetPackageDocument& Document, FAssetMorphTargetLod& Out)
@@ -56,18 +45,18 @@ namespace
 		}
 		else
 		{
-			Out.DeltaCount = ReadFittingCount(Reader, DeltaSize, TEXT("vertex deltas"));
+			Out.DeltaCount = Reader.ReadFittingCount(DeltaSize, TEXT("vertex deltas"));
 			const int64 Bytes = static_cast<int64>(Out.DeltaCount) * DeltaSize;
 			const int64 Start = Reader.Tell();
 			Reader.Skip(Bytes);
-			if (Reader.Ok() && Bytes > 0 && Document.IsValidRange(Start, Bytes))
+			if (Reader.Ok())
 			{
-				Out.DeltaHash = FSHA1::HashBuffer(Document.FileData.GetData() + Start, static_cast<uint64>(Bytes)).ToString().Left(16);
+				Out.DeltaHash = AssetCookedBulkData::HashDocumentRange(Document, Start, Bytes);
 			}
 		}
 
 		Out.NumBaseMeshVerts = Reader.Read<int32>();
-		Out.SectionCount = ReadFittingCount(Reader, 4, TEXT("sections"));
+		Out.SectionCount = Reader.ReadFittingCount(4, TEXT("sections"));
 		Reader.Skip(static_cast<int64>(Out.SectionCount) * 4);
 		Out.bGeneratedByEngine = Reader.ReadBool();
 
@@ -157,7 +146,7 @@ bool AssetMorphTargetData::Decode(const FAssetPackageDocument& Document, const F
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

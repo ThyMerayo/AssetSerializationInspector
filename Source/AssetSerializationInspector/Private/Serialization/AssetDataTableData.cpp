@@ -8,6 +8,7 @@
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetPropertyValueDecoder.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 #include "Trace/AssetSerializationTrace.h"
 
 namespace
@@ -24,41 +25,25 @@ namespace
 			return FString();
 		}
 
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
+		const FAssetSerializationTraceNode* Node = Trace->FindProperty(TEXT("RowStruct"));
+		if (Node == nullptr || Node->bIsZeroValue)
 		{
-			if (!Node.IsValid() || Node->Kind != EAssetSerializationTraceKind::Property || Node->Name != TEXT("RowStruct"))
-			{
-				continue;
-			}
-
-			if (Node->bIsZeroValue)
-			{
-				return FString();
-			}
-
-			FNativeReader Reader(Document, Export.SerialOffset + Node->Offset, Node->Size);
-			const FString Path = Reader.ReadObject();
-			if (!Reader.Ok())
-			{
-				OutError = Reader.GetError();
-			}
-			return Path;
+			return FString();
 		}
 
-		return FString();
+		FNativeReader Reader(Document, Export.SerialOffset + Node->Offset, Node->Size);
+		const FString Path = Reader.ReadObject();
+		if (!Reader.Ok())
+		{
+			OutError = Reader.GetError();
+		}
+		return Path;
 	}
 
-	/** The name of a struct from its path: what follows the last dot. */
+	/** The name of a struct from its path: what follows the last dot, or the last slash when there is no dot. */
 	FString StructNameOf(const FString& Path)
 	{
-		int32 Dot = INDEX_NONE;
-		if (Path.FindLastChar(TEXT('.'), Dot))
-		{
-			return Path.Mid(Dot + 1);
-		}
-
-		int32 Slash = INDEX_NONE;
-		return Path.FindLastChar(TEXT('/'), Slash) ? Path.Mid(Slash + 1) : Path;
+		return AssetSerializationPrimitives::TailAfterLast(Path.Contains(TEXT(".")) ? Path : AssetSerializationPrimitives::TailAfterLast(Path, TEXT('/')), TEXT('.'));
 	}
 
 	/** The name of a property as the user knows it: a Blueprint struct saves its members as Name_Number_Guid, and only the name is shown. */
@@ -139,11 +124,7 @@ bool AssetDataTableData::Decode(
 	}
 
 	// UDataTable::LoadStructData: the number of rows, then for each its name and the row struct written as tagged properties.
-	const int32 RowCount = Reader.Read<int32>();
-	if (Reader.Ok() && (RowCount < 0 || RowCount > Reader.Remaining() / MinimumRowBytes))
-	{
-		Reader.Fail(TEXT("The number of rows does not fit the data"));
-	}
+	const int32 RowCount = Reader.ReadFittingCount(MinimumRowBytes, TEXT("rows"));
 
 	Out.Rows.Reserve(RowCount);
 
@@ -193,7 +174,7 @@ bool AssetDataTableData::Decode(
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

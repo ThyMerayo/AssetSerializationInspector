@@ -8,6 +8,7 @@
 #include "Model/AssetPackageDocument.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 
 namespace
 {
@@ -339,12 +340,6 @@ FString AssetStructNativeData::DescribeClassFlags(const uint32 Flags)
 
 namespace
 {
-	FString ShortName(const FString& Path)
-	{
-		int32 Index = INDEX_NONE;
-		return Path.FindLastChar(TEXT('.'), Index) ? Path.RightChop(Index + 1) : Path;
-	}
-
 	using EChange = FAssetNativeDataChange::EState;
 
 	void AddChange(TArray<FAssetNativeDataChange>& Out, const FString& Key, const FString& Title, const EChange State, const FString& OldValue, const FString& NewValue)
@@ -373,7 +368,8 @@ namespace
 		{
 			if (!OldItems.Contains(Item))
 			{
-				AddChange(Out, Prefix + TEXT("/") + ShortName(Item), FString::Printf(TEXT("%s %s"), *Noun, *ShortName(Item)), EChange::Added, FString(), Item);
+				AddChange(Out, Prefix + TEXT("/") + AssetSerializationPrimitives::TailAfterLast(Item, TEXT('.')),
+					FString::Printf(TEXT("%s %s"), *Noun, *AssetSerializationPrimitives::TailAfterLast(Item, TEXT('.'))), EChange::Added, FString(), Item);
 			}
 		}
 
@@ -381,7 +377,8 @@ namespace
 		{
 			if (!NewItems.Contains(Item))
 			{
-				AddChange(Out, Prefix + TEXT("/") + ShortName(Item), FString::Printf(TEXT("%s %s"), *Noun, *ShortName(Item)), EChange::Removed, Item, FString());
+				AddChange(Out, Prefix + TEXT("/") + AssetSerializationPrimitives::TailAfterLast(Item, TEXT('.')),
+					FString::Printf(TEXT("%s %s"), *Noun, *AssetSerializationPrimitives::TailAfterLast(Item, TEXT('.'))), EChange::Removed, Item, FString());
 			}
 		}
 	}
@@ -669,7 +666,7 @@ bool AssetStructNativeData::Decode(const FAssetPackageDocument& Document, const 
 	}
 	else if (Reader.Remaining() != 0)
 	{
-		Out.Error = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+		Out.Error = Reader.TrailingBytesError();
 	}
 	else
 	{

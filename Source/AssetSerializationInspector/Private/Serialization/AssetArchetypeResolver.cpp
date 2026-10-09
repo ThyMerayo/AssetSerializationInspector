@@ -11,6 +11,7 @@
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetContainerFinalValue.h"
 #include "Serialization/AssetSchemaReflection.h"
+#include "Serialization/AssetSerializationPrimitives.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
 
@@ -54,24 +55,6 @@ namespace
 		return FString();
 	}
 
-	const FAssetSerializationTraceNode* FindTopLevelPropertyNode(const FAssetSerializationTrace& Trace, const FString& PropertyName, const int32 ArrayIndex)
-	{
-		if (!Trace.Root.IsValid())
-		{
-			return nullptr;
-		}
-
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Child : Trace.Root->Children)
-		{
-			if (Child.IsValid() && Child->Kind == EAssetSerializationTraceKind::Property && Child->ArrayIndex == ArrayIndex && Child->Name == PropertyName)
-			{
-				return Child.Get();
-			}
-		}
-
-		return nullptr;
-	}
-
 	FString GetClassShortName(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export)
 	{
 		FString Path;
@@ -80,8 +63,7 @@ namespace
 			return FString();
 		}
 
-		int32 Dot = INDEX_NONE;
-		return Path.FindLastChar(TEXT('.'), Dot) ? Path.RightChop(Dot + 1) : Path;
+		return AssetSerializationPrimitives::TailAfterLast(Path, TEXT('.'));
 	}
 
 	/**
@@ -103,7 +85,7 @@ namespace
 			}
 
 			const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Candidate.Index);
-			const FAssetSerializationTraceNode* Node = Trace != nullptr ? FindTopLevelPropertyNode(*Trace, TEXT("NewVariables"), 0) : nullptr;
+			const FAssetSerializationTraceNode* Node = Trace != nullptr ? Trace->FindProperty(TEXT("NewVariables"), 0) : nullptr;
 			if (Node == nullptr)
 			{
 				continue;
@@ -359,7 +341,7 @@ EAssetArchetypeValueStatus FAssetArchetypeResolver::ResolveEffectiveValue(
 	const FAssetPackageExportEntry& Export = Document.ExportMap[Location.ExportIndex];
 
 	const FAssetSerializationTrace* Trace = Location.Traces != nullptr ? Location.Traces->FindExportTrace(Location.ExportIndex) : nullptr;
-	const FAssetSerializationTraceNode* Node = Trace != nullptr ? FindTopLevelPropertyNode(*Trace, PropertyName, ArrayIndex) : nullptr;
+	const FAssetSerializationTraceNode* Node = Trace != nullptr ? Trace->FindProperty(PropertyName, ArrayIndex) : nullptr;
 
 	if (Node == nullptr)
 	{

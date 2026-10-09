@@ -143,6 +143,21 @@ public:
 		return FString(-Length - 1, reinterpret_cast<const UTF16CHAR*>(Data.GetData()));
 	}
 
+	/** Reads a count of elements of ElementSize bytes that must fit what is left of the data (and not pass Maximum); 0, and a failure, when it does not. */
+	int32 ReadFittingCount(const int64 ElementSize, const TCHAR* What, const int32 Maximum = MAX_int32)
+	{
+		const int32 Count = Read<int32>();
+		if (Ok() && (Count < 0 || Count > Maximum || Count > Remaining() / FMath::Max<int64>(ElementSize, 1)))
+		{
+			Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
+			return 0;
+		}
+		return Ok() ? Count : 0;
+	}
+
+	/** What to report when the reading ended and bytes were left: they are a layout that is not known. */
+	FString TrailingBytesError() { return FString::Printf(TEXT("%lld bytes follow what this reading knows"), Remaining()); }
+
 	void Skip(const int64 Bytes)
 	{
 		if (Ok() && Need(Bytes))

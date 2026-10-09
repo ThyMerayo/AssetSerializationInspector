@@ -18,6 +18,7 @@
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 
 #include "Model/AssetPackageDocument.h"
+#include "Serialization/AssetCookedBulkData.h"
 #include "Serialization/AssetLegacyBulkData.h"
 #include "Serialization/AssetNativeReader.h"
 #include "Serialization/AssetNumberText.h"
@@ -94,17 +95,6 @@ namespace
 		}
 	}
 
-	/** A hash of a range of the document, short enough to read: what tells that bytes changed without saying what they hold. */
-	FString HashRange(const FAssetPackageDocument& Document, const int64 Offset, const int64 Size)
-	{
-		if (Size <= 0 || !Document.IsValidRange(Offset, Size))
-		{
-			return FString();
-		}
-
-		return FSHA1::HashBuffer(Document.FileData.GetData() + Offset, static_cast<uint64>(Size)).ToString().Left(16);
-	}
-
 	/**
 	 * How many bytes a vertex of a section takes in the file (FSoftSkinVertex): the position, the three tangents (the last has a fourth
 	 * component, the handedness), the UVs, the color, the bones of the influences, and their weights, which are 16 bits since
@@ -116,25 +106,13 @@ namespace
 		return 12 + 12 + 12 + 16 + MAX_TEXCOORDS * 8 + 4 + MAX_TOTAL_INFLUENCES * 2 + MAX_TOTAL_INFLUENCES * WeightSize;
 	}
 
-	/** Reads a count that must fit what is left of the data, as many elements of ElementSize bytes. */
-	int32 ReadCount(FNativeReader& Reader, const int64 ElementSize, const TCHAR* What)
-	{
-		const int32 Count = Reader.Read<int32>();
-		if (Reader.Ok() && (Count < 0 || Count > Reader.Remaining() / FMath::Max<int64>(ElementSize, 1)))
-		{
-			Reader.Fail(FString::Printf(TEXT("The number of %s does not fit the data"), What));
-			return 0;
-		}
-		return Reader.Ok() ? Count : 0;
-	}
-
 	/** An array of fixed size elements that is only counted and hashed: its elements are not interpreted. */
 	void SkipHashedArray(FNativeReader& Reader, const FAssetPackageDocument& Document, const int64 ElementSize, const TCHAR* What, int32& OutCount, FString& OutHash)
 	{
-		OutCount = ReadCount(Reader, ElementSize, What);
+		OutCount = Reader.ReadFittingCount(ElementSize, What);
 		const int64 Start = Reader.Tell();
 		const int64 Bytes = static_cast<int64>(OutCount) * ElementSize;
-		OutHash = Reader.Ok() ? HashRange(Document, Start, Bytes) : FString();
+		OutHash = Reader.Ok() ? AssetCookedBulkData::HashDocumentRange(Document, Start, Bytes) : FString();
 		Reader.Skip(Bytes);
 	}
 
@@ -179,7 +157,7 @@ namespace
 		// The cloth mapping of each LOD of the section: not read, and an error when there is some.
 		// Before the LOD bias of the cloth was added there was a single mapping instead of one for each LOD.
 		const bool bClothLodBias = Reader.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::AddClothMappingLODBias;
-		const int32 ClothLods = bClothLodBias ? ReadCount(Reader, 4, TEXT("cloth mapping levels")) : 1;
+		const int32 ClothLods = bClothLodBias ? Reader.ReadFittingCount(4, TEXT("cloth mapping levels")) : 1;
 		for (int32 Index = 0; Index < ClothLods && Reader.Ok(); ++Index)
 		{
 			if (Reader.Read<int32>() != 0)
@@ -192,11 +170,11 @@ namespace
 		SkipClothingSectionData(Reader);
 
 		// The vertices that sit at the same place: a map from a vertex to the others.
-		const int32 Overlaps = ReadCount(Reader, 8, TEXT("overlapping vertex entries"));
+		const int32 Overlaps = Reader.ReadFittingCount(8, TEXT("overlapping vertex entries"));
 		for (int32 Index = 0; Index < Overlaps && Reader.Ok(); ++Index)
 		{
 			Reader.Read<int32>();
-			const int32 Others = ReadCount(Reader, 4, TEXT("overlapping vertices"));
+			const int32 Others = Reader.ReadFittingCount(4, TEXT("overlapping vertices"));
 			Reader.Skip(static_cast<int64>(Others) * 4);
 		}
 
@@ -241,7 +219,7 @@ namespace
 			return;
 		}
 
-		const int32 SectionCount = ReadCount(Reader, 8, TEXT("sections"));
+		const int32 SectionCount = Reader.ReadFittingCount(8, TEXT("sections"));
 		for (int32 Index = 0; Index < SectionCount && Reader.Ok(); ++Index)
 		{
 			ReadSection(Reader, Document, Out.Sections.AddDefaulted_GetRef());
@@ -249,7 +227,7 @@ namespace
 
 		if (!bEditorStripped)
 		{
-			const int32 UserSections = ReadCount(Reader, 8, TEXT("section settings"));
+			const int32 UserSections = Reader.ReadFittingCount(8, TEXT("section settings"));
 			for (int32 Index = 0; Index < UserSections && Reader.Ok(); ++Index)
 			{
 				Reader.Read<int32>();
@@ -266,7 +244,7 @@ namespace
 
 		if (!bEditorStripped && Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::SkeletalMeshLODModelMeshInfo)
 		{
-			const int32 Meshes = ReadCount(Reader, 16, TEXT("imported meshes"));
+			const int32 Meshes = Reader.ReadFittingCount(16, TEXT("imported meshes"));
 			for (int32 Index = 0; Index < Meshes && Reader.Ok(); ++Index)
 			{
 				const FString Name = Reader.ReadName();
@@ -364,7 +342,7 @@ namespace
 		Reader.Read<uint8>();
 		Reader.Read<uint8>();
 
-		const int32 LodCount = ReadCount(Reader, 8, TEXT("LODs"));
+		const int32 LodCount = Reader.ReadFittingCount(8, TEXT("LODs"));
 		for (int32 Index = 0; Index < LodCount && Reader.Ok(); ++Index)
 		{
 			ReadLod(Reader, Document, Out.Lods.AddDefaulted_GetRef());
@@ -376,7 +354,7 @@ namespace
 		if (Reader.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::ConvertReductionBaseSkeletalMeshBulkDataToInlineReductionCacheData)
 		{
 			// A block of bulk data for each LOD, kept for a reduction to start from.
-			const int32 Caches = ReadCount(Reader, 20, TEXT("reduction sources"));
+			const int32 Caches = Reader.ReadFittingCount(20, TEXT("reduction sources"));
 			for (int32 Index = 0; Index < Caches && Reader.Ok(); ++Index)
 			{
 				AssetLegacyBulkData::Read(Reader, Document);
@@ -384,7 +362,7 @@ namespace
 		}
 		else
 		{
-			const int32 Caches = ReadCount(Reader, 8, TEXT("reduction caches"));
+			const int32 Caches = Reader.ReadFittingCount(8, TEXT("reduction caches"));
 			Reader.Skip(static_cast<int64>(Caches) * 8);
 		}
 
@@ -395,7 +373,7 @@ namespace
 			Reader.Fail(TEXT("The render data of a cooked skeletal mesh is not read"));
 		}
 
-		const int32 Objects = ReadCount(Reader, 4, TEXT("objects"));
+		const int32 Objects = Reader.ReadFittingCount(4, TEXT("objects"));
 		Reader.Skip(static_cast<int64>(Objects) * 4);
 
 		// The collision for per-polygon queries, when the mesh has it on.
@@ -411,7 +389,7 @@ namespace
 		}
 		else if (Reader.Remaining() != 0)
 		{
-			Out.ModelError = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+			Out.ModelError = Reader.TrailingBytesError();
 			Out.Lods.Reset();
 		}
 		else
@@ -841,7 +819,7 @@ bool AssetSkeletalMeshData::Decode(const FAssetPackageDocument& Document, const 
 				}
 				else if (Reader.Remaining() != 0)
 				{
-					Out.ModelError = FString::Printf(TEXT("%lld bytes follow what this reading knows"), Reader.Remaining());
+					Out.ModelError = Reader.TrailingBytesError();
 				}
 				else
 				{
