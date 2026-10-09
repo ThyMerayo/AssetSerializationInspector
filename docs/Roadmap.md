@@ -1,6 +1,6 @@
 # Roadmap
 
-81 of 87 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
+82 of 88 items are done. The open ones are listed first, with why they are open; every item, done or not, is under its topic below.
 
 ## Still open
 
@@ -14,7 +14,6 @@
 **Decoder work, no blocker:**
 
 - The contents of the Nanite pages, the ray tracing proxy buffers and the distance field volumes, which are hashed today ([static meshes](#native-data-static-meshes))
-- The colors of ASTC mips, which are compared by blocks only (the engine's astcenc library is loaded as a dynamic library, so it is not a simple dependency) ([textures](#native-data-textures))
 
 **Cannot be done offline:**
 
@@ -103,7 +102,8 @@ Source images, cooked platform data, virtual textures, mips and their pixels.
 - [x] Decode the colors of the block compressed mips BC1 to BC5 and BC7: largest change of a channel and the average color of each version
 - [x] Decode the colors of BC6H (HDR) mips, checked against the engine's own encoder: 12 of the 14 modes appeared in its output (not modes 9 and 13) and each decodes with the error its precision allows
 - [ ] Cooked textures that store their platform data as derived data references (a cook option): no sample, they fail with a reason
-- [ ] Decode the colors of ASTC mips, and the pixels of source images that are virtualized; a change that is only in the sidecar file of a streamed mip is not seen, since the package itself is the same
+- [x] Decode the colors of ASTC mips (LDR and HDR) with the engine's astcenc library, checked by encoding known images with the same library
+- [ ] Decode the pixels of source images that are virtualized; a change that is only in the sidecar file of a streamed mip is not seen, since the package itself is the same
 
 ## Native data: static meshes
 

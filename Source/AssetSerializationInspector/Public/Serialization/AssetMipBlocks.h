@@ -19,7 +19,8 @@ enum class EAssetBlockCodec : uint8
 	BC4,
 	BC5,
 	BC6H,
-	BC7
+	BC7,
+	Astc
 };
 
 /** How a pixel format stores a mip: in blocks of Width by Height pixels, each BytesPerBlock bytes (an uncompressed format has blocks of one pixel). */
@@ -31,6 +32,9 @@ struct FAssetBlockFormat
 
 	/** How the colors of a block can be decoded; None when they cannot (the blocks are still compared). */
 	EAssetBlockCodec Codec = EAssetBlockCodec::None;
+
+	/** The colors are HDR values, which can be above 1 (BC6H and the HDR ASTC formats). */
+	bool bHdr = false;
 };
 
 /** What differs between two versions of the same mip, counted in blocks. */
