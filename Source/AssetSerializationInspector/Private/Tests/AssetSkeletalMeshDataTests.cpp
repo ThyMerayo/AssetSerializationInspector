@@ -14,30 +14,19 @@
 #include "Readers/AssetPackageReader.h"
 #include "Save/AssetSaveAnalyzer.h"
 #include "Serialization/AssetSkeletalMeshData.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+
+using AssetTestUtils::FindChange;
 
 namespace SkeletalMeshTestUtils
 {
 	/** The data a skeletal mesh writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetSkeletalMeshData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetSkeletalMeshData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetSkeletalMeshData::Decode(Document, Export, Offset, Size, Out); });
 	}
 
 	static FAssetSkeletonBone MakeBone(const TCHAR* Name, const TCHAR* Parent, const TCHAR* Pose)
@@ -212,16 +201,12 @@ bool FAssetSkeletalMeshData_ComparesBonesAndMaterialSlots::RunTest(const FString
 		MakeMesh({ MakeBone(TEXT("root"), TEXT(""), TEXT("pose A")), MakeBone(TEXT("spine"), TEXT("root"), TEXT("pose B")), MakeBone(TEXT("head"), TEXT("spine"), TEXT("pose C")) });
 	TestTrue(TEXT("The same skeleton is no change"), AssetSkeletalMeshData::Compare(Base, Base).IsEmpty());
 
-	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	};
-
 	// A bone added at the end, and one that went away.
 	{
 		const TArray<FAssetNativeDataChange> Added = AssetSkeletalMeshData::Compare(Base,
 			MakeMesh({ MakeBone(TEXT("root"), TEXT(""), TEXT("pose A")), MakeBone(TEXT("spine"), TEXT("root"), TEXT("pose B")), MakeBone(TEXT("head"), TEXT("spine"), TEXT("pose C")),
 				MakeBone(TEXT("hat"), TEXT("head"), TEXT("pose D")) }));
-		if (const FAssetNativeDataChange* Change = Find(Added, TEXT("Bone/hat")))
+		if (const FAssetNativeDataChange* Change = FindChange(Added, TEXT("Bone/hat")))
 		{
 			TestEqual(TEXT("The new bone is added"), static_cast<uint8>(Change->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 			TestTrue(TEXT("With its parent"), Change->NewValue.Contains(TEXT("parent head")));
@@ -233,7 +218,7 @@ bool FAssetSkeletalMeshData_ComparesBonesAndMaterialSlots::RunTest(const FString
 
 		const TArray<FAssetNativeDataChange> Removed =
 			AssetSkeletalMeshData::Compare(Base, MakeMesh({ MakeBone(TEXT("root"), TEXT(""), TEXT("pose A")), MakeBone(TEXT("spine"), TEXT("root"), TEXT("pose B")) }));
-		if (const FAssetNativeDataChange* Change = Find(Removed, TEXT("Bone/head")))
+		if (const FAssetNativeDataChange* Change = FindChange(Removed, TEXT("Bone/head")))
 		{
 			TestEqual(TEXT("The bone that went away is removed"), static_cast<uint8>(Change->State), static_cast<uint8>(FAssetNativeDataChange::EState::Removed));
 		}
@@ -248,11 +233,11 @@ bool FAssetSkeletalMeshData_ComparesBonesAndMaterialSlots::RunTest(const FString
 		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(
 			Base, MakeMesh({ MakeBone(TEXT("root"), TEXT(""), TEXT("pose A")), MakeBone(TEXT("spine"), TEXT("root"), TEXT("pose B2")), MakeBone(TEXT("head"), TEXT("root"), TEXT("pose C")) }));
 		TestEqual(TEXT("Two bones changed"), Changes.Num(), 2);
-		if (const FAssetNativeDataChange* Pose = Find(Changes, TEXT("Bone/spine")))
+		if (const FAssetNativeDataChange* Pose = FindChange(Changes, TEXT("Bone/spine")))
 		{
 			TestTrue(TEXT("The pose of the spine"), Pose->Title.Contains(TEXT("pose")));
 		}
-		if (const FAssetNativeDataChange* Parent = Find(Changes, TEXT("Bone/head")))
+		if (const FAssetNativeDataChange* Parent = FindChange(Changes, TEXT("Bone/head")))
 		{
 			TestTrue(TEXT("The parent of the head"), Parent->Title.Contains(TEXT("parent")));
 			TestTrue(TEXT("From the spine"), Parent->OldValue.Contains(TEXT("parent spine")));
@@ -321,10 +306,6 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 
 	TestTrue(TEXT("The same model is no change"), AssetSkeletalMeshData::Compare(Base, Base).IsEmpty());
 
-	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	};
-
 	// The vertices of a section moved (the hash changes, the counts do not): the geometry changed.
 	{
 		FAssetSkeletalMeshData Moved = Base;
@@ -332,7 +313,7 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		Moved.ModelGuid = TEXT("22222222-2222-2222-2222-222222222222");
 
 		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Base, Moved);
-		if (const FAssetNativeDataChange* Change = Find(Changes, TEXT("Lod/0/Section/1")))
+		if (const FAssetNativeDataChange* Change = FindChange(Changes, TEXT("Lod/0/Section/1")))
 		{
 			TestEqual(TEXT("The section is modified"), static_cast<uint8>(Change->State), static_cast<uint8>(FAssetNativeDataChange::EState::Modified));
 			TestTrue(TEXT("From the old vertex data"), Change->OldValue.Contains(TEXT("bbbb")));
@@ -342,8 +323,8 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		{
 			AddError(TEXT("The change of the vertices is not reported"));
 		}
-		TestNull(TEXT("The other section is not"), Find(Changes, TEXT("Lod/0/Section/0")));
-		TestNotNull(TEXT("The identifier of the model follows, since something changed"), Find(Changes, TEXT("ModelGuid")));
+		TestNull(TEXT("The other section is not"), FindChange(Changes, TEXT("Lod/0/Section/0")));
+		TestNotNull(TEXT("The identifier of the model follows, since something changed"), FindChange(Changes, TEXT("ModelGuid")));
 	}
 
 	// A section added, a LOD added, and the index buffer of a LOD.
@@ -354,7 +335,7 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		Grown.Lods.Add(MakeLod({ MakeSection(6, 12, TEXT("eeee")) }, TEXT("jjjj")));
 
 		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Base, Grown);
-		if (const FAssetNativeDataChange* Section = Find(Changes, TEXT("Lod/0/Section/2")))
+		if (const FAssetNativeDataChange* Section = FindChange(Changes, TEXT("Lod/0/Section/2")))
 		{
 			TestEqual(TEXT("The new section is added"), static_cast<uint8>(Section->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 		}
@@ -362,7 +343,7 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		{
 			AddError(TEXT("The added section is not reported"));
 		}
-		if (const FAssetNativeDataChange* Lod = Find(Changes, TEXT("Lod/1")))
+		if (const FAssetNativeDataChange* Lod = FindChange(Changes, TEXT("Lod/1")))
 		{
 			TestEqual(TEXT("The new LOD is added"), static_cast<uint8>(Lod->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 		}
@@ -370,7 +351,7 @@ bool FAssetSkeletalMeshData_ComparesTheLodsAndSections::RunTest(const FString& P
 		{
 			AddError(TEXT("The added LOD is not reported"));
 		}
-		TestNotNull(TEXT("The vertices of the LOD changed with the new section"), Find(Changes, TEXT("Lod/0/Whole")));
+		TestNotNull(TEXT("The vertices of the LOD changed with the new section"), FindChange(Changes, TEXT("Lod/0/Whole")));
 	}
 
 	// A model that is not read on one side is not compared.
@@ -444,10 +425,6 @@ bool FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& 
 		return false;
 	}
 
-	const auto Find = [](const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key) {
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	};
-
 	FAssetSkeletalMeshData Cube;
 	FAssetSkeletalMeshData Chain;
 	if (!ReadFixture(*this, TEXT("SKM_PhysCube.uasset"), Cube) || !ReadFixture(*this, TEXT("SKM_Chain_Template.uasset"), Chain) || !Cube.Render.bRead || !Chain.Render.bRead)
@@ -459,9 +436,9 @@ bool FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& 
 	// Two meshes: LODs added, and the first one differs in its buffers and its sections.
 	{
 		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Chain);
-		TestNotNull(TEXT("A LOD was added"), Find(Changes, TEXT("Render/Lod/1")));
-		TestNotNull(TEXT("The buffers of the first LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
-		TestNotNull(TEXT("A section was added to it"), Find(Changes, TEXT("Render/Lod/0/Section/1")));
+		TestNotNull(TEXT("A LOD was added"), FindChange(Changes, TEXT("Render/Lod/1")));
+		TestNotNull(TEXT("The buffers of the first LOD"), FindChange(Changes, TEXT("Render/Lod/0/Buffers")));
+		TestNotNull(TEXT("A section was added to it"), FindChange(Changes, TEXT("Render/Lod/0/Section/1")));
 	}
 
 	// One byte of the vertices of a copy of the cube: only the buffers of that LOD change.
@@ -493,7 +470,7 @@ bool FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& 
 		{
 			const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Changed);
 			TestEqual(TEXT("One byte of the vertices is one change"), Changes.Num(), 1);
-			TestNotNull(TEXT("Named by the LOD"), Find(Changes, TEXT("Render/Lod/0/Buffers")));
+			TestNotNull(TEXT("Named by the LOD"), FindChange(Changes, TEXT("Render/Lod/0/Buffers")));
 		}
 		else
 		{
@@ -507,7 +484,7 @@ bool FAssetSkeletalMeshData_ShowsAChangeOfTheRenderData::RunTest(const FString& 
 		Other.Render.Lods[0].Sections[0].MaxBoneInfluences += 1;
 		const TArray<FAssetNativeDataChange> Changes = AssetSkeletalMeshData::Compare(Cube, Other);
 		TestEqual(TEXT("A section is one change"), Changes.Num(), 1);
-		TestNotNull(TEXT("Named by its LOD and place"), Find(Changes, TEXT("Render/Lod/0/Section/0")));
+		TestNotNull(TEXT("Named by its LOD and place"), FindChange(Changes, TEXT("Render/Lod/0/Section/0")));
 	}
 
 	IFileManager::Get().DeleteDirectory(*Folder, false, true);

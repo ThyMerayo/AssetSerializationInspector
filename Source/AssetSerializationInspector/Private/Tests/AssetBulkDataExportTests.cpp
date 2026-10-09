@@ -32,8 +32,11 @@
 #include "Serialization/AssetMipBlocks.h"
 #include "Serialization/AssetSourceImage.h"
 #include "Tests/AssetTestPackageNames.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+
+using AssetTestUtils::FindChange;
 
 namespace BulkDataTestUtils
 {
@@ -43,22 +46,8 @@ namespace BulkDataTestUtils
 	/** The data a texture or mesh description writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetBulkDataExport& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetBulkDataExport::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetBulkDataExport::Decode(Document, Export, Offset, Size, Out); });
 	}
 
 	/** A 4 by 4 texture of one grey, saved to the file of its package (and a copy of the file under another extension, which the next save would overwrite). */
@@ -1305,10 +1294,6 @@ namespace CookedTextureTestUtils
 		return Data;
 	}
 
-	static const FAssetNativeDataChange* Find(const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key)
-	{
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	}
 } // namespace CookedTextureTestUtils
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBulkDataExport_ReadsTheMipsOfACookedTexture, "AssetSerializationInspector.Serialization.AssetBulkDataExport.ReadsTheMipsOfACookedTexture",
@@ -1395,7 +1380,7 @@ bool FAssetBulkDataExport_ShowsAChangeOfTheCookedMips::RunTest(const FString& Pa
 
 		const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Base, Repainted);
 		TestEqual(TEXT("One change"), Changes.Num(), 1);
-		if (const FAssetNativeDataChange* Change = Find(Changes, TEXT("Platform/0/Mip/1")))
+		if (const FAssetNativeDataChange* Change = FindChange(Changes, TEXT("Platform/0/Mip/1")))
 		{
 			TestEqual(TEXT("The mip is modified"), static_cast<uint8>(Change->State), static_cast<uint8>(FAssetNativeDataChange::EState::Modified));
 			TestTrue(TEXT("From the old pixels"), Change->OldValue.Contains(TEXT("bbbb")));
@@ -1421,10 +1406,10 @@ bool FAssetBulkDataExport_ShowsAChangeOfTheCookedMips::RunTest(const FString& Pa
 		Other.PlatformData[0].PixelFormat = TEXT("PF_BC7");
 
 		const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Base, Other);
-		TestNotNull(TEXT("The pixel format"), Find(Changes, TEXT("Platform/0/PixelFormat")));
-		TestNotNull(TEXT("The size"), Find(Changes, TEXT("Platform/0/Size")));
-		TestNotNull(TEXT("The number of mips"), Find(Changes, TEXT("Platform/0/MipCount")));
-		if (const FAssetNativeDataChange* Added = Find(Changes, TEXT("Platform/0/Mip/3")))
+		TestNotNull(TEXT("The pixel format"), FindChange(Changes, TEXT("Platform/0/PixelFormat")));
+		TestNotNull(TEXT("The size"), FindChange(Changes, TEXT("Platform/0/Size")));
+		TestNotNull(TEXT("The number of mips"), FindChange(Changes, TEXT("Platform/0/MipCount")));
+		if (const FAssetNativeDataChange* Added = FindChange(Changes, TEXT("Platform/0/Mip/3")))
 		{
 			TestEqual(TEXT("The mip that the new texture has beyond the old is added"), static_cast<uint8>(Added->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 		}
@@ -1440,7 +1425,7 @@ bool FAssetBulkDataExport_ShowsAChangeOfTheCookedMips::RunTest(const FString& Pa
 		Streamed.PlatformData[0].Mips[0] = MakeMip(8, TEXT("aaaa"), false);
 
 		const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Base, Streamed);
-		if (const FAssetNativeDataChange* Change = Find(Changes, TEXT("Platform/0/Mip/0")))
+		if (const FAssetNativeDataChange* Change = FindChange(Changes, TEXT("Platform/0/Mip/0")))
 		{
 			TestTrue(TEXT("The change says how the mip is stored"), Change->NewValue.Contains(TEXT("streamed")));
 		}
@@ -1508,11 +1493,11 @@ bool FAssetBulkDataExport_ReadsTheOlderBulkDataFormat::RunTest(const FString& Pa
 	Current.Bulk.ContentHash = TEXT("2222222222222222222222222222222222222222");
 
 	const TArray<FAssetNativeDataChange> Upgraded = AssetBulkDataExport::Compare(Legacy, Current);
-	TestTrue(TEXT("The image is not reported as changed"), CookedTextureTestUtils::Find(Upgraded, TEXT("BulkData/Source")) == nullptr);
-	TestNotNull(TEXT("The storage is"), CookedTextureTestUtils::Find(Upgraded, TEXT("BulkData/Storage")));
+	TestTrue(TEXT("The image is not reported as changed"), FindChange(Upgraded, TEXT("BulkData/Source")) == nullptr);
+	TestNotNull(TEXT("The storage is"), FindChange(Upgraded, TEXT("BulkData/Storage")));
 
 	Current.Bulk.PayloadSize = 128;
-	TestNotNull(TEXT("A different size is a different image whatever the format"), CookedTextureTestUtils::Find(AssetBulkDataExport::Compare(Legacy, Current), TEXT("BulkData/Source")));
+	TestNotNull(TEXT("A different size is a different image whatever the format"), FindChange(AssetBulkDataExport::Compare(Legacy, Current), TEXT("BulkData/Source")));
 
 	return true;
 }
@@ -1624,9 +1609,9 @@ bool FAssetBulkDataExport_ReadsTheTilesOfAVirtualTexture::RunTest(const FString&
 	Changed.PlatformData[0].Virtual.TileSize = 64;
 
 	const TArray<FAssetNativeDataChange> Changes = AssetBulkDataExport::Compare(Base, Changed);
-	TestNotNull(TEXT("The chunk"), Find(Changes, TEXT("Platform/0/VirtualChunk/0")));
-	TestNotNull(TEXT("The layers"), Find(Changes, TEXT("Platform/0/VirtualLayers")));
-	TestNotNull(TEXT("The tile size"), Find(Changes, TEXT("Platform/0/VirtualTiles")));
+	TestNotNull(TEXT("The chunk"), FindChange(Changes, TEXT("Platform/0/VirtualChunk/0")));
+	TestNotNull(TEXT("The layers"), FindChange(Changes, TEXT("Platform/0/VirtualLayers")));
+	TestNotNull(TEXT("The tile size"), FindChange(Changes, TEXT("Platform/0/VirtualTiles")));
 	TestTrue(TEXT("The same virtual texture is no change"), AssetBulkDataExport::Compare(Base, MakeVirtual(TEXT("aaaa"))).IsEmpty());
 
 	return true;

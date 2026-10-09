@@ -10,30 +10,19 @@
 #include "Model/AssetPackageDocument.h"
 #include "Readers/AssetPackageReader.h"
 #include "Serialization/AssetMorphTargetData.h"
+#include "Tests/AssetTestUtils.h"
 #include "Trace/AssetPackageFieldDecoder.h"
 #include "Trace/AssetSerializationTrace.h"
+
+using AssetTestUtils::FindChange;
 
 namespace MorphTargetTestUtils
 {
 	/** The data a morph target writes after its tagged properties: the last range of its trace that no property accounts for. */
 	static bool DecodeData(const FAssetPackageDocument& Document, const FAssetPackageTraceCollection& Traces, const FAssetPackageExportEntry& Export, FAssetMorphTargetData& Out)
 	{
-		const FAssetSerializationTrace* Trace = Traces.FindExportTrace(Export.Index);
-		if (Trace == nullptr || !Trace->Root.IsValid())
-		{
-			return false;
-		}
-
-		const FAssetSerializationTraceNode* Native = nullptr;
-		for (const TSharedPtr<FAssetSerializationTraceNode>& Node : Trace->Root->Children)
-		{
-			if (Node.IsValid() && Node->Kind == EAssetSerializationTraceKind::Native)
-			{
-				Native = Node.Get();
-			}
-		}
-
-		return Native != nullptr && AssetMorphTargetData::Decode(Document, Export, Export.SerialOffset + Native->Offset, Native->Size, Out);
+		return AssetTestUtils::DecodeLastNative(
+			Traces, Export, [&](const int64 Offset, const int64 Size, const FAssetSerializationTrace*) { return AssetMorphTargetData::Decode(Document, Export, Offset, Size, Out); });
 	}
 
 	static FAssetMorphTargetLod MakeLod(const int32 Deltas, const TCHAR* Hash)
@@ -54,10 +43,6 @@ namespace MorphTargetTestUtils
 		return Data;
 	}
 
-	static const FAssetNativeDataChange* Find(const TArray<FAssetNativeDataChange>& Changes, const TCHAR* Key)
-	{
-		return Changes.FindByPredicate([Key](const FAssetNativeDataChange& Change) { return Change.Key == Key; });
-	}
 } // namespace MorphTargetTestUtils
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetMorphTargetData_ReadsTheMorphTargetsOfAMesh, "AssetSerializationInspector.Serialization.AssetMorphTargetData.ReadsTheMorphTargetsOfAMesh",
@@ -133,7 +118,7 @@ bool FAssetMorphTargetData_ShowsAChangeOfTheDeltas::RunTest(const FString& Param
 
 		const TArray<FAssetNativeDataChange> Changes = AssetMorphTargetData::Compare(Base, Moved);
 		TestEqual(TEXT("One change"), Changes.Num(), 1);
-		if (const FAssetNativeDataChange* Change = Find(Changes, TEXT("Lod/1/Deltas")))
+		if (const FAssetNativeDataChange* Change = FindChange(Changes, TEXT("Lod/1/Deltas")))
 		{
 			TestTrue(TEXT("From the old hash"), Change->OldValue.Contains(TEXT("bbbb")));
 			TestTrue(TEXT("To the new"), Change->NewValue.Contains(TEXT("cccc")));
@@ -153,10 +138,10 @@ bool FAssetMorphTargetData_ShowsAChangeOfTheDeltas::RunTest(const FString& Param
 		Other.Lods.Add(MakeLod(30, TEXT("dddd")));
 
 		const TArray<FAssetNativeDataChange> Changes = AssetMorphTargetData::Compare(Base, Other);
-		TestNotNull(TEXT("The source file"), Find(Changes, TEXT("Lod/0/Source")));
-		TestNotNull(TEXT("The base vertices"), Find(Changes, TEXT("Lod/0/BaseVertices")));
-		TestNotNull(TEXT("The sections"), Find(Changes, TEXT("Lod/0/Sections")));
-		if (const FAssetNativeDataChange* Added = Find(Changes, TEXT("Lod/2")))
+		TestNotNull(TEXT("The source file"), FindChange(Changes, TEXT("Lod/0/Source")));
+		TestNotNull(TEXT("The base vertices"), FindChange(Changes, TEXT("Lod/0/BaseVertices")));
+		TestNotNull(TEXT("The sections"), FindChange(Changes, TEXT("Lod/0/Sections")));
+		if (const FAssetNativeDataChange* Added = FindChange(Changes, TEXT("Lod/2")))
 		{
 			TestEqual(TEXT("The new LOD is added"), static_cast<uint8>(Added->State), static_cast<uint8>(FAssetNativeDataChange::EState::Added));
 		}
