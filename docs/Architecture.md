@@ -89,6 +89,65 @@ sequenceDiagram
     User->>UI: open the diff
 ```
 
+### Decoding one export
+
+How the bytes of one export become properties and native ranges (the field decoder), and what happens to each part when a diff needs it.
+
+```mermaid
+flowchart TD
+    Bytes["Export bytes<br/>from the package document"]
+
+    Bytes --> Unver{"Saved without<br/>property tags?<br/>(cooked package)"}
+
+    Unver -- yes --> Cls{"Does the running<br/>editor have the class?"}
+    Cls -- yes --> Mask["Read the property mask,<br/>then the values in the<br/>class's property order.<br/>What follows stays a native range"]
+    Cls -- no --> Undec1["One undecoded range<br/>'saved without tags'"]
+
+    Unver -- no --> Range{"Is the range of the<br/>tagged properties known?<br/>export map, or a guess<br/>for older packages"}
+    Range -- no --> Undec2["One undecoded range"]
+    Range -- yes --> Before["Bytes before the range<br/>become a native range"]
+    Before --> Tags["Read property tags one by one<br/>name, type, size, flags<br/>until the terminator"]
+    Tags -- "a tag cannot be read" --> Undec3["The rest of the range<br/>is undecoded"]
+    Tags --> After["What is left, and the bytes<br/>after the range, become<br/>native ranges"]
+
+    Mask --> Map
+    Tags --> Map
+    After --> Map
+    Undec1 --> Map
+    Undec2 --> Map
+    Undec3 --> Map
+
+    Map["<b>Serialized field map of the export</b><br/>property nodes (offset, size, type)<br/>native ranges<br/>undecoded ranges"]
+
+    Map --> PropNode["A property node"]
+    Map --> NativeRange["A native range<br/>(only looked at when it changed)"]
+
+    PropNode --> ValueDec["Value decoder<br/>bounded by the property's size"]
+    ValueDec --> Tree["Decoded value tree<br/>children and stable semantic keys<br/>used to match old and new"]
+
+    NativeRange --> Dispatch{"What is the<br/>export's class?"}
+    Dispatch -- "class or function" --> StructR["Class and bytecode reader"]
+    Dispatch -- "graph node" --> PinR["Pin reader"]
+    Dispatch -- "static mesh" --> StaticR["Static mesh reader"]
+    Dispatch -- "skeletal mesh" --> SkelR["Skeletal mesh reader"]
+    Dispatch -- "morph target" --> MorphR["Morph target reader"]
+    Dispatch -- "texture or<br/>mesh description" --> BulkR["Bulk data reader"]
+    Dispatch -- "anything else" --> Describe["Described by class,<br/>with the changed byte count"]
+
+    StructR --> Last
+    PinR --> Last
+    StaticR --> Last
+    SkelR --> Last
+    MorphR --> Last
+    BulkR --> Last
+
+    Last{"Did the reader account<br/>for the last byte<br/>on both sides?"}
+    Last -- yes --> Explained["Explained: the diff lists<br/>the individual changes"]
+    Last -- no --> Describe
+
+    Describe --> Unexplained["Counted as unexplained<br/>in the Save Analysis"]
+```
+
 ### Main data types
 
 ```mermaid
