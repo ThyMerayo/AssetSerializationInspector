@@ -23,7 +23,7 @@ bool AssetMipBlocks::FindBlockFormat(const FString& PixelFormat, FAssetBlockForm
 		{ TEXT("PF_DXT5"), 4, 4, 16, EAssetBlockCodec::BC3 },
 		{ TEXT("PF_BC4"), 4, 4, 8, EAssetBlockCodec::BC4 },
 		{ TEXT("PF_BC5"), 4, 4, 16, EAssetBlockCodec::BC5 },
-		{ TEXT("PF_BC6H"), 4, 4, 16 },
+		{ TEXT("PF_BC6H"), 4, 4, 16, EAssetBlockCodec::BC6H },
 		{ TEXT("PF_BC7"), 4, 4, 16, EAssetBlockCodec::BC7 },
 		{ TEXT("PF_ASTC_4x4"), 4, 4, 16 },
 		{ TEXT("PF_ASTC_4x4_HDR"), 4, 4, 16 },
@@ -198,7 +198,9 @@ void AssetMipBlocks::AppendBlockChanges(const FAssetPackageDocument& OldDocument
 				100.0 * static_cast<double>(Diff.DifferingBlocks) / static_cast<double>(FMath::Max<int64>(Diff.TotalBlocks, 1)), Diff.MinX, Diff.MaxX, Diff.MinY, Diff.MaxY);
 			if (Diff.bColors)
 			{
-				Change.Title += FString::Printf(TEXT("; the largest change of a channel is %.3f of the range"), Diff.LargestChange);
+				// An HDR format has no range of 0 to 1: the change is in the units of the values.
+				Change.Title += Format.Codec == EAssetBlockCodec::BC6H ? FString::Printf(TEXT("; the largest change of a channel is %.4g (HDR values)"), Diff.LargestChange)
+																	   : FString::Printf(TEXT("; the largest change of a channel is %.3f of the range"), Diff.LargestChange);
 			}
 		}
 	}

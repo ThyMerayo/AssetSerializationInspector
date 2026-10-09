@@ -138,8 +138,8 @@ Where the pixels are kept in the file moves from cook to cook and is **not** a d
 When a mip kept its size and storage but its pixels changed:
 
 - **Blocks**: BC and ASTC store pixels in fixed-size blocks (4 by 4 pixels in 8 or 16 bytes for BC, the format's block size for ASTC). The diff compares block by block and reports how many differ, what share of the mip, and the box of pixels they cover. Uncompressed formats are compared pixel by pixel.
-- **Colors**: for DXT1, DXT3, DXT5, BC4, BC5 and BC7 the blocks are decoded, and the diff adds the largest change of a channel and the average color on each side. Colors are shown as stored, with no gamma conversion. BC4 is a grey, BC5 has red and green.
-- BC6H and ASTC are compared by blocks only.
+- **Colors**: for DXT1, DXT3, DXT5, BC4, BC5, BC6H and BC7 the blocks are decoded, and the diff adds the largest change of a channel and the average color on each side. Colors are shown as stored, with no gamma conversion. BC4 is a grey, BC5 has red and green. BC6H is HDR, so its values can be above 1 and its change is in the units of the values, not a share of a range.
+- ASTC is compared by blocks only.
 - A mip is compared only when its size is exactly the number of blocks of its format; any other layout is reported as not compared.
 
 ### Virtual textures

@@ -18,6 +18,7 @@ enum class EAssetBlockCodec : uint8
 	BC3,
 	BC4,
 	BC5,
+	BC6H,
 	BC7
 };
 
