@@ -46,15 +46,72 @@
 static const FName AssetSerializationInspectorTabName("Asset Serialization Inspector");
 static const FName DiffTabName(TEXT("Asset Serialization Diff"));
 
-static void NotifyFailure(const FText& Message)
+/** A notification that goes away by itself after Seconds; the state is the icon of success or failure. */
+static void Notify(const FText& Message, const float Seconds, const SNotificationItem::ECompletionState State = SNotificationItem::CS_None)
 {
 	FNotificationInfo Info(Message);
-	Info.ExpireDuration = 8.0f;
+	Info.ExpireDuration = Seconds;
 
 	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
 	{
-		Notification->SetCompletionState(SNotificationItem::CS_Fail);
+		Notification->SetCompletionState(State);
 	}
+}
+
+static void NotifyFailure(const FText& Message)
+{
+	Notify(Message, 8.0f, SNotificationItem::CS_Fail);
+}
+
+/**
+ * Asks where to save a report. The suggested name has no extension: when the name has none, the dialog adds the one of the file type that
+ * is selected, so choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
+ */
+static bool PickReportFile(const FText& Title, const FString& DefaultBaseName, FString& OutFilename)
+{
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+	if (DesktopPlatform == nullptr)
+	{
+		return false;
+	}
+
+	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+	TArray<FString> SelectedFiles;
+	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, Title.ToString(), FPaths::ProjectSavedDir(), DefaultBaseName,
+			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
+		|| SelectedFiles.IsEmpty())
+	{
+		return false;
+	}
+
+	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
+	OutFilename = SelectedFiles[0];
+	if (FPaths::GetExtension(OutFilename).IsEmpty())
+	{
+		OutFilename += TEXT(".txt");
+	}
+
+	return true;
+}
+
+/** Shows a window with Content, or brings the one in Slot to the front (with the new content, when bReplaceContent). */
+static void ShowOrReplaceWindow(TWeakPtr<SWindow>& Slot, const FText& Title, const FVector2D& Size, const TSharedRef<SWidget>& Content, const bool bReplaceContent)
+{
+	if (const TSharedPtr<SWindow> Existing = Slot.Pin())
+	{
+		if (bReplaceContent)
+		{
+			Existing->SetContent(Content);
+		}
+		Existing->BringToFront();
+		return;
+	}
+
+	const TSharedRef<SWindow> Window = SNew(SWindow).Title(Title).ClientSize(Size).SupportsMinimize(true).SupportsMaximize(true)[Content];
+
+	Slot = Window;
+	FSlateApplication::Get().AddWindow(Window);
 }
 
 #define LOCTEXT_NAMESPACE "FAssetSerializationInspectorModule"
@@ -306,9 +363,7 @@ void FAssetSerializationInspectorModule::RegisterMenus()
 						Added += FAssetMonitoringManager::Get().AddMonitoredFolder(Path, true);
 					}
 
-					FNotificationInfo Info(FText::Format(LOCTEXT("FolderMonitored", "Now monitoring {0} more assets."), FText::AsNumber(Added)));
-					Info.ExpireDuration = 5.0f;
-					FSlateNotificationManager::Get().AddNotification(Info);
+					Notify(FText::Format(LOCTEXT("FolderMonitored", "Now monitoring {0} more assets."), FText::AsNumber(Added)), 5.0f);
 				})));
 
 			InSection.AddMenuEntry("RunFolderNoOpResaveTest", LOCTEXT("FolderNoOpResaveTest", "Run No-op Resave Test on Folder"),
@@ -330,9 +385,7 @@ void FAssetSerializationInspectorModule::RunBatchResaveTest(TArray<FName> Packag
 {
 	if (PackageNames.IsEmpty())
 	{
-		FNotificationInfo Info(FText::Format(LOCTEXT("NoAssetsToTest", "No assets to test in {0}."), FText::FromString(Scope)));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
+		Notify(FText::Format(LOCTEXT("NoAssetsToTest", "No assets to test in {0}."), FText::FromString(Scope)), 5.0f);
 		return;
 	}
 
@@ -381,36 +434,21 @@ void FAssetSerializationInspectorModule::ShowBatchResultsWindow()
 													   .OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveBatchResaveReport));
 
 	// A new run replaces the content of the window that is already open.
-	if (const TSharedPtr<SWindow> Existing = BatchResultsWindow.Pin())
-	{
-		Existing->SetContent(Results);
-		Existing->BringToFront();
-		return;
-	}
-
-	const TSharedRef<SWindow> Window =
-		SNew(SWindow).Title(LOCTEXT("BatchResultsTitle", "No-op Resave Results")).ClientSize(FVector2D(960.0f, 640.0f)).SupportsMinimize(true).SupportsMaximize(true)[Results];
-
-	BatchResultsWindow = Window;
-	FSlateApplication::Get().AddWindow(Window);
+	ShowOrReplaceWindow(BatchResultsWindow, LOCTEXT("BatchResultsTitle", "No-op Resave Results"), FVector2D(960.0f, 640.0f), Results, true);
 }
 
 void FAssetSerializationInspectorModule::ShowMonitoredAssetsWindow()
 {
-	if (const TSharedPtr<SWindow> Existing = MonitoredAssetsWindow.Pin())
+	if (MonitoredAssetsWindow.IsValid())
 	{
-		Existing->BringToFront();
+		MonitoredAssetsWindow.Pin()->BringToFront();
 		return;
 	}
 
 	const TSharedRef<SAssetMonitoredAssets> Content =
 		SNew(SAssetMonitoredAssets).OnOpenLastSave(FOnOpenMonitoredAssetLastSave::CreateRaw(this, &FAssetSerializationInspectorModule::OpenMonitoredAssetLastSave));
 
-	const TSharedRef<SWindow> Window =
-		SNew(SWindow).Title(LOCTEXT("MonitoredAssetsTitle", "Monitored Assets")).ClientSize(FVector2D(860.0f, 560.0f)).SupportsMinimize(true).SupportsMaximize(true)[Content];
-
-	MonitoredAssetsWindow = Window;
-	FSlateApplication::Get().AddWindow(Window);
+	ShowOrReplaceWindow(MonitoredAssetsWindow, LOCTEXT("MonitoredAssetsTitle", "Monitored Assets"), FVector2D(860.0f, 560.0f), Content, false);
 }
 
 void FAssetSerializationInspectorModule::OpenMonitoredAssetLastSave(const FName PackageName)
@@ -442,14 +480,8 @@ void FAssetSerializationInspectorModule::OpenBatchEntryDiff(const FName PackageN
 		return;
 	}
 
-	FNotificationInfo Info(Result.bSucceeded ? LOCTEXT("NoChangesThisTime", "Resaving the asset changed nothing this time, so there is no comparison to open.")
-											 : FText::Format(LOCTEXT("RerunFailed", "The asset could not be tested again: {0}"), Result.Error));
-	Info.ExpireDuration = 8.0f;
-
-	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
-	{
-		Notification->SetCompletionState(SNotificationItem::CS_Fail);
-	}
+	NotifyFailure(Result.bSucceeded ? LOCTEXT("NoChangesThisTime", "Resaving the asset changed nothing this time, so there is no comparison to open.")
+									: FText::Format(LOCTEXT("RerunFailed", "The asset could not be tested again: {0}"), Result.Error));
 }
 
 void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAssetBatchResaveResult& Result)
@@ -478,43 +510,17 @@ void FAssetSerializationInspectorModule::ShowBatchResaveNotification(const FAsse
 
 void FAssetSerializationInspectorModule::SaveBatchResaveReport()
 {
-	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
-
-	if (!LastBatchResult.IsValid() || DesktopPlatform == nullptr)
+	FString Filename;
+	if (!LastBatchResult.IsValid()
+		|| !PickReportFile(LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report"),
+			FPaths::GetBaseFilename(AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), false), Filename))
 	{
 		return;
-	}
-
-	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
-
-	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
-	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
-	TArray<FString> SelectedFiles;
-	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveBatchReportDialogTitle", "Save No-op Resave Report").ToString(), FPaths::ProjectSavedDir(),
-			FPaths::GetBaseFilename(AssetBatchReportWriter::MakeDefaultFilename(LastBatchResult->Scope, FDateTime::Now(), EAssetReportFormat::Text), false),
-			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
-		|| SelectedFiles.IsEmpty())
-	{
-		return;
-	}
-
-	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
-	FString Filename = SelectedFiles[0];
-	if (FPaths::GetExtension(Filename).IsEmpty())
-	{
-		Filename += TEXT(".txt");
 	}
 
 	FText Error;
 	const bool bSaved = AssetBatchReportWriter::SaveToFile(*LastBatchResult, Filename, Error);
-
-	FNotificationInfo Info(bSaved ? FText::Format(LOCTEXT("BatchReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error);
-	Info.ExpireDuration = 8.0f;
-
-	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
-	{
-		Notification->SetCompletionState(bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
-	}
+	Notify(bSaved ? FText::Format(LOCTEXT("BatchReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error, 8.0f, bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
 }
 
 void FAssetSerializationInspectorModule::CompareAssetFolders()
@@ -545,9 +551,7 @@ void FAssetSerializationInspectorModule::CompareAssetFolders()
 
 	if (FPaths::IsSamePath(OldFolder, NewFolder))
 	{
-		FNotificationInfo Info(LOCTEXT("SameFolder", "Choose two different folders to compare."));
-		Info.ExpireDuration = 6.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
+		Notify(LOCTEXT("SameFolder", "Choose two different folders to compare."), 6.0f);
 		return;
 	}
 
@@ -585,18 +589,7 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonWindow()
 																  .OnSaveReport(FSimpleDelegate::CreateRaw(this, &FAssetSerializationInspectorModule::SaveFolderComparisonReport));
 
 	// A new comparison replaces the content of the window that is already open.
-	if (const TSharedPtr<SWindow> Existing = FolderComparisonWindow.Pin())
-	{
-		Existing->SetContent(Results);
-		Existing->BringToFront();
-		return;
-	}
-
-	const TSharedRef<SWindow> Window =
-		SNew(SWindow).Title(LOCTEXT("FolderComparisonTitle", "Folder Comparison")).ClientSize(FVector2D(960.0f, 640.0f)).SupportsMinimize(true).SupportsMaximize(true)[Results];
-
-	FolderComparisonWindow = Window;
-	FSlateApplication::Get().AddWindow(Window);
+	ShowOrReplaceWindow(FolderComparisonWindow, LOCTEXT("FolderComparisonTitle", "Folder Comparison"), FVector2D(960.0f, 640.0f), Results, true);
 }
 
 void FAssetSerializationInspectorModule::OpenFolderComparisonPairDiff(const FString& RelativePath)
@@ -731,44 +724,20 @@ void FAssetSerializationInspectorModule::ShowFolderComparisonNotification(const 
 
 void FAssetSerializationInspectorModule::SaveFolderComparisonReport()
 {
-	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
-
-	if (!LastFolderComparison.IsValid() || DesktopPlatform == nullptr)
-	{
-		return;
-	}
-
-	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
-
-	// The suggested name has no extension: when the name has none, the dialog adds the one of the file type that is selected, so
-	// choosing "JSON" or "HTML" saves that format. A name typed with an extension keeps it, and the extension decides the format.
-	TArray<FString> SelectedFiles;
-	if (!DesktopPlatform->SaveFileDialog(ParentWindowHandle, LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report").ToString(), FPaths::ProjectSavedDir(),
+	FString Filename;
+	if (!LastFolderComparison.IsValid()
+		|| !PickReportFile(LOCTEXT("SaveFolderComparisonDialogTitle", "Save Folder Comparison Report"),
 			FPaths::GetBaseFilename(
 				AssetFolderComparisonReportWriter::MakeDefaultFilename(LastFolderComparison->OldFolder, LastFolderComparison->NewFolder, FDateTime::Now(), EAssetReportFormat::Text), false),
-			TEXT("Text report (*.txt)|*.txt|JSON report (*.json)|*.json|HTML report (*.html)|*.html"), EFileDialogFlags::None, SelectedFiles)
-		|| SelectedFiles.IsEmpty())
+			Filename))
 	{
 		return;
-	}
-
-	// The format follows the extension; the dialog adds the selected type's one, this is only a safety net.
-	FString Filename = SelectedFiles[0];
-	if (FPaths::GetExtension(Filename).IsEmpty())
-	{
-		Filename += TEXT(".txt");
 	}
 
 	FText Error;
 	const bool bSaved = AssetFolderComparisonReportWriter::SaveToFile(*LastFolderComparison, Filename, Error);
-
-	FNotificationInfo Info(bSaved ? FText::Format(LOCTEXT("FolderComparisonReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error);
-	Info.ExpireDuration = 8.0f;
-
-	if (const TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info))
-	{
-		Notification->SetCompletionState(bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
-	}
+	Notify(bSaved ? FText::Format(LOCTEXT("FolderComparisonReportSaved", "Report saved to {0}"), FText::FromString(Filename)) : Error, 8.0f,
+		bSaved ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
 }
 
 void FAssetSerializationInspectorModule::HandleObservedAssetSave(TSharedPtr<FObservedAssetSave> Save)
