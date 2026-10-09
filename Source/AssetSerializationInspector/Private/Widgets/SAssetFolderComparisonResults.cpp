@@ -168,6 +168,46 @@ FString SAssetFolderComparisonResults::BuildDetailsText(const FAssetFolderCompar
 	return FString::Join(Lines, TEXT("\n"));
 }
 
+bool SAssetFolderComparisonResults::PassesFilters(const FAssetFolderComparisonItem& Item) const
+{
+	return bShowStatus[static_cast<int32>(Item.Entry.Status)];
+}
+
+FString SAssetFolderComparisonResults::GetSearchableText(const FAssetFolderComparisonItem& Item) const
+{
+	return Item.Entry.RelativePath;
+}
+
+void SAssetFolderComparisonResults::SortVisibleItems(TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items, const FName ColumnId, const EColumnSortMode::Type Mode) const
+{
+	SortItems(Items, ColumnId, Mode);
+}
+
+FString SAssetFolderComparisonResults::BuildSelectionDetails(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items) const
+{
+	return BuildSelectionDetailsText(Items);
+}
+
+FString SAssetFolderComparisonResults::BuildSelectionNames(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items) const
+{
+	return BuildNamesText(Items);
+}
+
+FText SAssetFolderComparisonResults::GetNothingSelectedText() const
+{
+	return LOCTEXT("SelectAFileAgain", "Select a file to see what differs between the folders.");
+}
+
+FString SAssetFolderComparisonResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
+{
+	return JoinSelectionDetails(Items, TEXT("files"), [](const FAssetFolderComparisonItem& Item) { return BuildDetailsText(Item.Entry); });
+}
+
+FString SAssetFolderComparisonResults::BuildNamesText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
+{
+	return JoinNames(Items, [](const FAssetFolderComparisonItem& Item) { return Item.Entry.RelativePath; });
+}
+
 void SAssetFolderComparisonResults::Construct(const FArguments& InArgs)
 {
 	Result = InArgs._Result;
@@ -350,113 +390,6 @@ void SAssetFolderComparisonResults::SortItems(TArray<TSharedPtr<FAssetFolderComp
 	Items.StableSort([&](const TSharedPtr<FAssetFolderComparisonItem>& A, const TSharedPtr<FAssetFolderComparisonItem>& B) {
 		return bAscending ? Compare(A->Entry, B->Entry) < 0 : Compare(A->Entry, B->Entry) > 0;
 	});
-}
-
-void SAssetFolderComparisonResults::SortBy(const FName ColumnId, const EColumnSortMode::Type Mode)
-{
-	SortColumn = ColumnId;
-	SortMode = Mode;
-	RebuildVisibleItems();
-}
-
-EColumnSortMode::Type SAssetFolderComparisonResults::GetSortMode(const FName ColumnId) const
-{
-	return SortColumn == ColumnId ? SortMode : EColumnSortMode::None;
-}
-
-void SAssetFolderComparisonResults::HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode)
-{
-	SortBy(ColumnId, Mode);
-}
-
-FString SAssetFolderComparisonResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
-{
-	if (Items.Num() == 1)
-	{
-		return BuildDetailsText(Items[0]->Entry);
-	}
-
-	TArray<FString> Parts;
-	Parts.Add(FString::Printf(TEXT("%d files selected"), Items.Num()));
-
-	for (const TSharedPtr<FAssetFolderComparisonItem>& Item : Items)
-	{
-		Parts.Add(BuildDetailsText(Item->Entry));
-	}
-
-	return FString::Join(Parts, TEXT("\n\n--------------------------------\n\n"));
-}
-
-FString SAssetFolderComparisonResults::BuildNamesText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items)
-{
-	TArray<FString> Names;
-	for (const TSharedPtr<FAssetFolderComparisonItem>& Item : Items)
-	{
-		Names.Add(Item->Entry.RelativePath);
-	}
-
-	return FString::Join(Names, TEXT("\n"));
-}
-
-FReply SAssetFolderComparisonResults::CopySelectedNames() const
-{
-	if (ListView.IsValid())
-	{
-		FPlatformApplicationMisc::ClipboardCopy(*BuildNamesText(ListView->GetSelectedItems()));
-	}
-
-	return FReply::Handled();
-}
-
-void SAssetFolderComparisonResults::RebuildVisibleItems()
-{
-	VisibleItems.Reset();
-
-	for (const TSharedPtr<FAssetFolderComparisonItem>& Item : AllItems)
-	{
-		if (!bShowStatus[static_cast<int32>(Item->Entry.Status)])
-		{
-			continue;
-		}
-
-		if (!SearchText.IsEmpty() && !Item->Entry.RelativePath.Contains(SearchText))
-		{
-			continue;
-		}
-
-		VisibleItems.Add(Item);
-	}
-
-	SortItems(VisibleItems, SortColumn, SortMode);
-
-	if (ListView.IsValid())
-	{
-		ListView->RequestListRefresh();
-	}
-}
-
-void SAssetFolderComparisonResults::HandleSelectionChanged(TSharedPtr<FAssetFolderComparisonItem> Item, ESelectInfo::Type SelectInfo)
-{
-	const TArray<TSharedPtr<FAssetFolderComparisonItem>> Selected = ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FAssetFolderComparisonItem>>();
-
-	// Opening a comparison needs exactly one file; the details cover them all.
-	SelectedItem = Selected.Num() == 1 ? Selected[0] : nullptr;
-
-	if (DetailsText.IsValid())
-	{
-		DetailsText->SetText(Selected.IsEmpty() ? LOCTEXT("SelectAFileAgain", "Select a file to see what differs between the folders.") : FText::FromString(BuildSelectionDetailsText(Selected)));
-	}
-}
-
-void SAssetFolderComparisonResults::HandleSearchChanged(const FText& Text)
-{
-	SearchText = Text.ToString();
-	RebuildVisibleItems();
-}
-
-FText SAssetFolderComparisonResults::GetCountText() const
-{
-	return FText::Format(LOCTEXT("ShownCount", "{0} of {1}"), FText::AsNumber(VisibleItems.Num()), FText::AsNumber(AllItems.Num()));
 }
 
 bool SAssetFolderComparisonResults::CanOpenSelected() const

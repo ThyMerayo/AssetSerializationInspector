@@ -3,14 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SHeaderRow.h"
 
 #include "Compare/AssetFolderComparison.h"
-
-class SMultiLineEditableText;
-
-template <typename ItemType> class SListView;
+#include "Widgets/TAssetResultsList.h"
 
 /** The relative path of the pair whose comparison to open. */
 DECLARE_DELEGATE_OneParam(FOnOpenFolderComparisonPair, const FString& /*RelativePath*/);
@@ -27,7 +23,7 @@ struct FAssetFolderComparisonItem
  *
  * The comparison keeps only condensed results, so opening a pair reads both files again.
  */
-class SAssetFolderComparisonResults : public SCompoundWidget
+class SAssetFolderComparisonResults : public TAssetResultsList<FAssetFolderComparisonItem>
 {
 public:
 	SLATE_BEGIN_ARGS(SAssetFolderComparisonResults) {}
@@ -37,9 +33,6 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
-
-	/** The files the window shows now: failed first, then changed, new, removed and identical ones. */
-	const TArray<TSharedPtr<FAssetFolderComparisonItem>>& GetVisibleItems() const { return VisibleItems; }
 
 	/** Text for the details of a file: its status, versions, sizes and what changed. */
 	static FString BuildDetailsText(const FAssetFolderComparisonEntry& Entry);
@@ -58,9 +51,6 @@ public:
 	 */
 	static void SortItems(TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items, FName ColumnId, EColumnSortMode::Type Mode);
 
-	/** Sorts the list by a column, as a click on its header does. */
-	void SortBy(FName ColumnId, EColumnSortMode::Type Mode);
-
 	/** The details of several files: how many, then each file's details in turn. One file gives its own details. */
 	static FString BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items);
 
@@ -68,32 +58,23 @@ public:
 	static FString BuildNamesText(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items);
 
 private:
+	// What the list of results asks of this window.
+	virtual bool PassesFilters(const FAssetFolderComparisonItem& Item) const override;
+	virtual FString GetSearchableText(const FAssetFolderComparisonItem& Item) const override;
+	virtual void SortVisibleItems(TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items, FName ColumnId, EColumnSortMode::Type Mode) const override;
+	virtual FString BuildSelectionDetails(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items) const override;
+	virtual FString BuildSelectionNames(const TArray<TSharedPtr<FAssetFolderComparisonItem>>& Items) const override;
+	virtual FText GetNothingSelectedText() const override;
+
 	static int32 GetStatusRank(const FAssetFolderComparisonEntry& Entry);
 
 	TSharedRef<class ITableRow> GenerateRow(TSharedPtr<FAssetFolderComparisonItem> Item, const TSharedRef<class STableViewBase>& OwnerTable);
 	TSharedRef<SWidget> BuildStatusToggle(EAssetFolderComparisonStatus Status);
-	void RebuildVisibleItems();
-	void HandleSelectionChanged(TSharedPtr<FAssetFolderComparisonItem> Item, ESelectInfo::Type SelectInfo);
-	void HandleSearchChanged(const FText& Text);
-	EColumnSortMode::Type GetSortMode(FName ColumnId) const;
-	void HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode);
-	FReply CopySelectedNames() const;
-	FText GetCountText() const;
 	bool CanOpenSelected() const;
 
 	TSharedPtr<FAssetFolderComparisonResult> Result;
 	FOnOpenFolderComparisonPair OnOpenPair;
 	FSimpleDelegate OnSaveReport;
 
-	TArray<TSharedPtr<FAssetFolderComparisonItem>> AllItems;
-	TArray<TSharedPtr<FAssetFolderComparisonItem>> VisibleItems;
-	TSharedPtr<FAssetFolderComparisonItem> SelectedItem;
-
 	bool bShowStatus[5];
-	FString SearchText;
-	FName SortColumn;
-	EColumnSortMode::Type SortMode = EColumnSortMode::None;
-
-	TSharedPtr<SListView<TSharedPtr<FAssetFolderComparisonItem>>> ListView;
-	TSharedPtr<SMultiLineEditableText> DetailsText;
 };

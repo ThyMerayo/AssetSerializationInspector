@@ -166,6 +166,46 @@ FString SAssetBatchResults::BuildDetailsText(const FAssetBatchResaveEntry& Entry
 	return FString::Join(Lines, TEXT("\n"));
 }
 
+bool SAssetBatchResults::PassesFilters(const FAssetBatchResultItem& Item) const
+{
+	return bShowOutcome[static_cast<int32>(GetOutcome(Item.Entry))];
+}
+
+FString SAssetBatchResults::GetSearchableText(const FAssetBatchResultItem& Item) const
+{
+	return Item.Entry.PackageName.ToString();
+}
+
+void SAssetBatchResults::SortVisibleItems(TArray<TSharedPtr<FAssetBatchResultItem>>& Items, const FName ColumnId, const EColumnSortMode::Type Mode) const
+{
+	SortItems(Items, ColumnId, Mode);
+}
+
+FString SAssetBatchResults::BuildSelectionDetails(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items) const
+{
+	return BuildSelectionDetailsText(Items);
+}
+
+FString SAssetBatchResults::BuildSelectionNames(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items) const
+{
+	return BuildNamesText(Items);
+}
+
+FText SAssetBatchResults::GetNothingSelectedText() const
+{
+	return LOCTEXT("SelectAnAssetAgain", "Select an asset to see what resaving it changed.");
+}
+
+FString SAssetBatchResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
+{
+	return JoinSelectionDetails(Items, TEXT("assets"), [](const FAssetBatchResultItem& Item) { return BuildDetailsText(Item.Entry); });
+}
+
+FString SAssetBatchResults::BuildNamesText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
+{
+	return JoinNames(Items, [](const FAssetBatchResultItem& Item) { return Item.Entry.PackageName.ToString(); });
+}
+
 void SAssetBatchResults::Construct(const FArguments& InArgs)
 {
 	Result = InArgs._Result;
@@ -361,113 +401,6 @@ void SAssetBatchResults::SortItems(TArray<TSharedPtr<FAssetBatchResultItem>>& It
 	};
 
 	Items.StableSort([&](const TSharedPtr<FAssetBatchResultItem>& A, const TSharedPtr<FAssetBatchResultItem>& B) { return bAscending ? Compare(*A, *B) < 0 : Compare(*A, *B) > 0; });
-}
-
-void SAssetBatchResults::SortBy(const FName ColumnId, const EColumnSortMode::Type Mode)
-{
-	SortColumn = ColumnId;
-	SortMode = Mode;
-	RebuildVisibleItems();
-}
-
-EColumnSortMode::Type SAssetBatchResults::GetSortMode(const FName ColumnId) const
-{
-	return SortColumn == ColumnId ? SortMode : EColumnSortMode::None;
-}
-
-void SAssetBatchResults::HandleSort(EColumnSortPriority::Type Priority, const FName& ColumnId, EColumnSortMode::Type Mode)
-{
-	SortBy(ColumnId, Mode);
-}
-
-FString SAssetBatchResults::BuildSelectionDetailsText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
-{
-	if (Items.Num() == 1)
-	{
-		return BuildDetailsText(Items[0]->Entry);
-	}
-
-	TArray<FString> Parts;
-	Parts.Add(FString::Printf(TEXT("%d assets selected"), Items.Num()));
-
-	for (const TSharedPtr<FAssetBatchResultItem>& Item : Items)
-	{
-		Parts.Add(BuildDetailsText(Item->Entry));
-	}
-
-	return FString::Join(Parts, TEXT("\n\n--------------------------------\n\n"));
-}
-
-FString SAssetBatchResults::BuildNamesText(const TArray<TSharedPtr<FAssetBatchResultItem>>& Items)
-{
-	TArray<FString> Names;
-	for (const TSharedPtr<FAssetBatchResultItem>& Item : Items)
-	{
-		Names.Add(Item->Entry.PackageName.ToString());
-	}
-
-	return FString::Join(Names, TEXT("\n"));
-}
-
-FReply SAssetBatchResults::CopySelectedNames() const
-{
-	if (ListView.IsValid())
-	{
-		FPlatformApplicationMisc::ClipboardCopy(*BuildNamesText(ListView->GetSelectedItems()));
-	}
-
-	return FReply::Handled();
-}
-
-void SAssetBatchResults::RebuildVisibleItems()
-{
-	VisibleItems.Reset();
-
-	for (const TSharedPtr<FAssetBatchResultItem>& Item : AllItems)
-	{
-		if (!bShowOutcome[static_cast<int32>(GetOutcome(Item->Entry))])
-		{
-			continue;
-		}
-
-		if (!SearchText.IsEmpty() && !Item->Entry.PackageName.ToString().Contains(SearchText))
-		{
-			continue;
-		}
-
-		VisibleItems.Add(Item);
-	}
-
-	SortItems(VisibleItems, SortColumn, SortMode);
-
-	if (ListView.IsValid())
-	{
-		ListView->RequestListRefresh();
-	}
-}
-
-void SAssetBatchResults::HandleSelectionChanged(TSharedPtr<FAssetBatchResultItem> Item, ESelectInfo::Type SelectInfo)
-{
-	const TArray<TSharedPtr<FAssetBatchResultItem>> Selected = ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FAssetBatchResultItem>>();
-
-	// The comparison buttons need exactly one asset; the details cover them all.
-	SelectedItem = Selected.Num() == 1 ? Selected[0] : nullptr;
-
-	if (DetailsText.IsValid())
-	{
-		DetailsText->SetText(Selected.IsEmpty() ? LOCTEXT("SelectAnAssetAgain", "Select an asset to see what resaving it changed.") : FText::FromString(BuildSelectionDetailsText(Selected)));
-	}
-}
-
-void SAssetBatchResults::HandleSearchChanged(const FText& Text)
-{
-	SearchText = Text.ToString();
-	RebuildVisibleItems();
-}
-
-FText SAssetBatchResults::GetCountText() const
-{
-	return FText::Format(LOCTEXT("ShownCount", "{0} of {1}"), FText::AsNumber(VisibleItems.Num()), FText::AsNumber(AllItems.Num()));
 }
 
 bool SAssetBatchResults::CanOpenSelected(const bool bSecondResave) const
