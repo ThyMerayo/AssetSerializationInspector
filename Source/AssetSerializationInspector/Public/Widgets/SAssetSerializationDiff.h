@@ -151,28 +151,21 @@ private:
 	FText GetAnalysisFilterResultText() const;
 	FText GetRepeatedFilterResultText() const;
 	void NavigateToDiffEntry(const FString& Key);
-	FDiffTreeNodePtr FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const;
+	FDiffTreeNodePtr FindDiffTreeNode(const TArray<FDiffTreeNodePtr>& Nodes, TFunctionRef<bool(const FAssetPackageDiffEntry&)> Matches) const;
+	void SelectAndReveal(const FDiffTreeNodePtr& Node);
 
 	// History
 	FString MakeCompactHistoryValue(const FString& Value) const;
 	void OpenHistorySave(const FObservedSaveId SaveId, const FString& SemanticPath);
 	void NavigateToSemanticPath(const FString& SemanticPath);
-	FDiffTreeNodePtr FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const;
 
 	// Dynamic UI
 	FText GetStatusText() const;
 	FText GetSummaryText() const;
 	FText GetSelectedDisplayName() const;
-	FText GetSelectedOldValue() const;
-	FText GetSelectedNewValue() const;
-	FText GetSelectedOldOffset() const;
-	FText GetSelectedNewOffset() const;
-	FText GetSelectedOldSize() const;
-	FText GetSelectedNewSize() const;
-	FText GetSelectedOldHexRichText() const;
-	FText GetSelectedOldHexPlainText() const;
-	FText GetSelectedNewHexRichText() const;
-	FText GetSelectedNewHexPlainText() const;
+	FText GetSelectedValue(bool bOldSide) const;
+	FText GetSelectedOffset(bool bOldSide) const;
+	FText GetSelectedSize(bool bOldSide) const;
 	FText GetSelectedByteComparisonText() const;
 	FText GetSelectedExplanationText() const;
 	int64 GetSelectedChangedByteCount() const;
@@ -180,10 +173,8 @@ private:
 	FText GetSaveAnalysisResultText(EAssetSaveResultKind ResultKind) const;
 	FText GetExplanationPrefix(const EAssetSaveChangeClassification Classification) const;
 	FText GetConfidenceText(const EAssetExplanationConfidence Confidence) const;
-	FText BuildObservedValueText(const FObservedPropertySample& Sample) const;
-	FText BuildObservedValueFullText(const FObservedPropertySample& Sample) const;
+	FText BuildObservedValueText(const FObservedPropertySample& Sample, bool bCompact) const;
 	FText GetObservedPatternText(const EObservedValuePattern Pattern) const;
-
 
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
 	static bool IsByteInRanges(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Ranges);
