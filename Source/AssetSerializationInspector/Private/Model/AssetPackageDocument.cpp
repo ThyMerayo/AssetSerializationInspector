@@ -32,13 +32,6 @@ const FAssetPackageNameEntry* FAssetPackageDocument::FindNameEntry(const int32 N
 	return NameMap.IsValidIndex(NameIndex) ? &NameMap[NameIndex] : nullptr;
 }
 
-FString FAssetPackageDocument::ResolveNameIndex(const int32 NameIndex) const
-{
-	const FAssetPackageNameEntry* Entry = FindNameEntry(NameIndex);
-
-	return Entry ? Entry->Name : FString::Printf(TEXT("<invalid name %d>"), NameIndex);
-}
-
 FString FAssetPackageDocument::ResolveNameReference(const FAssetPackageNameReference& Reference) const
 {
 	if (!Reference.IsValid(NameMap.Num()))
@@ -61,24 +54,6 @@ FString FAssetPackageDocument::ResolveNameReference(const FAssetPackageNameRefer
 	}
 
 	return Result;
-}
-
-FString FAssetPackageDocument::DescribePackageIndex(const FAssetPackageIndexReference& Reference) const
-{
-	switch (Reference.GetKind())
-	{
-		case EAssetPackageIndexKind::Null:
-			return TEXT("Null");
-
-		case EAssetPackageIndexKind::Import:
-			return FString::Printf(TEXT("Import[%d]"), Reference.GetArrayIndex());
-
-		case EAssetPackageIndexKind::Export:
-			return FString::Printf(TEXT("Export[%d]"), Reference.GetArrayIndex());
-
-		default:
-			return TEXT("<invalid package index>");
-	}
 }
 
 FString FAssetPackageDocument::ResolveImportPathInternal(const int32 ImportIndex, TSet<int32>& VisitedImports) const
@@ -239,44 +214,6 @@ bool FAssetPackageDocument::IsValidExportPayload(const FAssetPackageExportEntry&
 	}
 
 	return IsValidRange(Export.SerialOffset, Export.SerialSize);
-}
-
-bool FAssetPackageDocument::IsCoreUObjectClassImport(const int32 ImportIndex) const
-{
-	if (!ImportMap.IsValidIndex(ImportIndex))
-	{
-		return false;
-	}
-
-	const FAssetPackageImportEntry& Import = ImportMap[ImportIndex];
-
-	const FString ObjectName = ResolveNameReference(Import.ObjectName);
-
-	if (ObjectName != TEXT("Class") && ObjectName != TEXT("BlueprintGeneratedClass") && ObjectName != TEXT("WidgetBlueprintGeneratedClass"))
-	{
-		return false;
-	}
-
-	const FString Path = ResolveImportPath(ImportIndex);
-
-	return Path == TEXT("/Script/CoreUObject.Class") || Path == TEXT("/Script/Engine.BlueprintGeneratedClass") || Path == TEXT("/Script/Blueprint.WidgetBlueprintGeneratedClass");
-}
-
-bool FAssetPackageDocument::IsExportUClass(const int32 ExportIndex) const
-{
-	if (!ExportMap.IsValidIndex(ExportIndex))
-	{
-		return false;
-	}
-
-	const FAssetPackageExportEntry& Export = ExportMap[ExportIndex];
-
-	if (Export.ClassIndex.GetKind() != EAssetPackageIndexKind::Import)
-	{
-		return false;
-	}
-
-	return IsCoreUObjectClassImport(Export.ClassIndex.GetArrayIndex());
 }
 
 bool FAssetPackageDocument::IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const

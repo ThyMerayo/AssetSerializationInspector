@@ -176,7 +176,6 @@ private:
 	FText GetSelectedByteComparisonText() const;
 	FText GetSelectedExplanationText() const;
 	int64 GetSelectedChangedByteCount() const;
-	FText GetComparisonTitle() const;
 	FText GetChangeClassificationText() const;
 	FText GetSaveAnalysisResultText(EAssetSaveResultKind ResultKind) const;
 	FText GetExplanationPrefix(const EAssetSaveChangeClassification Classification) const;
@@ -185,7 +184,6 @@ private:
 	FText BuildObservedValueFullText(const FObservedPropertySample& Sample) const;
 	FText GetObservedPatternText(const EObservedValuePattern Pattern) const;
 
-	FText BuildHexPreview(const FAssetPackageDocument* Document, int64 Offset, int64 Size, bool bRelativeOffsets) const;
 
 	bool IsByteDifferent(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Spans) const;
 	static bool IsByteInRanges(int64 RelativeOffset, const TArray<FAssetByteDiffSpan>& Ranges);

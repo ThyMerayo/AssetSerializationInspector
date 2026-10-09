@@ -131,7 +131,6 @@ struct FAssetPackageExportEntry
 		return ScriptSerializationStartOffset >= 0 && ScriptSerializationEndOffset > ScriptSerializationStartOffset && ScriptSerializationEndOffset <= SerialSize;
 	}
 
-	int64 GetScriptSerializationSize() const { return HasScriptSerializationRange() ? ScriptSerializationEndOffset - ScriptSerializationStartOffset : 0; }
 };
 
 struct FAssetPackageDocument
@@ -148,23 +147,18 @@ struct FAssetPackageDocument
 	bool bHasValidPackageSummary = false;
 
 	TArray<FAssetPackageNameEntry> NameMap;
-	int64 NameMapRegionStart = 0;
 	int64 NameMapRegionEnd = 0;
 	int64 DecodedNameMapEnd = 0;
 	FText NameMapError;
 	bool bHasDecodedNameMap = false;
 
 	TArray<FAssetPackageImportEntry> ImportMap;
-	int64 ImportMapRegionStart = 0;
-	int64 ImportMapRegionEnd = 0;
 	int64 DecodedImportMapEnd = 0;
 	int64 ImportEntryStride = 0;
 	FText ImportMapError;
 	bool bHasDecodedImportMap = false;
 
 	TArray<FAssetPackageExportEntry> ExportMap;
-	int64 ExportMapRegionStart = 0;
-	int64 ExportMapRegionEnd = 0;
 	int64 DecodedExportMapEnd = 0;
 	int64 ExportEntryStride = 0;
 	FText ExportMapError;
@@ -173,15 +167,11 @@ struct FAssetPackageDocument
 	int64 GetFileSize() const;
 	bool IsValidRange(const int64 Offset, const int64 Size) const;
 	const FAssetPackageNameEntry* FindNameEntry(const int32 NameIndex) const;
-	FString ResolveNameIndex(const int32 NameIndex) const;
 	FString ResolveNameReference(const FAssetPackageNameReference& Reference) const;
-	FString DescribePackageIndex(const FAssetPackageIndexReference& Reference) const;
 	FString ResolveImportPath(int32 ImportIndex) const;
 	FString DescribePackageIndexDetailed(const FAssetPackageIndexReference& Reference) const;
 	FString ResolveExportPath(int32 ExportIndex) const;
 	bool IsValidExportPayload(const FAssetPackageExportEntry& Export) const;
-	bool IsCoreUObjectClassImport(const int32 ImportIndex) const;
-	bool IsExportUClass(const int32 ExportIndex) const;
 	bool IsExportClassDefaultObject(const FAssetPackageExportEntry& Export) const;
 
 	/** Resolves an index into the package's soft object path table. Reads the table lazily on first use. */

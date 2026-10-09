@@ -104,10 +104,8 @@ private:
 
 	void HandleTreeSelectionChanged(FTreeNodePtr Item, ESelectInfo::Type SelectInfo);
 
-	FText GetSelectedNodeName() const;
 	FText GetSelectedNodeType() const;
 	FText GetSelectedNodeOffset() const;
-	FText GetSelectedNodeSize() const;
 	FText GetHexPreviewText() const;
 	FText GetLoadedFilenameText() const;
 	FText GetFileSizeText() const;
@@ -143,9 +141,6 @@ private:
 	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ImportNodesByIndex;
 	TMap<int32, TWeakPtr<FAssetPackageTreeNode>> ExportNodesByIndex;
 
-	TArray<TWeakPtr<FAssetPackageTreeNode>> NavigationHistory;
-	int32 NavigationHistoryIndex = INDEX_NONE;
-	bool bIsApplyingNavigationHistory = false;
 
 	FText StatusText;
 };
