@@ -195,29 +195,34 @@ bool FAssetDataTableData_ShowsRowsAddedRemovedAndChanged::RunTest(const FString&
 	// The order the rows are written in is not a change: a map has no order.
 	TestTrue(TEXT("The same rows in another order are no change"), AssetDataTableData::Compare(Base, MakeData({ Shield, Sword })).IsEmpty());
 
-	// A row added, a row removed.
+	// A row added, a row removed: each is listed property by property, not as one entry with all the values. A Blueprint struct names its members Name_Number_Guid.
 	{
-		const FAssetDataTableRow Bow = MakeRow(TEXT("Bow"), { { TEXT("Range"), TEXT("30") } });
+		const FString Guid = TEXT("6FB71CC6442A07670EDFF79A8B733C15");
+		const FAssetDataTableRow Bow = MakeRow(TEXT("Bow"), { { TEXT("Range_16_") + Guid, TEXT("X=4.000 Y=0.5 Z=6.000") }, { TEXT("Speed"), TEXT("30") } });
 		const TArray<FAssetNativeDataChange> Changes = AssetDataTableData::Compare(Base, MakeData({ Sword, Bow }));
-		TestEqual(TEXT("Two changes"), Changes.Num(), 2);
-		if (const FAssetNativeDataChange* Removed = Find(Changes, TEXT("Row/Shield")))
+		TestEqual(TEXT("One change for the property of the removed row, two for the added row"), Changes.Num(), 3);
+		if (const FAssetNativeDataChange* Removed = Find(Changes, TEXT("Row/Shield/Armor")))
 		{
-			TestEqual(TEXT("A row was removed"), Removed->State, FAssetNativeDataChange::EState::Removed);
-			TestTrue(TEXT("With its values"), Removed->OldValue.Contains(TEXT("Armor=5")));
+			TestEqual(TEXT("A property of the removed row"), Removed->State, FAssetNativeDataChange::EState::Removed);
+			TestEqual(TEXT("With its value"), Removed->OldValue, FString(TEXT("5")));
+			TestEqual(TEXT("Under the row"), Removed->Title, FString(TEXT("Row Shield: Armor")));
 		}
 		else
 		{
-			AddError(TEXT("The removed row is a change"));
+			AddError(TEXT("The removed row is listed by property"));
 		}
-		if (const FAssetNativeDataChange* Added = Find(Changes, TEXT("Row/Bow")))
+		if (const FAssetNativeDataChange* Added = Find(Changes, *(TEXT("Row/Bow/Range_16_") + Guid)))
 		{
-			TestEqual(TEXT("A row was added"), Added->State, FAssetNativeDataChange::EState::Added);
-			TestTrue(TEXT("With its values"), Added->NewValue.Contains(TEXT("Range=30")));
+			TestEqual(TEXT("A property of the added row"), Added->State, FAssetNativeDataChange::EState::Added);
+			TestEqual(TEXT("With its value alone"), Added->NewValue, FString(TEXT("X=4.000 Y=0.5 Z=6.000")));
+			TestEqual(TEXT("Named without the number and the identifier of the struct member"), Added->Title, FString(TEXT("Row Bow: Range")));
 		}
 		else
 		{
-			AddError(TEXT("The added row is a change"));
+			AddError(TEXT("The added row is listed by property"));
 		}
+		TestNotNull(TEXT("Every property has its own entry"), Find(Changes, TEXT("Row/Bow/Speed")));
+		TestNull(TEXT("There is no entry for the whole row"), Find(Changes, TEXT("Row/Bow")));
 	}
 
 	// A value of a row, a property that went away and one that came.

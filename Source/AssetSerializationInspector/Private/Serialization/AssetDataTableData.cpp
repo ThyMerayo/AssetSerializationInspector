@@ -63,6 +63,22 @@ namespace
 		return Path.FindLastChar(TEXT('/'), Slash) ? Path.Mid(Slash + 1) : Path;
 	}
 
+	/** The name of a property as the user knows it: a Blueprint struct saves its members as Name_Number_Guid, and only the name is shown. */
+	FString DisplayName(const FString& Name)
+	{
+		int32 Last = INDEX_NONE;
+		if (Name.FindLastChar(TEXT('_'), Last) && Name.Len() - Last - 1 == 32)
+		{
+			int32 Previous = INDEX_NONE;
+			const FString Head = Name.Left(Last);
+			if (Head.FindLastChar(TEXT('_'), Previous) && Previous > 0 && Head.Mid(Previous + 1).IsNumeric())
+			{
+				return Head.Left(Previous);
+			}
+		}
+		return Name;
+	}
+
 	FString JoinProperties(const TArray<TPair<FString, FString>>& Properties)
 	{
 		TArray<FString> Parts;
@@ -194,6 +210,21 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 		Change.NewValue = NewValue;
 	};
 
+	// A row that appears or goes away is listed property by property, like a row that changed, so every value has its own entry.
+	const auto AddWholeRow = [&Add](const FAssetDataTableRow& Row, const FAssetNativeDataChange::EState State) {
+		const bool bAdded = State == FAssetNativeDataChange::EState::Added;
+		const FString Key = TEXT("Row/") + Row.Name;
+		const FString Title = FString::Printf(TEXT("Row %s"), *Row.Name);
+		if (Row.Properties.IsEmpty())
+		{
+			Add(Key, Title, State, bAdded ? FString() : Row.Describe(), bAdded ? Row.Describe() : FString());
+		}
+		for (const TPair<FString, FString>& Property : Row.Properties)
+		{
+			Add(Key + TEXT("/") + Property.Key, FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key)), State, bAdded ? FString() : Property.Value, bAdded ? Property.Value : FString());
+		}
+	};
+
 	if (!Old.RowStruct.Equals(New.RowStruct, ESearchCase::CaseSensitive))
 	{
 		Add(TEXT("RowStruct"), TEXT("Row struct"), FAssetNativeDataChange::EState::Modified, Old.RowStruct, New.RowStruct);
@@ -214,7 +245,7 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 		const FAssetDataTableRow* const* Found = NewRows.Find(OldRow.Name);
 		if (Found == nullptr)
 		{
-			Add(Key, Title, FAssetNativeDataChange::EState::Removed, OldRow.Describe(), FString());
+			AddWholeRow(OldRow, FAssetNativeDataChange::EState::Removed);
 			continue;
 		}
 
@@ -230,7 +261,7 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 		for (const TPair<FString, FString>& Property : OldRow.Properties)
 		{
 			const FString PropertyKey = Key + TEXT("/") + Property.Key;
-			const FString PropertyTitle = FString::Printf(TEXT("%s: %s"), *Title, *Property.Key);
+			const FString PropertyTitle = FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key));
 			const FString* const* NewValue = NewValues.Find(Property.Key);
 			if (NewValue == nullptr)
 			{
@@ -248,7 +279,7 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 		{
 			if (!SeenProperties.Contains(Property.Key))
 			{
-				Add(Key + TEXT("/") + Property.Key, FString::Printf(TEXT("%s: %s"), *Title, *Property.Key), FAssetNativeDataChange::EState::Added, FString(), Property.Value);
+				Add(Key + TEXT("/") + Property.Key, FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key)), FAssetNativeDataChange::EState::Added, FString(), Property.Value);
 			}
 		}
 	}
@@ -257,7 +288,7 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 	{
 		if (!Seen.Contains(NewRow.Name))
 		{
-			Add(TEXT("Row/") + NewRow.Name, FString::Printf(TEXT("Row %s"), *NewRow.Name), FAssetNativeDataChange::EState::Added, FString(), NewRow.Describe());
+			AddWholeRow(NewRow, FAssetNativeDataChange::EState::Added);
 		}
 	}
 

@@ -233,7 +233,7 @@ Coverage: 858 of 858 on the engine's plugins.
 
 A data table (`UDataTable`) writes its rows after its tagged properties (`UDataTable::LoadStructData`): a count, then for each row its name and the row struct, written like any struct. The struct comes from the table's `RowStruct` property, and each row is read with the property decoder, so every property type it knows is shown as it is in a property diff.
 
-The diff pairs rows by name, since a table is a map and the order it is saved in is not a change. It lists the rows that were added or removed with their values, and for a row that stayed, each property that changed (`Row/Sword/Damage`: 10 to 12), was added or was removed. A change of the row struct is listed too.
+The diff pairs rows by name, since a table is a map and the order it is saved in is not a change. Every change is one property: a row that was added or removed lists each of its values as an entry of its own, and a row that stayed lists each property that changed (`Row/Sword/Damage`: 10 to 12), was added or was removed. A Blueprint struct's members (`Range_16_6FB7...`) are shown by their name. A change of the row struct is listed too.
 
 **Not read** (the entry says why, and the table stays opaque): a table whose row struct cannot be named, and a row with a property type the decoder does not read. The table is read as a whole or not at all.
 
