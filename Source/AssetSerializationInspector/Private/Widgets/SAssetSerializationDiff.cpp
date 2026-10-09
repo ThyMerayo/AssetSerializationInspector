@@ -403,14 +403,14 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 		+ SVerticalBox::Slot().AutoHeight().Padding(
 			0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("SelectedNameFormat", "Name:"), TAttribute<FText>::CreateLambda([this]() { return GetSelectedDisplayName(); }))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
-			LOCTEXT("SelectedValueLabel", "Value:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldValue() : GetSelectedNewValue(); }))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("SelectedValueLabel", "Value:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return GetSelectedValue(bOldSide); }))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
-			LOCTEXT("SelectedOffsetFormat", "Offset:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldOffset() : GetSelectedNewOffset(); }))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("SelectedOffsetFormat", "Offset:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return GetSelectedOffset(bOldSide); }))]
 
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f)[BuildSelectableDetailRow(
-			LOCTEXT("SelectedSizeFormat", "Size:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return bOldSide ? GetSelectedOldSize() : GetSelectedNewSize(); }))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(
+			0.0f, 2.0f)[BuildSelectableDetailRow(LOCTEXT("SelectedSizeFormat", "Size:"), TAttribute<FText>::CreateLambda([this, bOldSide]() { return GetSelectedSize(bOldSide); }))]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f)[SNew(SSeparator)]
 
@@ -420,7 +420,7 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				.VAlign(VAlign_Center)[SNew(STextBlock).Text(LOCTEXT("HexPreviewHeading", "Hex Preview")).Font(FAppStyle::GetFontStyle("NormalFontBold"))]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SButton).Text(LOCTEXT("CopyHex", "Copy")).OnClicked_Lambda([this, bOldSide]() {
-				  const FString Text = (bOldSide ? GetSelectedOldHexPlainText() : GetSelectedNewHexPlainText()).ToString();
+				  const FString Text = ((bOldSide ? OldHexPreview : NewHexPreview).Plain).ToString();
 				  FPlatformApplicationMisc::ClipboardCopy(*Text);
 				  return FReply::Handled();
 			  })]
@@ -437,8 +437,8 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildDetailsPanel(const bool bOldSi
 			1.0f)[SAssignNew(bOldSide ? OldHexScrollBox : NewHexScrollBox, SScrollBox).OnUserScrolled_Lambda([this, bOldSide](const float Offset) { HexScrollLink.OnScrolled(bOldSide, Offset); })
 
 			+ SScrollBox::Slot()[SNew(SSelectableRichText)
-					.RichText_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexRichText() : GetSelectedNewHexRichText(); })
-					.PlainText_Lambda([this, bOldSide]() { return bOldSide ? GetSelectedOldHexPlainText() : GetSelectedNewHexPlainText(); })
+					.RichText_Lambda([this, bOldSide]() { return (bOldSide ? OldHexPreview : NewHexPreview).Rich; })
+					.PlainText_Lambda([this, bOldSide]() { return (bOldSide ? OldHexPreview : NewHexPreview).Plain; })
 					.TextStyle(HexDiffStyle->GetWidgetStyle<FTextBlockStyle>(TEXT("Normal")))
 					.DecoratorStyleSet(HexDiffStyle.Get())]];
 }
@@ -817,27 +817,13 @@ TSharedRef<SWidget> SAssetSerializationDiff::BuildObservedValueTimeline(const FR
 					+ SHorizontalBox::Slot().AutoWidth().Padding(
 						0.0f, 0.0f, 12.0f, 0.0f)[SNew(STextBlock).Text(Sample.bChanged ? LOCTEXT("ObservedChanged", "Changed") : LOCTEXT("ObservedUnchanged", "Unchanged"))]
 
-					+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(BuildObservedValueText(Sample)).ToolTipText(BuildObservedValueFullText(Sample))]]];
+					+ SHorizontalBox::Slot().FillWidth(1.0f)[SNew(STextBlock).Text(BuildObservedValueText(Sample, true)).ToolTipText(BuildObservedValueText(Sample, false))]]];
 	}
 
 	return Box;
 }
 
-void SAssetSerializationDiff::NavigateToDiffEntry(const FString& Key)
-{
-	FDiffTreeNodePtr Node = FindDiffTreeNodeByKey(RootDiffNodes, Key);
-
-	if (!Node.IsValid() || !DiffTreeView.IsValid())
-	{
-		return;
-	}
-
-	ExpandDiffAncestors(Node);
-	DiffTreeView->SetSelection(Node, ESelectInfo::Direct);
-	DiffTreeView->RequestScrollIntoView(Node);
-}
-
-SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeByKey(const TArray<FDiffTreeNodePtr>& Nodes, const FString& Key) const
+SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNode(const TArray<FDiffTreeNodePtr>& Nodes, const TFunctionRef<bool(const FAssetPackageDiffEntry&)> Matches) const
 {
 	for (const FDiffTreeNodePtr& Node : Nodes)
 	{
@@ -846,13 +832,12 @@ SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeN
 			continue;
 		}
 
-		if (Node->Diff.Key == Key)
+		if (Matches(Node->Diff))
 		{
 			return Node;
 		}
 
-		FDiffTreeNodePtr Found = FindDiffTreeNodeByKey(Node->Children, Key);
-
+		const FDiffTreeNodePtr Found = FindDiffTreeNode(Node->Children, Matches);
 		if (Found.IsValid())
 		{
 			return Found;
@@ -860,6 +845,25 @@ SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeN
 	}
 
 	return nullptr;
+}
+
+void SAssetSerializationDiff::SelectAndReveal(const FDiffTreeNodePtr& Node)
+{
+	ExpandDiffAncestors(Node);
+	DiffTreeView->SetSelection(Node, ESelectInfo::Direct);
+	DiffTreeView->RequestScrollIntoView(Node);
+}
+
+void SAssetSerializationDiff::NavigateToDiffEntry(const FString& Key)
+{
+	FDiffTreeNodePtr Node = FindDiffTreeNode(RootDiffNodes, [&Key](const FAssetPackageDiffEntry& Entry) { return Entry.Key == Key; });
+
+	if (!Node.IsValid() || !DiffTreeView.IsValid())
+	{
+		return;
+	}
+
+	SelectAndReveal(Node);
 }
 
 FString SAssetSerializationDiff::MakeCompactHistoryValue(const FString& Value) const
@@ -934,39 +938,13 @@ void SAssetSerializationDiff::NavigateToSemanticPath(const FString& SemanticPath
 		return;
 	}
 
-	const FDiffTreeNodePtr Node = FindDiffTreeNodeBySemanticPath(RootDiffNodes, SemanticPath);
+	const FDiffTreeNodePtr Node = FindDiffTreeNode(RootDiffNodes, [&SemanticPath](const FAssetPackageDiffEntry& Entry) { return Entry.SemanticPath == SemanticPath; });
 	if (!Node.IsValid())
 	{
 		return;
 	}
 
-	ExpandDiffAncestors(Node);
-	DiffTreeView->SetSelection(Node, ESelectInfo::Direct);
-	DiffTreeView->RequestScrollIntoView(Node);
-}
-
-SAssetSerializationDiff::FDiffTreeNodePtr SAssetSerializationDiff::FindDiffTreeNodeBySemanticPath(const TArray<FDiffTreeNodePtr>& Nodes, const FString& SemanticPath) const
-{
-	for (const FDiffTreeNodePtr& Node : Nodes)
-	{
-		if (!Node.IsValid())
-		{
-			continue;
-		}
-
-		if (Node->Diff.SemanticPath == SemanticPath)
-		{
-			return Node;
-		}
-
-		const FDiffTreeNodePtr Found = FindDiffTreeNodeBySemanticPath(Node->Children, SemanticPath);
-		if (Found.IsValid())
-		{
-			return Found;
-		}
-	}
-
-	return nullptr;
+	SelectAndReveal(Node);
 }
 
 bool SAssetSerializationDiff::BrowseForAsset(const FText& DialogTitle, FString& OutFilename)
@@ -1209,18 +1187,16 @@ void SAssetSerializationDiff::RebuildDiffTree()
 		FDiffTreeNodePtr Previous;
 		if (!PreviousSemanticPath.IsEmpty())
 		{
-			Previous = FindDiffTreeNodeBySemanticPath(RootDiffNodes, PreviousSemanticPath);
+			Previous = FindDiffTreeNode(RootDiffNodes, [&PreviousSemanticPath](const FAssetPackageDiffEntry& Entry) { return Entry.SemanticPath == PreviousSemanticPath; });
 		}
 		else if (!PreviousKey.IsEmpty())
 		{
-			Previous = FindDiffTreeNodeByKey(RootDiffNodes, PreviousKey);
+			Previous = FindDiffTreeNode(RootDiffNodes, [&PreviousKey](const FAssetPackageDiffEntry& Entry) { return Entry.Key == PreviousKey; });
 		}
 
 		if (Previous.IsValid())
 		{
-			ExpandDiffAncestors(Previous);
-			DiffTreeView->SetSelection(Previous, ESelectInfo::Direct);
-			DiffTreeView->RequestScrollIntoView(Previous);
+			SelectAndReveal(Previous);
 		}
 	}
 }
@@ -1478,26 +1454,6 @@ FText SAssetSerializationDiff::GetSelectedDisplayName() const
 	return SelectedDiffNode.IsValid() ? SelectedDiffNode->Diff.DisplayName : FText::FromString(TEXT("-"));
 }
 
-FText SAssetSerializationDiff::GetSelectedOldValue() const
-{
-	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.OldValue.IsEmpty())
-	{
-		return FText::FromString(TEXT("-"));
-	}
-
-	return FText::FromString(SelectedDiffNode->Diff.OldValue);
-}
-
-FText SAssetSerializationDiff::GetSelectedNewValue() const
-{
-	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.NewValue.IsEmpty())
-	{
-		return FText::FromString(TEXT("-"));
-	}
-
-	return FText::FromString(SelectedDiffNode->Diff.NewValue);
-}
-
 // Offsets
 static FText FormatDiffOffset(const int64 Offset)
 {
@@ -1509,35 +1465,25 @@ static FText FormatDiffOffset(const int64 Offset)
 	return FText::FromString(FString::Printf(TEXT("0x%llX"), Offset));
 }
 
-FText SAssetSerializationDiff::GetSelectedOldOffset() const
+FText SAssetSerializationDiff::GetSelectedValue(const bool bOldSide) const
 {
-	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.OldOffset) : FText::FromString(TEXT("-"));
+	const FString& Value = SelectedDiffNode.IsValid() ? (bOldSide ? SelectedDiffNode->Diff.OldValue : SelectedDiffNode->Diff.NewValue) : FString();
+	return Value.IsEmpty() ? FText::FromString(TEXT("-")) : FText::FromString(Value);
 }
 
-FText SAssetSerializationDiff::GetSelectedNewOffset() const
+FText SAssetSerializationDiff::GetSelectedOffset(const bool bOldSide) const
 {
-	return SelectedDiffNode.IsValid() ? FormatDiffOffset(SelectedDiffNode->Diff.NewOffset) : FText::FromString(TEXT("-"));
+	return SelectedDiffNode.IsValid() ? FormatDiffOffset(bOldSide ? SelectedDiffNode->Diff.OldOffset : SelectedDiffNode->Diff.NewOffset) : FText::FromString(TEXT("-"));
 }
 
-// Sizes
-FText SAssetSerializationDiff::GetSelectedOldSize() const
+FText SAssetSerializationDiff::GetSelectedSize(const bool bOldSide) const
 {
-	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.OldOffset == INDEX_NONE)
+	if (!SelectedDiffNode.IsValid() || (bOldSide ? SelectedDiffNode->Diff.OldOffset : SelectedDiffNode->Diff.NewOffset) == INDEX_NONE)
 	{
 		return FText::FromString(TEXT("-"));
 	}
 
-	return FText::Format(LOCTEXT("DiffSizeBytes", "{0} bytes"), FText::AsNumber(SelectedDiffNode->Diff.OldSize));
-}
-
-FText SAssetSerializationDiff::GetSelectedNewSize() const
-{
-	if (!SelectedDiffNode.IsValid() || SelectedDiffNode->Diff.NewOffset == INDEX_NONE)
-	{
-		return FText::FromString(TEXT("-"));
-	}
-
-	return FText::Format(LOCTEXT("DiffSizeBytes", "{0} bytes"), FText::AsNumber(SelectedDiffNode->Diff.NewSize));
+	return FText::Format(LOCTEXT("DiffSizeBytes", "{0} bytes"), FText::AsNumber(bOldSide ? SelectedDiffNode->Diff.OldSize : SelectedDiffNode->Diff.NewSize));
 }
 
 // Status
@@ -1634,26 +1580,6 @@ int64 SAssetSerializationDiff::GetSelectedChangedByteCount() const
 	return Result;
 }
 
-FText SAssetSerializationDiff::GetSelectedOldHexRichText() const
-{
-	return OldHexPreview.Rich;
-}
-
-FText SAssetSerializationDiff::GetSelectedOldHexPlainText() const
-{
-	return OldHexPreview.Plain;
-}
-
-FText SAssetSerializationDiff::GetSelectedNewHexRichText() const
-{
-	return NewHexPreview.Rich;
-}
-
-FText SAssetSerializationDiff::GetSelectedNewHexPlainText() const
-{
-	return NewHexPreview.Plain;
-}
-
 FText SAssetSerializationDiff::GetSaveAnalysisResultText(const EAssetSaveResultKind ResultKind) const
 {
 	switch (ResultKind)
@@ -1728,38 +1654,23 @@ FText SAssetSerializationDiff::GetConfidenceText(const EAssetExplanationConfiden
 	}
 }
 
-FText SAssetSerializationDiff::BuildObservedValueText(const FObservedPropertySample& Sample) const
+FText SAssetSerializationDiff::BuildObservedValueText(const FObservedPropertySample& Sample, const bool bCompact) const
 {
+	const auto Show = [this, bCompact](const FString& Value) { return bCompact ? MakeCompactHistoryValue(Value) : Value; };
+
 	if (Sample.bChanged)
 	{
-		const FString Old = Sample.bHasOldValue ? MakeCompactHistoryValue(Sample.OldValue) : TEXT("<not serialized>");
-		const FString New = Sample.bHasNewValue ? MakeCompactHistoryValue(Sample.NewValue) : TEXT("<not serialized>");
+		const FString Old = Sample.bHasOldValue ? Show(Sample.OldValue) : TEXT("<not serialized>");
+		const FString New = Sample.bHasNewValue ? Show(Sample.NewValue) : TEXT("<not serialized>");
 		return FText::FromString(Old + TEXT(" -> ") + New);
 	}
 
 	if (Sample.bHasNewValue)
 	{
-		return FText::FromString(MakeCompactHistoryValue(Sample.NewValue));
+		return FText::FromString(Show(Sample.NewValue));
 	}
 
 	return LOCTEXT("ObservedNoValue", "<no decoded value>");
-}
-
-FText SAssetSerializationDiff::BuildObservedValueFullText(const FObservedPropertySample& Sample) const
-{
-	if (Sample.bChanged)
-	{
-		const FString Old = Sample.bHasOldValue ? Sample.OldValue : TEXT("<not serialized>");
-		const FString New = Sample.bHasNewValue ? Sample.NewValue : TEXT("<not serialized>");
-		return FText::FromString(Old + TEXT(" -> ") + New);
-	}
-
-	if (Sample.bHasNewValue)
-	{
-		return FText::FromString(Sample.NewValue);
-	}
-
-	return LOCTEXT("ObservedNoValueFull", "<no decoded value>");
 }
 
 FText SAssetSerializationDiff::GetObservedPatternText(const EObservedValuePattern Pattern) const
@@ -1843,6 +1754,35 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
 	FString RichResult;
 	FString PlainResult;
 
+	// A difference inside a stored file offset that merely moved is shown apart from a real change: orange, not red. The span of a style
+	// opens when the style of the bytes changes and closes when it changes again or the line ends.
+	const auto SetStyleOfByte = [&](const int64 RelativeOffset, int32& OpenStyle) {
+		const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
+		const bool bShifted = bChanged && IsByteInRanges(RelativeOffset, ShiftedRanges);
+		const int32 Style = !bChanged ? 0 : bShifted ? 2 : 1;
+
+		if (Style != OpenStyle)
+		{
+			if (OpenStyle != 0)
+			{
+				RichResult += TEXT("</>");
+			}
+
+			if (Style != 0)
+			{
+				RichResult += Style == 2 ? TEXT("<Shifted>") : TEXT("<Changed>");
+			}
+
+			OpenStyle = Style;
+		}
+	};
+	const auto CloseStyle = [&](const int32 OpenStyle) {
+		if (OpenStyle != 0)
+		{
+			RichResult += TEXT("</>");
+		}
+	};
+
 	for (int64 RowOffset = 0; RowOffset < PreviewSize; RowOffset += BytesPerRow)
 	{
 		// Relative offsets are much better for side-by-side diffing.
@@ -1862,25 +1802,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
 				break;
 			}
 
-			// A difference inside a stored file offset that merely moved is shown apart from a real change.
-			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
-			const bool bShifted = bChanged && IsByteInRanges(RelativeOffset, ShiftedRanges);
-			const int32 Style = !bChanged ? 0 : bShifted ? 2 : 1;
-
-			if (Style != OpenStyle)
-			{
-				if (OpenStyle != 0)
-				{
-					RichResult += TEXT("</>");
-				}
-
-				if (Style != 0)
-				{
-					RichResult += Style == 2 ? TEXT("<Shifted>") : TEXT("<Changed>");
-				}
-
-				OpenStyle = Style;
-			}
+			SetStyleOfByte(RelativeOffset, OpenStyle);
 
 			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
 
@@ -1894,10 +1816,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
 			}
 		}
 
-		if (OpenStyle != 0)
-		{
-			RichResult += TEXT("</>");
-		}
+		CloseStyle(OpenStyle);
 
 		// ASCII
 		RichResult += TEXT(" |");
@@ -1914,25 +1833,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
 				break;
 			}
 
-			// A difference inside a stored file offset that merely moved is shown apart from a real change.
-			const bool bChanged = IsByteDifferent(RelativeOffset, Spans);
-			const bool bShifted = bChanged && IsByteInRanges(RelativeOffset, ShiftedRanges);
-			const int32 Style = !bChanged ? 0 : bShifted ? 2 : 1;
-
-			if (Style != OpenStyle)
-			{
-				if (OpenStyle != 0)
-				{
-					RichResult += TEXT("</>");
-				}
-
-				if (Style != 0)
-				{
-					RichResult += Style == 2 ? TEXT("<Shifted>") : TEXT("<Changed>");
-				}
-
-				OpenStyle = Style;
-			}
+			SetStyleOfByte(RelativeOffset, OpenStyle);
 
 			const uint8 Byte = Document->FileData[Offset + RelativeOffset];
 
@@ -1963,10 +1864,7 @@ FHexPreviewText SAssetSerializationDiff::BuildHighlightedHexPreview(
 			}
 		}
 
-		if (OpenStyle != 0)
-		{
-			RichResult += TEXT("</>");
-		}
+		CloseStyle(OpenStyle);
 
 		FString LineResult;
 		LineResult += TEXT("|");
@@ -2040,10 +1938,7 @@ void SAssetSerializationDiff::SelectFirstMeaningfulDifference()
 		FDiffTreeNodePtr Found = FindFirstChangedNode(Root);
 		if (Found.IsValid())
 		{
-			ExpandDiffAncestors(Found);
-
-			DiffTreeView->SetSelection(Found, ESelectInfo::Direct);
-			DiffTreeView->RequestScrollIntoView(Found);
+			SelectAndReveal(Found);
 
 			break;
 		}
