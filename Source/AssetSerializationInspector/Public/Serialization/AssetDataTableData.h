@@ -33,12 +33,6 @@ struct FAssetDataTableData
 	bool bComplete = false;
 	FString Error;
 
-	/** The bytes the data covers in the document. */
-	int64 Offset = 0;
-	int64 Size = 0;
-
-	FString ObjectGuid;
-
 	/** The path of the struct that each row is an instance of; empty when the table has none (its rows are then the base row struct). */
 	FString RowStruct;
 

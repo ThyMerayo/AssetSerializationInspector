@@ -15,10 +15,9 @@ namespace
 	/** A row takes at least the name (8 bytes) and the end of its properties (8 bytes), so a count beyond what fits is not a count. */
 	constexpr int64 MinimumRowBytes = 16;
 
-	/** The path of the object the RowStruct property refers to; sets bFound when the export has the property at all. */
-	FString ReadRowStruct(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const FAssetSerializationTrace* Trace, bool& bFound, FString& OutError)
+	/** The path of the object the RowStruct property refers to; empty when the table has none. */
+	FString ReadRowStruct(const FAssetPackageDocument& Document, const FAssetPackageExportEntry& Export, const FAssetSerializationTrace* Trace, FString& OutError)
 	{
-		bFound = false;
 		if (Trace == nullptr || !Trace->Root.IsValid())
 		{
 			OutError = TEXT("The properties of the table were not read, so its row struct is not known");
@@ -32,7 +31,6 @@ namespace
 				continue;
 			}
 
-			bFound = true;
 			if (Node->bIsZeroValue)
 			{
 				return FString();
@@ -79,21 +77,33 @@ namespace
 		return Name;
 	}
 
-	FString JoinProperties(const TArray<TPair<FString, FString>>& Properties)
+	/** Whether two rows have the same properties with the same values, in the same order. */
+	bool SameProperties(const TArray<TPair<FString, FString>>& Left, const TArray<TPair<FString, FString>>& Right)
 	{
-		TArray<FString> Parts;
-		Parts.Reserve(Properties.Num());
-		for (const TPair<FString, FString>& Property : Properties)
+		if (Left.Num() != Right.Num())
 		{
-			Parts.Add(Property.Key + TEXT("=") + Property.Value);
+			return false;
 		}
-		return FString::Join(Parts, TEXT(", "));
+		for (int32 Index = 0; Index < Left.Num(); ++Index)
+		{
+			if (!Left[Index].Key.Equals(Right[Index].Key, ESearchCase::CaseSensitive) || !Left[Index].Value.Equals(Right[Index].Value, ESearchCase::CaseSensitive))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 } // namespace
 
 FString FAssetDataTableRow::Describe() const
 {
-	return Properties.IsEmpty() ? FString(TEXT("(no properties)")) : JoinProperties(Properties);
+	TArray<FString> Parts;
+	Parts.Reserve(Properties.Num());
+	for (const TPair<FString, FString>& Property : Properties)
+	{
+		Parts.Add(Property.Key + TEXT("=") + Property.Value);
+	}
+	return Parts.IsEmpty() ? FString(TEXT("(no properties)")) : FString::Join(Parts, TEXT(", "));
 }
 
 FString FAssetDataTableData::Summarize() const
@@ -111,20 +121,17 @@ bool AssetDataTableData::Decode(
 	}
 
 	Out = FAssetDataTableData();
-	Out.Offset = NativeOffset;
-	Out.Size = NativeSize;
 
 	FNativeReader Reader(Document, NativeOffset, NativeSize);
 
 	// UObject::Serialize ends with the object's GUID, when it has one.
 	if (Reader.ReadBool())
 	{
-		Out.ObjectGuid = Reader.ReadGuid().ToString(EGuidFormats::DigitsWithHyphens);
+		Reader.ReadGuid();
 	}
 
-	bool bHasRowStructProperty = false;
 	FString RowStructError;
-	Out.RowStruct = ReadRowStruct(Document, Export, Trace, bHasRowStructProperty, RowStructError);
+	Out.RowStruct = ReadRowStruct(Document, Export, Trace, RowStructError);
 	if (!RowStructError.IsEmpty())
 	{
 		Out.Error = RowStructError;
@@ -137,6 +144,8 @@ bool AssetDataTableData::Decode(
 	{
 		Reader.Fail(TEXT("The number of rows does not fit the data"));
 	}
+
+	Out.Rows.Reserve(RowCount);
 
 	FAssetSerializedPropertyType RowType;
 	RowType.Name = TEXT("StructProperty");
@@ -160,6 +169,7 @@ bool AssetDataTableData::Decode(
 		}
 
 		// A property that decoded in part would make the row look like what it is not.
+		Row.Properties.Reserve(Value.Children.Num());
 		for (const FAssetDecodedPropertyValue& Child : Value.Children)
 		{
 			if (!Child.IsSuccess())
@@ -201,27 +211,30 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 		return Changes;
 	}
 
-	const auto Add = [&Changes](const FString& Key, const FString& Title, const FAssetNativeDataChange::EState State, const FString& OldValue, const FString& NewValue) {
+	const auto Add = [&Changes](FString Key, FString Title, const FAssetNativeDataChange::EState State, FString OldValue, FString NewValue) {
 		FAssetNativeDataChange& Change = Changes.AddDefaulted_GetRef();
-		Change.Key = Key;
-		Change.Title = Title;
+		Change.Key = MoveTemp(Key);
+		Change.Title = MoveTemp(Title);
 		Change.State = State;
-		Change.OldValue = OldValue;
-		Change.NewValue = NewValue;
+		Change.OldValue = MoveTemp(OldValue);
+		Change.NewValue = MoveTemp(NewValue);
+	};
+
+	// One entry for one property of a row; the title leaves out the number and identifier a Blueprint struct adds to its member names.
+	const auto AddProperty = [&Add](const FAssetDataTableRow& Row, const FString& Property, const FAssetNativeDataChange::EState State, FString OldValue, FString NewValue) {
+		Add(FString::Printf(TEXT("Row/%s/%s"), *Row.Name, *Property), FString::Printf(TEXT("Row %s: %s"), *Row.Name, *DisplayName(Property)), State, MoveTemp(OldValue), MoveTemp(NewValue));
 	};
 
 	// A row that appears or goes away is listed property by property, like a row that changed, so every value has its own entry.
-	const auto AddWholeRow = [&Add](const FAssetDataTableRow& Row, const FAssetNativeDataChange::EState State) {
+	const auto AddWholeRow = [&](const FAssetDataTableRow& Row, const FAssetNativeDataChange::EState State) {
 		const bool bAdded = State == FAssetNativeDataChange::EState::Added;
-		const FString Key = TEXT("Row/") + Row.Name;
-		const FString Title = FString::Printf(TEXT("Row %s"), *Row.Name);
 		if (Row.Properties.IsEmpty())
 		{
-			Add(Key, Title, State, bAdded ? FString() : Row.Describe(), bAdded ? Row.Describe() : FString());
+			Add(TEXT("Row/") + Row.Name, FString::Printf(TEXT("Row %s"), *Row.Name), State, bAdded ? FString() : Row.Describe(), bAdded ? Row.Describe() : FString());
 		}
 		for (const TPair<FString, FString>& Property : Row.Properties)
 		{
-			Add(Key + TEXT("/") + Property.Key, FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key)), State, bAdded ? FString() : Property.Value, bAdded ? Property.Value : FString());
+			AddProperty(Row, Property.Key, State, bAdded ? FString() : Property.Value, bAdded ? Property.Value : FString());
 		}
 	};
 
@@ -232,16 +245,16 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 
 	// The rows are paired by name: the table is a map, and the order it is written in is not part of what it holds.
 	TMap<FString, const FAssetDataTableRow*> NewRows;
+	NewRows.Reserve(New.Rows.Num());
 	for (const FAssetDataTableRow& Row : New.Rows)
 	{
 		NewRows.Add(Row.Name, &Row);
 	}
 	TSet<FString> Seen;
+	Seen.Reserve(Old.Rows.Num());
 
 	for (const FAssetDataTableRow& OldRow : Old.Rows)
 	{
-		const FString Key = TEXT("Row/") + OldRow.Name;
-		const FString Title = FString::Printf(TEXT("Row %s"), *OldRow.Name);
 		const FAssetDataTableRow* const* Found = NewRows.Find(OldRow.Name);
 		if (Found == nullptr)
 		{
@@ -251,35 +264,43 @@ TArray<FAssetNativeDataChange> AssetDataTableData::Compare(const FAssetDataTable
 
 		Seen.Add(OldRow.Name);
 		const FAssetDataTableRow& NewRow = **Found;
+
+		// Most rows of a table stay as they are, and have the same properties in the same order: nothing to list, nothing to look up.
+		if (SameProperties(OldRow.Properties, NewRow.Properties))
+		{
+			continue;
+		}
+
+		// The properties of the new row; the ones that match an old property are taken out, and what is left was added.
 		TMap<FString, const FString*> NewValues;
 		for (const TPair<FString, FString>& Property : NewRow.Properties)
 		{
 			NewValues.Add(Property.Key, &Property.Value);
 		}
 
-		TSet<FString> SeenProperties;
 		for (const TPair<FString, FString>& Property : OldRow.Properties)
 		{
-			const FString PropertyKey = Key + TEXT("/") + Property.Key;
-			const FString PropertyTitle = FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key));
-			const FString* const* NewValue = NewValues.Find(Property.Key);
-			if (NewValue == nullptr)
+			const FString* NewValue = nullptr;
+			if (const FString* const* Match = NewValues.Find(Property.Key))
 			{
-				Add(PropertyKey, PropertyTitle, FAssetNativeDataChange::EState::Removed, Property.Value, FString());
-				continue;
+				NewValue = *Match;
+				NewValues.Remove(Property.Key);
 			}
 
-			SeenProperties.Add(Property.Key);
-			if (!Property.Value.Equals(**NewValue, ESearchCase::CaseSensitive))
+			if (NewValue == nullptr)
 			{
-				Add(PropertyKey, PropertyTitle, FAssetNativeDataChange::EState::Modified, Property.Value, **NewValue);
+				AddProperty(OldRow, Property.Key, FAssetNativeDataChange::EState::Removed, Property.Value, FString());
+			}
+			else if (!Property.Value.Equals(*NewValue, ESearchCase::CaseSensitive))
+			{
+				AddProperty(OldRow, Property.Key, FAssetNativeDataChange::EState::Modified, Property.Value, *NewValue);
 			}
 		}
 		for (const TPair<FString, FString>& Property : NewRow.Properties)
 		{
-			if (!SeenProperties.Contains(Property.Key))
+			if (NewValues.Contains(Property.Key))
 			{
-				Add(Key + TEXT("/") + Property.Key, FString::Printf(TEXT("%s: %s"), *Title, *DisplayName(Property.Key)), FAssetNativeDataChange::EState::Added, FString(), Property.Value);
+				AddProperty(NewRow, Property.Key, FAssetNativeDataChange::EState::Added, FString(), Property.Value);
 			}
 		}
 	}
