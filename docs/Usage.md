@@ -102,3 +102,7 @@ UnrealEditor-Cmd.exe Project.uproject -run=AssetSerializationInspector -Mode=Dec
 - **Exit code**: 0 when the check ran; 1 when the arguments are wrong or a report could not be written; 2 when a check ran and found what its switch fails on.
 - `-FailOnUnstable` fails when an asset is unstable or could not be tested. `-FailOnChanges` fails when any file differs, is in only one folder or could not be compared. Without a switch the run only reports.
 - In a Git Bash shell on Windows, prefix the command with `MSYS_NO_PATHCONV=1` so that `/Game/...` is not rewritten as a Windows path.
+
+### For Claude Code
+
+`skills/asset-serialization-inspector/SKILL.md` teaches Claude Code which check to run, how to run it and how to read the report. Copy the folder to `.claude/skills/` of your project (or `~/.claude/skills/`) to use it.
